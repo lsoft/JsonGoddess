@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      netstandard2.0 - не выбор, а требование: Roslyn грузит анализаторы в свой
+      процесс, и другого таргета он не принимает.
+    -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+
+    <!--
+      Едет внутри пакета JsonGoddess как analyzers/dotnet/cs, своего пакета и
+      своей lib-папки у него нет.
+    -->
+    <IsPackable>false</IsPackable>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      4.6 - минимум, в котором есть ForAttributeWithMetadataName с индексом по
+      именам атрибутов (§9 плана). Брать версию выше значит требовать более
+      новый SDK от каждого потребителя.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.6.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+</Project>

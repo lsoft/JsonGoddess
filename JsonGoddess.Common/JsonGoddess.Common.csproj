@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
+    <!--
+      Транскодирование UTF-8 без аллокаций на netstandard2.0 делается только
+      через Encoding.GetString(byte*, int): span-перегрузок там нет, а
+      ToArray() на каждой строке - ровно та аллокация, ради отсутствия
+      которой всё и затевалось.
+    -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- едет внутри пакета JsonGoddess, своего пакета у него нет -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    Span, ArrayPool и Utf8Parser на netstandard2.0 живут в отдельных пакетах;
+    на net8.0+ они в самом рантайме.
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Buffers" Version="4.5.1" />
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+; Unshipped analyzer release
+; https://github.com/dotnet/roslyn-analyzers/blob/main/src/Microsoft.CodeAnalysis.Analyzers/ReleaseTrackingAnalyzers.Help.md
+
+### New Rules
+
+Rule ID | Category | Severity | Notes
+--------|----------|----------|-------
+JGD010 | JsonGoddess | Warning | Sink type registered with [JsonExhauster]/[JsonInjector] is not sealed, so calls cannot be devirtualized
+JGD020 | JsonGoddess | Error | Type carrying [JsonSubject] is not declared partial
+JGD021 | JsonGoddess | Error | Subject type cannot be served
+JGD022 | JsonGoddess | Error | Member type cannot be served
+JGD023 | JsonGoddess | Error | Two members map to the same JSON property name
+JGD024 | JsonGoddess | Error | Registered sink type does not derive from ExhausterBase/InjectorBase
+JGD025 | JsonGoddess | Error | Host type shape is not supported (nested, generic or static)
+JGD026 | JsonGoddess | Error | Project language version is below C# 11
+JGD027 | JsonGoddess | Error | JSON property name requires escaping

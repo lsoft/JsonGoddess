@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="JsonGoddess.Common/JsonGoddess.Common.csproj" />
+  <Project Path="JsonGoddess.Components/JsonGoddess.Components.csproj" />
+  <Project Path="JsonGoddess.Generator/JsonGoddess.Generator.csproj" />
+  <Project Path="JsonGoddess.GeneratorTests/JsonGoddess.GeneratorTests.csproj" />
+  <Project Path="JsonGoddess.PerformanceTests/JsonGoddess.PerformanceTests.csproj" />
+  <Project Path="JsonGoddess.Tests/JsonGoddess.Tests.csproj" />
+</Solution>

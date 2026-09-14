@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net472 здесь не ради .NET Framework: netstandard2.0-сборки нельзя
+      исполнить напрямую, и net472 - единственный таргет, который их
+      потребляет. То есть это единственный способ реально прогнать #else-ветки
+      горячего кода, а не только скомпилировать их.
+    -->
+    <TargetFrameworks>net472;net8.0;net10.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <!--
+    System.Text.Json нужен не как зависимость библиотеки, а как эталон: почти
+    каждое утверждение о лексике снимается прогоном BCL внутри теста, а не
+    записывается литералом. На net8.0+ он в составе рантайма.
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
+    <PackageReference Include="System.Text.Json" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JsonGoddess.Common\JsonGoddess.Common.csproj" />
+    <ProjectReference Include="..\JsonGoddess.Components\JsonGoddess.Components.csproj" />
+
+    <!--
+      Генератор подключается так же, как его подключит потребитель пакета:
+      анализатором, без ссылки на сборку. Это единственный способ проверить то,
+      что проверить больше нечем, - что порождённый код действительно
+      компилируется и работает на всех трёх таргетах, включая net472, где
+      исполняются netstandard2.0-ветки.
+    -->
+    <ProjectReference Include="..\JsonGoddess.Generator\JsonGoddess.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>
