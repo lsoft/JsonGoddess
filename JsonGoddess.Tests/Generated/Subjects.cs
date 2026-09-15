@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace JsonGoddess.Tests.Generated
@@ -149,6 +150,149 @@ namespace JsonGoddess.Tests.Generated
         {
             return new Unicode { Name = "Ada", };
         }
+    }
+
+    /// <summary>
+    /// Составные типы фазы 4 в одном месте: вложенный субъект, коллекция
+    /// субъектов, массив builtin'ов, коллекция строк и коллекция коллекций.
+    ///
+    /// <c>byte[]</c> здесь же и намеренно: он единственный массив, который
+    /// обязан остаться base64-строкой, а не превратиться в список чисел, - и
+    /// отличить одно от другого может только документ, сверенный с эталоном.
+    /// </summary>
+    public class Basket
+    {
+        public string? Owner { get; set; }
+        public Item? Head { get; set; }
+        public List<Item>? Lines { get; set; }
+        public int[]? Numbers { get; set; }
+        public List<string>? Tags { get; set; }
+        public List<List<int>>? Matrix { get; set; }
+        public byte[]? Payload { get; set; }
+
+        public static Basket CreateSample()
+        {
+            return new Basket
+            {
+                Owner = "Acme",
+                Head = new Item { Sku = "BRK-0001", Quantity = 4, Price = 129.99m, Note = "back order", },
+                Lines = new List<Item>
+                {
+                    new Item { Sku = "CLM-0342", Quantity = 1, Price = 899.00m, Note = null, },
+                    new Item { Sku = "WSH-9910", Quantity = 32, Price = 2.50m, Note = "bulk pack", },
+                },
+                Numbers = new[] { 1, 2, 3, 4, 5, },
+                Tags = new List<string> { "urgent", "b2b", },
+                Matrix = new List<List<int>>
+                {
+                    new List<int> { 1, 2, },
+                    new List<int>(),
+                },
+                Payload = new byte[] { 1, 2, 3, 250, 251, 252, },
+            };
+        }
+    }
+
+    public class Item
+    {
+        public string? Sku { get; set; }
+        public int Quantity { get; set; }
+        public decimal Price { get; set; }
+        public string? Note { get; set; }
+    }
+
+    /// <summary>
+    /// Тип, ссылающийся сам на себя через коллекцию: читатель и писатель
+    /// получаются взаимно рекурсивными, и никакого особого случая для этого в
+    /// генераторе быть не должно.
+    /// </summary>
+    public class Node
+    {
+        public int Id { get; set; }
+        public List<Node>? Children { get; set; }
+
+        public static Node CreateSample()
+        {
+            return new Node
+            {
+                Id = 1,
+                Children = new List<Node>
+                {
+                    new Node { Id = 2, Children = new List<Node>(), },
+                    new Node { Id = 3, Children = new List<Node> { new Node { Id = 4, }, }, },
+                },
+            };
+        }
+    }
+
+    public class BaseEntity
+    {
+        public int A { get; set; }
+        public int B { get; set; }
+    }
+
+    public class MiddleEntity : BaseEntity
+    {
+        public int M { get; set; }
+    }
+
+    /// <summary>
+    /// Три уровня наследования. Порядок членов в документе - предмет
+    /// отдельного утверждения: <c>System.Text.Json</c> печатает самый
+    /// производный тип первым, и совпадение здесь проверяется не с нашим
+    /// представлением о правильном, а с его документом.
+    /// </summary>
+    public class DerivedEntity : MiddleEntity
+    {
+        public int Z { get; set; }
+
+        public static DerivedEntity CreateSample()
+        {
+            return new DerivedEntity { A = 1, B = 2, M = 3, Z = 4, };
+        }
+    }
+
+    /// <summary>
+    /// Коллекция без setter'а. Соблазн «раз объект уже есть, наполним его»
+    /// здесь обманчив: <c>System.Text.Json</c> с опциями по умолчанию такой
+    /// член на чтении <b>пропускает</b> - наполнение существующей коллекции у
+    /// него opt-in (<c>JsonObjectCreationHandling.Populate</c>). Пропускаем и
+    /// мы, и это утверждение проверяется прогоном эталона, а не памятью о том,
+    /// как он устроен.
+    /// </summary>
+    public class Fixed
+    {
+        public List<int> Tags { get; } = new List<int>();
+        public int Scalar { get; } = 7;
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Fixed), true)]
+    public partial class FixedSerializer
+    {
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Basket), true)]
+    [JsonSubject(typeof(Item), false)]
+    public partial class BasketSerializer
+    {
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Node), true)]
+    public partial class NodeSerializer
+    {
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(DerivedEntity), true)]
+    public partial class DerivedEntitySerializer
+    {
     }
 
     [JsonExhauster(typeof(PooledUtf8Exhauster))]

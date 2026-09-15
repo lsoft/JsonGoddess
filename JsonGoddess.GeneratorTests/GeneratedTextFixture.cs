@@ -219,6 +219,100 @@ namespace Second
             Assert.Empty(run.CompilationErrors);
         }
 
+        /// <summary>
+        /// Читатель коллекции - метод, и метод <b>один на тип</b>, а не на
+        /// член: две коллекции одного типа в одном объекте обязаны звать один и
+        /// тот же <c>ReadCollection_</c>, иначе объём порождаемого кода начнёт
+        /// расти по числу членов, а не по числу типов.
+        /// </summary>
+        [Fact]
+        public void One_collection_reader_per_type_not_per_member()
+        {
+            var run = GeneratorHarness.Run(Sources.Composite);
+            var text = run.SingleGeneratedFile;
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+
+            Assert.Equal(1, Occurrences(text, "private static global::System.Collections.Generic.List<global::Demo.Line>? ReadCollection_"));
+            Assert.Equal(2, Occurrences(text, "ReadCollection_ListOf_Demo_Line(injector"));
+        }
+
+        /// <summary>
+        /// Вложенная коллекция - не частный случай: внешний читатель зовёт
+        /// внутренний, и глубина ограничена только самим типом.
+        /// </summary>
+        [Fact]
+        public void Nested_collection_gets_a_reader_at_every_level()
+        {
+            var text = GeneratorHarness.Run(Sources.Composite).SingleGeneratedFile;
+
+            Assert.Contains("ReadCollection_ListOf_ListOf_Int32(", text, StringComparison.Ordinal);
+            Assert.Contains("ReadCollection_ListOf_Int32(", text, StringComparison.Ordinal);
+
+            var outer = Section(text, "ReadCollection_ListOf_ListOf_Int32(\n", "private static ");
+            Assert.Contains("item = ReadCollection_ListOf_Int32(", outer, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// <c>byte[]</c> - единственный массив, который остаётся base64-строкой.
+        /// Превратить его в список чисел значило бы выдать другой документ, и
+        /// round-trip этого не заметил бы: сам себя мы прочитали бы обратно.
+        /// </summary>
+        [Fact]
+        public void Byte_array_stays_base64_and_gets_no_collection_reader()
+        {
+            var text = GeneratorHarness.Run(Sources.Composite).SingleGeneratedFile;
+
+            Assert.Contains("exhauster.AppendBase64(value.Payload);", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("ReadCollection_ArrayOf_Byte", text, StringComparison.Ordinal);
+            Assert.Contains("ReadCollection_ArrayOf_Int32", text, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Запись коллекции печатается по месту, а не вызовом: длина
+        /// коллекции - единственное, чего этап компиляции не знает, и цена
+        /// этого незнания должна ограничиваться одной веткой на элемент.
+        /// </summary>
+        [Fact]
+        public void Collections_are_written_in_place_with_one_branch_per_element()
+        {
+            var text = GeneratorHarness.Run(Sources.Composite).SingleGeneratedFile;
+            var writer = Section(text, "private static void Write_Demo_Basket(", "private static void Write_Demo_Line(");
+
+            Assert.DoesNotContain("WriteCollection_", writer, StringComparison.Ordinal);
+
+            //Lines, Backorder, Numbers плюс Matrix внешняя и внутренняя - пять
+            //циклов; Head коллекцией не является и цикла не получает
+            Assert.Equal(5, Occurrences(writer, "for (var i"));
+            Assert.Equal(5, Occurrences(writer, "> 0)"));
+        }
+
+        [Fact]
+        public void Self_referencing_subject_produces_mutually_recursive_code()
+        {
+            var run = GeneratorHarness.Run(@"
+using System.Collections.Generic;
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Node
+    {
+        public int Id { get; set; }
+        public List<Node>? Children { get; set; }
+    }
+
+    [JsonSubject(typeof(Node), true)]
+    public partial class NodeSerializer { }
+}
+");
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+            Assert.Contains("item = Read_Demo_Node(injector", run.SingleGeneratedFile, StringComparison.Ordinal);
+        }
+
         private static string Section(string text, string from, string until)
         {
             var start = text.IndexOf(from, StringComparison.Ordinal);

@@ -70,12 +70,26 @@ namespace JsonGoddess.PerformanceTests
                 throw new InvalidOperationException("STJ source-gen produced a different document: " + stjContext);
             }
 
-            //обе формы диспетчера обязаны прочесть одинаково: иначе замер
-            //сравнивал бы не формы, а две разные программы
+            _exhauster.Reset();
+            OrderGenerated.Serialize(_exhauster, _order);
+            var generated = Encoding.UTF8.GetString(_exhauster.ToArray());
+
+            if (generated != _text)
+            {
+                throw new InvalidOperationException(
+                    "The generated serializer produced a different document:"
+                    + Environment.NewLine + "generated: " + generated
+                    + Environment.NewLine + "stj      : " + _text
+                    );
+            }
+
+            //все три читателя обязаны прочесть одинаково: иначе замер сравнивал
+            //бы не формы, а три разные программы
             OrderSerializer.DeserializeByLength(DefaultInjector.Instance, _utf8, out var byLength);
             OrderSerializer.DeserializeByKey(DefaultInjector.Instance, _utf8, out var byKey);
+            OrderGenerated.Deserialize(DefaultInjector.Instance, _utf8, out var byGenerator);
 
-            foreach (var back in new[] { byLength, byKey, })
+            foreach (var back in new[] { byLength, byKey, byGenerator, })
             {
                 if (back is null || back.Id != _order.Id || back.Lines is null || back.Lines.Count != 3
                     || back.Lines[2].Note != "bulk pack" || back.Reference != _order.Reference
@@ -111,7 +125,16 @@ namespace JsonGoddess.PerformanceTests
         }
 
         [BenchmarkCategory("serialize")]
-        [Benchmark(Description = "JsonGoddess")]
+        [Benchmark(Description = "JsonGoddess (generated)")]
+        public int SerializeJsonGoddessGenerated()
+        {
+            _exhauster.Reset();
+            OrderGenerated.Serialize(_exhauster, _order);
+            return _exhauster.WrittenCount;
+        }
+
+        [BenchmarkCategory("serialize")]
+        [Benchmark(Description = "JsonGoddess (hand-written)")]
         public int SerializeJsonGoddess()
         {
             _exhauster.Reset();
@@ -120,11 +143,11 @@ namespace JsonGoddess.PerformanceTests
         }
 
         [BenchmarkCategory("serialize")]
-        [Benchmark(Description = "JsonGoddess -> byte[]")]
+        [Benchmark(Description = "JsonGoddess (generated) -> byte[]")]
         public byte[] SerializeJsonGoddessToArray()
         {
             _exhauster.Reset();
-            OrderSerializer.Serialize(_exhauster, _order);
+            OrderGenerated.Serialize(_exhauster, _order);
             return _exhauster.ToArray();
         }
 
@@ -150,10 +173,24 @@ namespace JsonGoddess.PerformanceTests
         }
 
         /// <summary>
-        /// Две формы диспетчера имён стоят рядом намеренно: сравнивать их
-        /// между процессами нельзя - абсолютное время уезжает на проценты само
-        /// по себе, и разница форм в эту дрейфующую величину укладывается.
-        /// Значимо только отношение, снятое внутри одного прогона.
+        /// Порождённый код. Он и есть предмет измерения: рукописные формы
+        /// рядом стоят не как альтернатива, а как верхняя и нижняя границы,
+        /// между которыми он обязан оказаться - и не ниже лучшей из них.
+        /// </summary>
+        [BenchmarkCategory("deserialize")]
+        [Benchmark(Description = "JsonGoddess (generated)")]
+        public Order? DeserializeJsonGoddessGenerated()
+        {
+            OrderGenerated.Deserialize(DefaultInjector.Instance, _utf8, out var result);
+            return result;
+        }
+
+        /// <summary>
+        /// Две рукописные формы диспетчера имён стоят рядом намеренно:
+        /// сравнивать их между процессами нельзя - абсолютное время уезжает на
+        /// проценты само по себе, и разница форм в эту дрейфующую величину
+        /// укладывается. Значимо только отношение, снятое внутри одного
+        /// прогона.
         /// </summary>
         [BenchmarkCategory("deserialize")]
         [Benchmark(Description = "JsonGoddess (by length)")]

@@ -132,7 +132,106 @@ namespace JsonGoddess.Generator.Binding
             var exhausters = BindSinks(host, known.ExhausterAttribute, known.ExhausterBase, "an exhauster", diagnostics);
             var injectors = BindSinks(host, known.InjectorAttribute, known.InjectorBase, "an injector", diagnostics);
 
+            //Регистрации собираются целиком до того, как связан хоть один член:
+            //член может сослаться на субъект, объявленный ниже по списку
+            //атрибутов, и порядок объявления не должен ни на что влиять.
+            var registered = CollectRegistrations(host, known);
+            if (registered.Count == 0)
+            {
+                return null;
+            }
+
+            var accepted = new List<Registration>();
+            var byType = new Dictionary<ISymbol, string>(SymbolEqualityComparer.Default);
+
+            foreach (var registration in registered)
+            {
+                if (!IsSubjectShapeSupported(registration.Type, host, diagnostics))
+                {
+                    continue;
+                }
+
+                accepted.Add(registration);
+                byType[registration.Type] = MethodSuffix(registration.Type);
+            }
+
             var subjects = new List<SubjectModel>();
+            var collections = new Dictionary<string, ValueModel>(System.StringComparer.Ordinal);
+            var failed = accepted.Count != registered.Count;
+
+            foreach (var registration in accepted)
+            {
+                var members = BindMembers(registration.Type, byType, known, LocationInfo.From(host), diagnostics);
+                if (members is null)
+                {
+                    failed = true;
+                    continue;
+                }
+
+                foreach (var member in members)
+                {
+                    ValueBinder.CollectCollections(member.Value, collections);
+                }
+
+                subjects.Add(
+                    new SubjectModel(
+                        registration.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                        MethodSuffix(registration.Type),
+                        registration.IsRoot,
+                        members
+                        )
+                    );
+            }
+
+            //Отказ целиком, а не «всё, кроме сломанного»: субъект, который не
+            //связался, мог быть чьим-то членом, и код без него не
+            //скомпилировался бы - поверх понятной диагностики приехала бы
+            //непонятная ошибка компилятора.
+            if (failed || subjects.Count == 0)
+            {
+                return null;
+            }
+
+            var ns = host.ContainingNamespace.IsGlobalNamespace
+                ? null
+                : host.ContainingNamespace.ToDisplayString();
+
+            var collectionList = new List<ValueModel>(collections.Values);
+            collectionList.Sort((a, b) => System.StringComparer.Ordinal.Compare(a.MethodSuffix, b.MethodSuffix));
+
+            return new HostModel(
+                ns,
+                BuildHostDeclaration(host),
+                host.ToDisplayString(),
+                exhausters.Count > 0 ? exhausters : new List<string> { "global::" + ExhausterBase },
+                injectors.Count > 0 ? injectors : new List<string> { "global::" + InjectorBase },
+                subjects,
+                collectionList
+                );
+        }
+
+        private readonly struct Registration
+        {
+            public readonly INamedTypeSymbol Type;
+            public readonly bool IsRoot;
+
+            public Registration(INamedTypeSymbol type, bool isRoot)
+            {
+                Type = type;
+                IsRoot = isRoot;
+            }
+        }
+
+        /// <summary>
+        /// Один и тот же тип, зарегистрированный дважды, - не ошибка, а
+        /// естественное следствие того, что корень объявляют явно: признак
+        /// корня складывается, методы печатаются один раз.
+        /// </summary>
+        private static List<Registration> CollectRegistrations(INamedTypeSymbol host, KnownSymbols known)
+        {
+            var result = new List<Registration>();
+            var seen = new Dictionary<ISymbol, int>(SymbolEqualityComparer.Default);
+
             foreach (var attribute in host.GetAttributes())
             {
                 if (!SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, known.SubjectAttribute))
@@ -148,31 +247,24 @@ namespace JsonGoddess.Generator.Binding
 
                 var isRoot = attribute.ConstructorArguments[1].Value is true;
 
-                var subject = BindSubject(subjectType, host, isRoot, known, diagnostics);
-                if (subject is not null)
+                if (seen.TryGetValue(subjectType, out var index))
                 {
-                    subjects.Add(subject);
+                    if (isRoot && !result[index].IsRoot)
+                    {
+                        result[index] = new Registration(subjectType, true);
+                    }
+
+                    continue;
                 }
+
+                seen.Add(subjectType, result.Count);
+                result.Add(new Registration(subjectType, isRoot));
             }
 
-            if (subjects.Count == 0)
-            {
-                return null;
-            }
-
-            var ns = host.ContainingNamespace.IsGlobalNamespace
-                ? null
-                : host.ContainingNamespace.ToDisplayString();
-
-            return new HostModel(
-                ns,
-                BuildHostDeclaration(host),
-                host.ToDisplayString(),
-                exhausters.Count > 0 ? exhausters : new List<string> { "global::" + ExhausterBase },
-                injectors.Count > 0 ? injectors : new List<string> { "global::" + InjectorBase },
-                subjects
-                );
+            return result;
         }
+
+        private static string MethodSuffix(INamedTypeSymbol subject) => subject.ToDisplayString().Replace('.', '_');
 
         /// <summary>
         /// Модификаторы объявления обязаны совпасть с пользовательскими:
@@ -292,11 +384,9 @@ namespace JsonGoddess.Generator.Binding
             return false;
         }
 
-        private static SubjectModel? BindSubject(
+        private static bool IsSubjectShapeSupported(
             INamedTypeSymbol subject,
             INamedTypeSymbol host,
-            bool isRoot,
-            KnownSymbols known,
             List<DiagnosticInfo> diagnostics
             )
         {
@@ -330,23 +420,10 @@ namespace JsonGoddess.Generator.Binding
                         refusal
                         )
                     );
-                return null;
+                return false;
             }
 
-            var members = BindMembers(subject, known, location, diagnostics);
-            if (members is null)
-            {
-                return null;
-            }
-
-            var displayName = subject.ToDisplayString();
-
-            return new SubjectModel(
-                subject.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                displayName.Replace('.', '_'),
-                isRoot,
-                members
-                );
+            return true;
         }
 
         private static bool HasUsableParameterlessConstructor(INamedTypeSymbol subject)
@@ -367,23 +444,28 @@ namespace JsonGoddess.Generator.Binding
             return false;
         }
 
+        /// <summary>
+        /// От производного типа к базовому - и это не вкус, а <b>проверенное
+        /// поведение</b> <c>System.Text.Json</c>: он печатает члены самого
+        /// производного типа первыми (<c>{"C","D","A","B"}</c> для
+        /// <c>Derived : Base</c>), и документ обязан совпасть с его документом
+        /// байт в байт. Тот же порядок заодно даёт и правильное перекрытие:
+        /// член, объявленный <c>new</c> в производном типе, встречается первым
+        /// и вытесняет одноимённый базовый, а не наоборот.
+        /// </summary>
         private static List<MemberModel>? BindMembers(
             INamedTypeSymbol subject,
+            Dictionary<ISymbol, string> byType,
             KnownSymbols known,
             LocationInfo? location,
             List<DiagnosticInfo> diagnostics
             )
         {
-            //от базового к производному: член производного типа перекрывает
-            //одноимённый член базового, поэтому имена, уже увиденные ниже по
-            //иерархии, во внимание не принимаются
             var chain = new List<INamedTypeSymbol>();
             for (var current = subject; current is not null && current.SpecialType != SpecialType.System_Object; current = current.BaseType)
             {
                 chain.Add(current);
             }
-
-            chain.Reverse();
 
             var shadowed = new HashSet<string>(System.StringComparer.Ordinal);
             var result = new List<MemberModel>();
@@ -399,7 +481,7 @@ namespace JsonGoddess.Generator.Binding
                         continue;
                     }
 
-                    var bound = BindMember(subject, member, known, location, diagnostics, ref failed);
+                    var bound = BindMember(subject, member, byType, known, location, diagnostics, ref failed);
                     if (bound is null)
                     {
                         continue;
@@ -440,6 +522,7 @@ namespace JsonGoddess.Generator.Binding
         private static MemberModel? BindMember(
             INamedTypeSymbol subject,
             ISymbol member,
+            Dictionary<ISymbol, string> byType,
             KnownSymbols known,
             LocationInfo? location,
             List<DiagnosticInfo> diagnostics,
@@ -537,10 +620,9 @@ namespace JsonGoddess.Generator.Binding
                     return null;
             }
 
-            if (!BuiltinTypes.TryBind(memberType, out var kind, out var isNullableValueType, out var isReferenceType))
+            if (!ValueBinder.TryBind(memberType, byType, out var value, out var refusal))
             {
-                Refuse(subject, member, memberType, location, diagnostics, ref failed,
-                    "phase 2 serves only builtin scalar types; classes, collections and enums arrive in phase 4");
+                Refuse(subject, member, memberType, location, diagnostics, ref failed, refusal);
                 return null;
             }
 
@@ -565,9 +647,7 @@ namespace JsonGoddess.Generator.Binding
                 member.Name,
                 jsonName,
                 utf8,
-                kind,
-                isNullableValueType,
-                isReferenceType,
+                value!,
                 canWrite,
                 canRead
                 );

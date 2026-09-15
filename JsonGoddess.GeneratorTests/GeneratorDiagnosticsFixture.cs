@@ -57,14 +57,157 @@ namespace Demo
         [Fact]
         public void Unsupported_member_type_is_refused_rather_than_skipped()
         {
-            //коллекции и вложенные классы приезжают в фазе 4; пропустить член
-            //нельзя - документ без него это другой документ
+            //словари приезжают позже; пропустить член нельзя - документ без
+            //него это другой документ
             var run = GeneratorHarness.Run(
                 Sources.Host(@"
         public int Id { get; set; }
-        public System.Collections.Generic.List<int>? Values { get; set; }
+        public System.Collections.Generic.Dictionary<string, int>? Values { get; set; }
 ")
                 );
+
+            Assert.Contains("JGD022", run.DiagnosticIds);
+            Assert.Empty(run.GeneratedFiles);
+        }
+
+        /// <summary>
+        /// Класс, который автор не зарегистрировал, - отказ, и отказ с
+        /// указанием, что дописать. Догадка «раз это класс, значит обслужим»
+        /// подменила бы явное решение автора нашим.
+        /// </summary>
+        [Fact]
+        public void Unregistered_class_member_is_refused_with_the_missing_registration_named()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Line { public int Quantity { get; set; } }
+
+    public class Payload
+    {
+        public int Id { get; set; }
+        public Line? Head { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD022", run.DiagnosticIds);
+            Assert.Empty(run.GeneratedFiles);
+            Assert.Contains(
+                "[JsonSubject(typeof(Line), false)]",
+                Assert.Single(run.GeneratorDiagnostics).GetMessage()
+                );
+        }
+
+        /// <summary>
+        /// Отказ обязан назвать <b>элемент</b>, а не коллекцию: человеку
+        /// незачем догадываться, что именно в <c>List&lt;Line&gt;</c> нам
+        /// незнакомо.
+        /// </summary>
+        [Fact]
+        public void Refusal_inside_a_collection_names_the_element_type()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Line { public int Quantity { get; set; } }
+
+    public class Payload
+    {
+        public System.Collections.Generic.List<Line>? Lines { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains(
+                "[JsonSubject(typeof(Line), false)]",
+                Assert.Single(run.GeneratorDiagnostics).GetMessage()
+                );
+        }
+
+        [Fact]
+        public void Registering_the_nested_type_is_all_it_takes()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Line { public int Quantity { get; set; } }
+
+    public class Payload
+    {
+        public int Id { get; set; }
+        public Line? Head { get; set; }
+        public System.Collections.Generic.List<Line>? Lines { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    [JsonSubject(typeof(Line), false)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+        }
+
+        [Fact]
+        public void Enum_member_is_refused_until_enums_land()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public enum Status { Draft, Sent }
+
+    public class Payload
+    {
+        public int Id { get; set; }
+        public Status State { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD022", run.DiagnosticIds);
+        }
+
+        /// <summary>
+        /// Один негодный субъект гасит хост целиком, а не только себя: он мог
+        /// быть чьим-то членом, и код без него не скомпилировался бы - поверх
+        /// понятной диагностики приехала бы непонятная ошибка компилятора.
+        /// </summary>
+        [Fact]
+        public void One_broken_subject_silences_the_whole_host()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Good { public int Id { get; set; } }
+
+    public class Bad { public System.Collections.Generic.Dictionary<string, int>? Values { get; set; } }
+
+    [JsonSubject(typeof(Good), true)]
+    [JsonSubject(typeof(Bad), true)]
+    public partial class Serializer { }
+}
+");
 
             Assert.Contains("JGD022", run.DiagnosticIds);
             Assert.Empty(run.GeneratedFiles);

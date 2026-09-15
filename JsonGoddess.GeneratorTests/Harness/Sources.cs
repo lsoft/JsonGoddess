@@ -85,6 +85,40 @@ namespace Demo
 }
 ";
 
+        /// <summary>
+        /// Составные типы: вложенный субъект, две коллекции одного типа,
+        /// коллекция коллекций, массив и <c>byte[]</c>, который коллекцией
+        /// быть не должен.
+        /// </summary>
+        public const string Composite = @"
+using System.Collections.Generic;
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Line
+    {
+        public int Quantity { get; set; }
+    }
+
+    public class Basket
+    {
+        public Line? Head { get; set; }
+        public List<Line>? Lines { get; set; }
+        public List<Line>? Backorder { get; set; }
+        public List<List<int>>? Matrix { get; set; }
+        public int[]? Numbers { get; set; }
+        public byte[]? Payload { get; set; }
+    }
+
+    [JsonSubject(typeof(Basket), true)]
+    [JsonSubject(typeof(Line), false)]
+    public partial class BasketSerializer
+    {
+    }
+}
+";
+
         public static string Host(string subjectMembers, string hostAttributes = "")
         {
             return @"

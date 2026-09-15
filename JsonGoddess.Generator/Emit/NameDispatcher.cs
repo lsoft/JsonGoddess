@@ -30,7 +30,7 @@ namespace JsonGoddess.Generator.Emit
     /// </summary>
     public static class NameDispatcher
     {
-        public const string Scan = BuiltinSourceProducer.Scan;
+        public const string Scan = ValueSourceProducer.Scan;
         public const string NameKey = "global::JsonGoddess.Internal.JsonNameKey";
 
         /// <summary>

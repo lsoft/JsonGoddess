@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using JsonGoddess.Internal;
@@ -272,6 +273,121 @@ namespace JsonGoddess.Tests.Generated
             Assert.Null(back!.MaybeCount);
             Assert.Null(back.Customer);
             Assert.Equal(new Guid("6f9619ff-8b86-d011-b42d-00cf4fc964ff"), back.MaybeReference);
+        }
+
+        /// <summary>
+        /// Составной документ целиком: вложенный субъект, коллекция субъектов,
+        /// массив чисел, коллекция строк, коллекция коллекций и <c>byte[]</c>,
+        /// который обязан остаться base64-строкой.
+        /// </summary>
+        [Fact]
+        public void Composite_document_matches_system_text_json_byte_for_byte()
+        {
+            var value = Basket.CreateSample();
+
+            using var exhauster = new PooledUtf8Exhauster();
+            BasketSerializer.Serialize(exhauster, value);
+
+            Assert.Equal(Reference.Write(value), Encoding.UTF8.GetString(exhauster.ToArray()));
+        }
+
+        [Fact]
+        public void Composite_document_is_read_the_way_system_text_json_reads_it()
+        {
+            var utf8 = Encoding.UTF8.GetBytes(Reference.Write(Basket.CreateSample()));
+
+            var theirs = JsonSerializer.Deserialize<Basket>(utf8, Reference.Relaxed);
+            BasketSerializer.Deserialize(DefaultInjector.Instance, utf8, out var ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+        }
+
+        /// <summary>
+        /// Пустой объект, пустая коллекция, <c>null</c> на месте коллекции и
+        /// <c>null</c> на месте элемента-субъекта - четыре формы, в которых
+        /// ошибиться легче всего, и все четыре законны.
+        /// </summary>
+        [Theory]
+        [InlineData("{}")]
+        [InlineData("{\"Lines\":[],\"Numbers\":[],\"Tags\":[],\"Matrix\":[]}")]
+        [InlineData("{\"Lines\":null,\"Numbers\":null,\"Head\":null,\"Matrix\":null}")]
+        [InlineData("{\"Lines\":[null],\"Tags\":[null],\"Matrix\":[null,[]]}")]
+        [InlineData("{\"Matrix\":[[1],[2,3],[]],\"Numbers\":[7]}")]
+        public void Degenerate_collection_forms_are_read_the_way_system_text_json_reads_them(string json)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(json);
+
+            var theirs = JsonSerializer.Deserialize<Basket>(utf8, Reference.Relaxed);
+            BasketSerializer.Deserialize(DefaultInjector.Instance, utf8, out var ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+        }
+
+        /// <summary>
+        /// Тип, ссылающийся сам на себя: читатель и писатель взаимно
+        /// рекурсивны, и глубина документа ограничена только стеком.
+        /// </summary>
+        [Fact]
+        public void Self_referencing_type_round_trips()
+        {
+            var value = Node.CreateSample();
+            var text = Reference.Write(value);
+
+            using var exhauster = new PooledUtf8Exhauster();
+            NodeSerializer.Serialize(exhauster, value);
+            Assert.Equal(text, Encoding.UTF8.GetString(exhauster.ToArray()));
+
+            NodeSerializer.Deserialize(DefaultInjector.Instance, Encoding.UTF8.GetBytes(text), out var back);
+            Assert.Equal(text, Reference.Write(back));
+        }
+
+        /// <summary>
+        /// Член без setter'а пишется, но не читается - и коллекция здесь не
+        /// исключение, хотя наполнить уже созданный список технически можно.
+        /// Эталон с опциями по умолчанию её тоже не наполняет, и утверждение
+        /// снимается с него, а не с моего представления о нём.
+        /// </summary>
+        [Fact]
+        public void Getter_only_collection_is_skipped_on_read_just_like_system_text_json_skips_it()
+        {
+            var utf8 = Encoding.UTF8.GetBytes("{\"Tags\":[1,2],\"Scalar\":9}");
+
+            var theirs = JsonSerializer.Deserialize<Fixed>(utf8, Reference.Relaxed);
+            FixedSerializer.Deserialize(DefaultInjector.Instance, utf8, out var ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+            Assert.Empty(ours!.Tags);
+        }
+
+        /// <summary>
+        /// Порядок членов при наследовании. Утверждение здесь не «мы печатаем
+        /// от базового к производному» и не наоборот, а «документ совпадает с
+        /// документом <c>System.Text.Json</c>» - потому что это единственное,
+        /// что имеет значение, и единственное, что нельзя вывести из
+        /// рассуждений.
+        ///
+        /// Проверка стои́т отдельно от сравнения строк: одинаковые значения
+        /// членов сделали бы перепутанный порядок незаметным, поэтому значения
+        /// в образце разные, а порядок дополнительно вынут именами.
+        /// </summary>
+        [Fact]
+        public void Inherited_members_are_ordered_the_way_system_text_json_orders_them()
+        {
+            var value = DerivedEntity.CreateSample();
+            var text = Reference.Write(value);
+
+            using var exhauster = new PooledUtf8Exhauster();
+            DerivedEntitySerializer.Serialize(exhauster, value);
+
+            Assert.Equal(text, Encoding.UTF8.GetString(exhauster.ToArray()));
+
+            Assert.Equal(
+                new[] { "Z", "M", "A", "B", },
+                System.Text.RegularExpressions.Regex.Matches(text, "\"(\\w+)\":")
+                    .Cast<System.Text.RegularExpressions.Match>()
+                    .Select(m => m.Groups[1].Value)
+                    .ToArray()
+                );
         }
 
         private static string Serialize(Flat value)

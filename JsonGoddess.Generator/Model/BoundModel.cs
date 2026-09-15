@@ -3,11 +3,11 @@ using System.Collections.Generic;
 namespace JsonGoddess.Generator.Model
 {
     /// <summary>
-    /// Builtin-типы, которые фаза 2 умеет. Набор равен не списку из §7.1 плана,
-    /// а тому, что <b>есть у sink'ов</b>: <c>IExhauster</c> и <c>IInjector</c>
-    /// - единственный источник истины о том, какую лексему кто-то умеет
-    /// написать и прочитать. Тип, которого у sink'а нет, генератор обязан
-    /// отвергнуть (JGD022), а не обслужить приблизительно.
+    /// Builtin-типы, которые генератор умеет. Набор равен не списку из §7.1
+    /// плана, а тому, что <b>есть у sink'ов</b>: <c>IExhauster</c> и
+    /// <c>IInjector</c> - единственный источник истины о том, какую лексему
+    /// кто-то умеет написать и прочитать. Тип, которого у sink'а нет, генератор
+    /// обязан отвергнуть (JGD022), а не обслужить приблизительно.
     /// </summary>
     public enum BuiltinKind
     {
@@ -48,6 +48,80 @@ namespace JsonGoddess.Generator.Model
         Text,
     }
 
+    /// <summary>
+    /// Чем значение является в дереве типов. Деление ровно по тому, какой код
+    /// его обслуживает: лексема, вызов <c>Read_</c>/<c>Write_</c> другого
+    /// субъекта или цикл по элементам.
+    /// </summary>
+    public enum ValueForm
+    {
+        Builtin,
+        Subject,
+        List,
+        Array,
+    }
+
+    /// <summary>
+    /// Значение - узел дерева, а не плоский вид. <c>List&lt;List&lt;int&gt;&gt;</c>
+    /// в JSON обычная форма, поэтому вложенность здесь не частный случай, а
+    /// строение модели: элемент коллекции описывается тем же самым
+    /// <see cref="ValueModel"/>.
+    /// </summary>
+    public sealed class ValueModel
+    {
+        public ValueForm Form { get; }
+
+        /// <summary>Значим только при <see cref="ValueForm.Builtin"/>.</summary>
+        public BuiltinKind Builtin { get; }
+
+        /// <summary>
+        /// Имя типа, каким оно печатается в объявление локальной переменной и в
+        /// <c>new</c>. Без <c>?</c>: nullability приписывается по
+        /// <see cref="IsNullable"/>.
+        /// </summary>
+        public string TypeName { get; }
+
+        /// <summary>
+        /// Суффикс имён методов: для субъекта - его же, общий с
+        /// <see cref="SubjectModel.MethodSuffix"/>; для коллекции - её
+        /// собственный, по которому печатается <c>ReadCollection_</c>.
+        /// </summary>
+        public string MethodSuffix { get; }
+
+        /// <summary>Элемент коллекции. <c>null</c> для всего остального.</summary>
+        public ValueModel? Element { get; }
+
+        /// <summary>
+        /// Может ли на месте значения стоять <c>null</c>. От этого зависит,
+        /// нужна ли обёртка <c>TryReadNull</c>: для значимого не-nullable члена
+        /// её нет, и это не экономия ветки, а отказ принять документ, которого
+        /// тип описать не может.
+        /// </summary>
+        public bool IsNullable { get; }
+
+        public ValueModel(
+            ValueForm form,
+            BuiltinKind builtin,
+            string typeName,
+            string methodSuffix,
+            ValueModel? element,
+            bool isNullable
+            )
+        {
+            Form = form;
+            Builtin = builtin;
+            TypeName = typeName;
+            MethodSuffix = methodSuffix;
+            Element = element;
+            IsNullable = isNullable;
+        }
+
+        /// <summary>Тип, каким он печатается в объявление: с <c>?</c>, если значение может быть null.</summary>
+        public string Declaration => IsNullable ? TypeName + "?" : TypeName;
+
+        public bool IsCollection => Form == ValueForm.List || Form == ValueForm.Array;
+    }
+
     public sealed class MemberModel
     {
         /// <summary>Имя члена в C#: <c>value.Id</c>, <c>result.Id</c>.</summary>
@@ -59,13 +133,7 @@ namespace JsonGoddess.Generator.Model
         /// <summary>UTF-8-байты <see cref="JsonName"/>: по ним считается и длина, и ключ.</summary>
         public byte[] JsonNameUtf8 { get; }
 
-        public BuiltinKind Kind { get; }
-
-        /// <summary><c>Nullable&lt;T&gt;</c> над значимым типом.</summary>
-        public bool IsNullableValueType { get; }
-
-        /// <summary>Ссылочный тип: <c>string</c> или <c>byte[]</c>.</summary>
-        public bool IsReferenceType { get; }
+        public ValueModel Value { get; }
 
         /// <summary>Есть публичный getter - член попадает в запись.</summary>
         public bool CanWrite { get; }
@@ -77,9 +145,7 @@ namespace JsonGoddess.Generator.Model
             string memberName,
             string jsonName,
             byte[] jsonNameUtf8,
-            BuiltinKind kind,
-            bool isNullableValueType,
-            bool isReferenceType,
+            ValueModel value,
             bool canWrite,
             bool canRead
             )
@@ -87,20 +153,10 @@ namespace JsonGoddess.Generator.Model
             MemberName = memberName;
             JsonName = jsonName;
             JsonNameUtf8 = jsonNameUtf8;
-            Kind = kind;
-            IsNullableValueType = isNullableValueType;
-            IsReferenceType = isReferenceType;
+            Value = value;
             CanWrite = canWrite;
             CanRead = canRead;
         }
-
-        /// <summary>
-        /// Может ли на месте значения стоять <c>null</c>. От этого зависит,
-        /// нужна ли в чтении обёртка <c>TryReadNull</c>: для значимого
-        /// не-nullable члена её нет, и это не экономия ветки, а отказ принять
-        /// документ, которого тип описать не может.
-        /// </summary>
-        public bool IsNullable => IsNullableValueType || IsReferenceType;
     }
 
     public sealed class SubjectModel
@@ -143,13 +199,22 @@ namespace JsonGoddess.Generator.Model
 
         public IReadOnlyList<SubjectModel> Subjects { get; }
 
+        /// <summary>
+        /// Различные коллекции, встретившиеся в членах - включая вложенные.
+        /// Чтение коллекции вынесено в метод, потому что иначе вложенность
+        /// пришлось бы разворачивать в цикл внутри цикла прямо в ветке
+        /// диспетчера; запись, наоборот, печатается по месту.
+        /// </summary>
+        public IReadOnlyList<ValueModel> Collections { get; }
+
         public HostModel(
             string? ns,
             string typeName,
             string fullName,
             IReadOnlyList<string> exhausterTypes,
             IReadOnlyList<string> injectorTypes,
-            IReadOnlyList<SubjectModel> subjects
+            IReadOnlyList<SubjectModel> subjects,
+            IReadOnlyList<ValueModel> collections
             )
         {
             Namespace = ns;
@@ -158,6 +223,7 @@ namespace JsonGoddess.Generator.Model
             ExhausterTypes = exhausterTypes;
             InjectorTypes = injectorTypes;
             Subjects = subjects;
+            Collections = collections;
         }
     }
 }

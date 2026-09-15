@@ -13,34 +13,28 @@ namespace JsonGoddess.Generator.Binding
     /// </summary>
     public static class BuiltinTypes
     {
+        /// <summary>
+        /// <paramref name="type"/> приезжает сюда уже развёрнутым из
+        /// <c>Nullable&lt;&gt;</c>: решение о nullability принадлежит
+        /// <see cref="ValueBinder"/>, потому что оно одинаково для builtin'а,
+        /// субъекта и коллекции.
+        /// </summary>
         public static bool TryBind(
             ITypeSymbol type,
             out BuiltinKind kind,
-            out bool isNullableValueType,
             out bool isReferenceType
             )
         {
             kind = default;
-            isNullableValueType = false;
             isReferenceType = false;
 
-            if (type is INamedTypeSymbol { IsGenericType: true } named
-                && named.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T)
-            {
-                isNullableValueType = true;
-                type = named.TypeArguments[0];
-            }
-
-            //byte[] - единственный массив, который фаза 2 знает, и знает его не
-            //как коллекцию, а как одну base64-строку
+            //byte[] - единственный массив, который известен здесь, и известен он
+            //не как коллекция, а как одна base64-строка. Проверка стоит раньше
+            //разбора массивов в ValueBinder, иначе base64 превратился бы в
+            //список чисел - и это был бы другой документ
             if (type is IArrayTypeSymbol { IsSZArray: true } array
                 && array.ElementType.SpecialType == SpecialType.System_Byte)
             {
-                if (isNullableValueType)
-                {
-                    return false;
-                }
-
                 kind = BuiltinKind.ByteArray;
                 isReferenceType = true;
                 return true;
@@ -65,11 +59,6 @@ namespace JsonGoddess.Generator.Binding
 
                 case SpecialType.System_String:
                 {
-                    if (isNullableValueType)
-                    {
-                        return false;
-                    }
-
                     kind = BuiltinKind.String;
                     isReferenceType = true;
                     return true;

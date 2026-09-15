@@ -15,7 +15,7 @@ namespace JsonGoddess.Generator.Emit
     /// </summary>
     public static class ClassSourceProducer
     {
-        private const string Scan = BuiltinSourceProducer.Scan;
+        private const string Scan = ValueSourceProducer.Scan;
         private const string Context = "global::JsonGoddess.JsonParseContext";
         private const string Span = "global::System.ReadOnlySpan<byte>";
 
@@ -59,6 +59,11 @@ namespace JsonGoddess.Generator.Emit
                     }
 
                     EmitReader(builder, subject, injector);
+                }
+
+                foreach (var collection in host.Collections)
+                {
+                    EmitCollectionReader(builder, collection, injector);
                 }
             }
 
@@ -145,7 +150,7 @@ namespace JsonGoddess.Generator.Emit
                 var prefix = (i == 0 ? "{" : ",") + "\"" + member.JsonName + "\":";
 
                 builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(prefix) + ");");
-                BuiltinSourceProducer.WriteValue(builder, member, "value." + member.MemberName);
+                ValueSourceProducer.WriteValue(builder, member.Value, "value." + member.MemberName, 0);
             }
 
             builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal("}") + ");");
@@ -196,7 +201,7 @@ namespace JsonGoddess.Generator.Emit
                 NameDispatcher.Emit(
                     builder,
                     members,
-                    member => BuiltinSourceProducer.ReadValue(builder, member, "result." + member.MemberName)
+                    member => ValueSourceProducer.ReadValue(builder, member.Value, "result." + member.MemberName)
                     );
 
                 //Экранированное имя не совпадёт ни с одним литералом, потому
@@ -231,6 +236,104 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
 
             builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".CloseBrace);");
+            builder.Line("return result;");
+
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Читатель коллекции. Отличие от объекта не только в скобках: у
+        /// массива нет имён, значит нет и диспетчера, - весь цикл сводится к
+        /// «прочитать элемент, проверить запятую».
+        ///
+        /// Массив читается в <c>T[]</c> с удвоением и подрезкой в конце, а не
+        /// через <c>List&lt;T&gt;.ToArray()</c>: у второго способа ровно те же
+        /// перевыделения плюс лишняя копия и лишний объект.
+        /// </summary>
+        private static void EmitCollectionReader(SourceBuilder builder, ValueModel collection, string injector)
+        {
+            var isArray = collection.Form == ValueForm.Array;
+            var element = collection.Element!;
+
+            builder.Line(
+                "private static " + collection.TypeName + "? ReadCollection_" + collection.MethodSuffix + "("
+                );
+            builder.Indent();
+            builder.Line(injector + " injector,");
+            builder.Line("scoped " + Span + " json,");
+            builder.Line("scoped ref int position,");
+            builder.Line("scoped ref " + Context + " context");
+            builder.Line(")");
+            builder.Unindent();
+            builder.OpenBlock();
+
+            builder.OpenBlock("if (" + Scan + ".TryReadNull(json, ref position))");
+            builder.Line("return null;");
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".OpenBracket);");
+            builder.Line();
+
+            builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + Scan + ".CloseBracket))");
+            builder.Line(
+                isArray
+                    ? "return " + ValueSourceProducer.Array + ".Empty<" + element.Declaration + ">();"
+                    : "return new " + collection.TypeName + "();"
+                );
+            builder.CloseBlock();
+            builder.Line();
+
+            if (isArray)
+            {
+                builder.Line("var result = new " + element.Declaration + "[4];");
+                builder.Line("var count = 0;");
+            }
+            else
+            {
+                builder.Line("var result = new " + collection.TypeName + "();");
+            }
+
+            builder.Line();
+            builder.OpenBlock("while (true)");
+
+            builder.Line(element.Declaration + " item;");
+            ValueSourceProducer.ReadValue(builder, element, "item");
+            builder.Line();
+
+            if (isArray)
+            {
+                builder.OpenBlock("if (count == result.Length)");
+                builder.Line(ValueSourceProducer.Array + ".Resize(ref result, count * 2);");
+                builder.CloseBlock();
+                builder.Line();
+                builder.Line("result[count] = item;");
+                builder.Line("count++;");
+            }
+            else
+            {
+                builder.Line("result.Add(item);");
+            }
+
+            builder.Line();
+            builder.OpenBlock("if (!" + Scan + ".TryConsume(json, ref position, " + Scan + ".Comma))");
+            builder.Line("break;");
+            builder.CloseBlock();
+
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".CloseBracket);");
+
+            if (isArray)
+            {
+                builder.OpenBlock("if (count != result.Length)");
+                builder.Line(ValueSourceProducer.Array + ".Resize(ref result, count);");
+                builder.CloseBlock();
+                builder.Line();
+            }
+
             builder.Line("return result;");
 
             builder.CloseBlock();
