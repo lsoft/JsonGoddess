@@ -778,4 +778,108 @@ namespace JsonGoddess.Tests.Generated
     public partial class PositionalSerializer
     {
     }
+
+    /// <summary>
+    /// Полиморфная база. <c>Cat</c> с числовым дискриминатором нарочно рядом со
+    /// строковым: значение сравнивается сырым текстом, и эти два случая должны
+    /// пройти одной веткой.
+    ///
+    /// Сама база производной от себя <b>не</b> объявлена - значит пишется без
+    /// дискриминатора, как обычный объект (проверено прогоном эталона).
+    /// </summary>
+    [JsonDerivedType(typeof(Dog), "dog")]
+    [JsonDerivedType(typeof(Cat), 7)]
+    public class Animal
+    {
+        public string? Name { get; set; }
+    }
+
+    public class Dog : Animal
+    {
+        public bool Barks { get; set; }
+    }
+
+    public class Cat : Animal
+    {
+        public int Lives { get; set; }
+    }
+
+    /// <summary>Незарегистрированный потомок: запись обязана отказать.</summary>
+    public class Poodle : Dog
+    {
+        public int Curls { get; set; }
+    }
+
+    /// <summary>
+    /// Два уровня и своё имя дискриминатора. Набор производных не транзитивен:
+    /// <c>Bottom</c> объявлен на <c>Middle</c>, и как <c>Top</c> он не
+    /// пишется - у эталона это отказ.
+    /// </summary>
+    [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+    [JsonDerivedType(typeof(Middle), "middle")]
+    public class Top
+    {
+        public int A { get; set; }
+    }
+
+    [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+    [JsonDerivedType(typeof(Bottom), "bottom")]
+    public class Middle : Top
+    {
+        public int B { get; set; }
+    }
+
+    public class Bottom : Middle
+    {
+        public int C { get; set; }
+    }
+
+    /// <summary>Полиморфный тип на месте члена.</summary>
+    public class Shelter
+    {
+        public Animal? Resident { get; set; }
+
+        public List<Animal>? Residents { get; set; }
+
+        public static Shelter CreateSample()
+        {
+            return new Shelter
+            {
+                Resident = new Cat { Name = "m", Lives = 9, },
+                Residents = new List<Animal>
+                {
+                    new Dog { Name = "r", Barks = true, },
+                    new Animal { Name = "plain", },
+                },
+            };
+        }
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Animal), true)]
+    [JsonSubject(typeof(Dog), false)]
+    [JsonSubject(typeof(Cat), false)]
+    public partial class AnimalSerializer
+    {
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Top), true)]
+    [JsonSubject(typeof(Middle), false)]
+    [JsonSubject(typeof(Bottom), false)]
+    public partial class TopSerializer
+    {
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Shelter), true)]
+    [JsonSubject(typeof(Animal), false)]
+    [JsonSubject(typeof(Dog), false)]
+    [JsonSubject(typeof(Cat), false)]
+    public partial class ShelterSerializer
+    {
+    }
 }

@@ -23,6 +23,7 @@ namespace JsonGoddess.Generator.Emit
         private const string Context = "global::JsonGoddess.JsonParseContext";
         private const string Span = "global::System.ReadOnlySpan<byte>";
         private const string EqualityComparer = "global::System.Collections.Generic.EqualityComparer";
+        private const string DocumentException = "global::JsonGoddess.JsonDocumentException";
 
         public static string Produce(HostModel host)
         {
@@ -50,7 +51,17 @@ namespace JsonGoddess.Generator.Emit
                         EmitSerializeEntry(builder, subject, exhauster);
                     }
 
-                    EmitWriter(builder, subject, exhauster, host.DictionaryKeyNaming);
+                    if (subject.IsPolymorphic)
+                    {
+                        EmitPolymorphicWriter(builder, host, subject, exhauster, host.DictionaryKeyNaming);
+                    }
+                    else
+                    {
+                        EmitWriter(
+                            builder, subject, exhauster, host.DictionaryKeyNaming,
+                            "Write_" + subject.MethodSuffix, null
+                            );
+                    }
                 }
 
                 foreach (var enumModel in host.StringEnums)
@@ -68,7 +79,21 @@ namespace JsonGoddess.Generator.Emit
                         EmitDeserializeEntry(builder, subject, injector);
                     }
 
-                    EmitReader(builder, subject, injector);
+                    EmitReader(
+                        builder, subject, injector, null,
+                        subject.IsPolymorphic ? subject.DiscriminatorName : null
+                        );
+
+                    foreach (var derived in subject.Derived)
+                    {
+                        EmitReader(
+                            builder,
+                            host.Subjects.First(s => s.FullName == derived.FullName),
+                            injector,
+                            PairReaderName(subject, derived),
+                            subject.DiscriminatorName
+                            );
+                    }
                 }
 
                 foreach (var collection in host.Collections)
@@ -136,17 +161,123 @@ namespace JsonGoddess.Generator.Emit
         /// причине: условно опускаемых членов ещё нет, поэтому запятые
         /// безусловны.
         /// </summary>
-        private static void EmitWriter(
+        /// <summary>
+        /// Писатель полиморфной базы: развилка по <b>точному</b> типу значения.
+        ///
+        /// Не <c>is</c>, и это не стилистика. Незарегистрированный потомок
+        /// зарегистрированного потомка (<c>Poodle : Dog</c>) у эталона -
+        /// <c>NotSupportedException</c>, а <c>is Dog</c> записал бы его как
+        /// <c>Dog</c>, потеряв половину членов и не сказав об этом.
+        ///
+        /// Дальше по методу на пару «база + производный»: значение
+        /// дискриминатора принадлежит паре, а тело у пары своё, потому что
+        /// дискриминатор склеивается со скобкой и именем первого члена в один
+        /// литерал - ровно как всё остальное строение документа.
+        /// </summary>
+        private static void EmitPolymorphicWriter(
             SourceBuilder builder,
+            HostModel host,
             SubjectModel subject,
             string exhauster,
             JsonNamingStyle keyNaming
             )
         {
-            var members = subject.Members.Where(m => m.CanWrite).ToList();
+            var selfIsDerived = subject.Derived.Any(d => d.FullName == subject.FullName);
 
             builder.OpenBlock(
                 "private static void Write_" + subject.MethodSuffix + "("
+                + exhauster + " exhauster, " + subject.Declaration + " value)"
+                );
+
+            builder.OpenBlock("if (value is null)");
+            builder.Line("exhauster.AppendNull();");
+            builder.Line("return;");
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line("var runtimeType = value.GetType();");
+            builder.Line();
+
+            foreach (var derived in subject.Derived)
+            {
+                builder.OpenBlock("if (runtimeType == typeof(" + derived.FullName + "))");
+                builder.Line(
+                    PairWriterName(subject, derived) + "(exhauster, (" + derived.FullName + ")value);"
+                    );
+                builder.Line("return;");
+                builder.CloseBlock();
+                builder.Line();
+            }
+
+            if (selfIsDerived)
+            {
+                //сам тип уже разобран веткой выше, значит сюда доезжает только
+                //то, чего в списке нет
+                builder.Line("throw " + Unsupported(subject) + ";");
+            }
+            else
+            {
+                builder.OpenBlock("if (runtimeType != typeof(" + subject.FullName + "))");
+                builder.Line("throw " + Unsupported(subject) + ";");
+                builder.CloseBlock();
+                builder.Line();
+                builder.Line("WriteSelf_" + subject.MethodSuffix + "(exhauster, value);");
+            }
+
+            builder.CloseBlock();
+            builder.Line();
+
+            if (!selfIsDerived)
+            {
+                //база без собственного дискриминатора пишется как обычный
+                //объект - проверено прогоном: у эталона он появляется только
+                //тогда, когда база объявлена производной от самой себя
+                EmitWriter(
+                    builder, subject, exhauster, keyNaming, "WriteSelf_" + subject.MethodSuffix, null
+                    );
+            }
+
+            foreach (var derived in subject.Derived)
+            {
+                EmitWriter(
+                    builder,
+                    host.Subjects.First(s => s.FullName == derived.FullName),
+                    exhauster,
+                    keyNaming,
+                    PairWriterName(subject, derived),
+                    derived.DiscriminatorLiteral is null
+                        ? null
+                        : "\"" + subject.DiscriminatorName + "\":" + derived.DiscriminatorLiteral
+                    );
+            }
+        }
+
+        private static string PairWriterName(SubjectModel subject, DerivedTypeModel derived) =>
+            "Write_" + derived.MethodSuffix + "_As_" + subject.MethodSuffix;
+
+        private static string PairReaderName(SubjectModel subject, DerivedTypeModel derived) =>
+            "ReadBody_" + derived.MethodSuffix + "_As_" + subject.MethodSuffix;
+
+        private static string Unsupported(SubjectModel subject)
+        {
+            return "new global::System.NotSupportedException(\"runtime type \" + runtimeType + "
+                + "\" is not supported by polymorphic type '" + subject.FullName.Replace("global::", string.Empty)
+                + "'\")";
+        }
+
+        private static void EmitWriter(
+            SourceBuilder builder,
+            SubjectModel subject,
+            string exhauster,
+            JsonNamingStyle keyNaming,
+            string methodName,
+            string? discriminator
+            )
+        {
+            var members = subject.Members.Where(m => m.CanWrite).ToList();
+
+            builder.OpenBlock(
+                "private static void " + methodName + "("
                 + exhauster + " exhauster, " + subject.Declaration + " value)"
                 );
 
@@ -164,7 +295,11 @@ namespace JsonGoddess.Generator.Emit
 
             if (members.Count == 0)
             {
-                builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal("{}") + ");");
+                builder.Line(
+                    "exhauster.AppendRaw("
+                    + SourceBuilder.Utf8Literal(discriminator is null ? "{}" : "{" + discriminator + "}")
+                    + ");"
+                    );
                 builder.CloseBlock();
                 builder.Line();
                 return;
@@ -177,6 +312,17 @@ namespace JsonGoddess.Generator.Emit
             var pendingOpen = true;
             var commaIsCertain = false;
             var needCommaDeclared = false;
+
+            //дискриминатор печатается первым свойством - так его пишет эталон,
+            //и так же он его требует на чтении. Для автомата состояний это
+            //означает, что скобка уже напечатана и запятая перед следующим
+            //членом заведомо нужна
+            if (discriminator is not null)
+            {
+                builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal("{" + discriminator) + ");");
+                pendingOpen = false;
+                commaIsCertain = true;
+            }
 
             for (var i = 0; i < members.Count; i++)
             {
@@ -289,11 +435,107 @@ namespace JsonGoddess.Generator.Emit
             return candidate + " != default(" + member.Value.TypeName + ")";
         }
 
-        private static void EmitReader(SourceBuilder builder, SubjectModel subject, string injector)
+        /// <summary>
+        /// Развилка по дискриминатору - <b>только первым свойством</b>.
+        ///
+        /// Это не наше упрощение, а требование эталона: документ, в котором
+        /// <c>$type</c> стои́т не первым, он читать отказывается
+        /// (<c>JsonException</c>), и принять такой документ значило бы прочесть
+        /// то, чего он не читает.
+        ///
+        /// Значение дискриминатора сравнивается <b>сырым текстом</b>, вместе с
+        /// кавычками, если они есть. Одна ветка на строку и на число вместо
+        /// двух: <c>"dog"</c> и <c>7</c> различаются как байты и без разбора
+        /// лексемы.
+        /// </summary>
+        private static void EmitDiscriminatorDispatch(SourceBuilder builder, SubjectModel subject)
+        {
+            builder.Line("var discriminatorStart = position;");
+            builder.Line("var hasDiscriminator = false;");
+            builder.Line();
+
+            builder.OpenBlock("if (" + Scan + ".Peek(json, ref position) == " + TokenKind + ".String)");
+            builder.Line("var firstName = " + Scan + ".ReadStringContent(json, ref position, out var firstEscaped);");
+            builder.OpenBlock("if (firstEscaped)");
+            builder.Line("firstName = context.UnescapeName(firstName);");
+            builder.CloseBlock();
+            builder.Line();
+            builder.Line(
+                "hasDiscriminator = global::System.MemoryExtensions.SequenceEqual(firstName, "
+                + SourceBuilder.Utf8Literal(subject.DiscriminatorName) + ");"
+                );
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.OpenBlock("if (hasDiscriminator)");
+            builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".Colon);");
+            builder.Line(Scan + ".SkipWhitespace(json, ref position);");
+            builder.Line("var valueStart = position;");
+            builder.Line(Scan + ".SkipValue(json, ref position);");
+            builder.Line("var discriminator = json.Slice(valueStart, position - valueStart);");
+            builder.Line();
+
+            foreach (var derived in subject.Derived)
+            {
+                if (derived.DiscriminatorLiteral is null)
+                {
+                    //[JsonDerivedType(typeof(D))] без значения: эталон такой тип
+                    //пишет без дискриминатора, значит и прочитать его обратно
+                    //производным не по чему - у него просто нет имени
+                    continue;
+                }
+
+                builder.OpenBlock(
+                    "if (global::System.MemoryExtensions.SequenceEqual(discriminator, "
+                    + SourceBuilder.Utf8Literal(derived.DiscriminatorLiteral) + "))"
+                    );
+                builder.Line(
+                    "return " + PairReaderName(subject, derived)
+                    + "(injector, json, ref position, ref context);"
+                    );
+                builder.CloseBlock();
+                builder.Line();
+            }
+
+            builder.Line(
+                "throw new " + DocumentException + "(\"unrecognized type discriminator for '"
+                + subject.FullName.Replace("global::", string.Empty) + "'\", valueStart);"
+                );
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line("position = discriminatorStart;");
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Читатель субъекта.
+        /// </summary>
+        /// <param name="bodyName">
+        /// Не <c>null</c> - печатается <b>тело</b>: читатель, которого позвали
+        /// уже внутри объекта, сразу после значения дискриминатора. Скобку и
+        /// <c>null</c> разобрал звавший, и первое, что здесь бывает, - запятая
+        /// или закрывающая скобка.
+        ///
+        /// Своя копия тела, а не разделение с обычным читателем: разделить их
+        /// значило бы добавить вызов на каждое чтение каждого объекта ради
+        /// экономии текста у полиморфных типов.
+        /// </param>
+        private static void EmitReader(
+            SourceBuilder builder,
+            SubjectModel subject,
+            string injector,
+            string? bodyName,
+            string? discriminatorGuard = null
+            )
         {
             var members = subject.Members.Where(m => m.CanRead).ToList();
+            var body = bodyName is not null;
 
-            builder.Line("private static " + subject.Declaration + " Read_" + subject.MethodSuffix + "(");
+            builder.Line(
+                "private static " + subject.Declaration + " "
+                + (bodyName ?? "Read_" + subject.MethodSuffix) + "("
+                );
             builder.Indent();
             builder.Line(injector + " injector,");
             builder.Line("scoped " + Span + " json,");
@@ -307,7 +549,7 @@ namespace JsonGoddess.Generator.Emit
             //месте структуры обязан кончиться отказом - ровно так ведёт себя
             //эталон, - и он кончается им сам, на Expect(OpenBrace) ниже.
             //Nullable<> над структурой разбирается на месте члена, до вызова.
-            if (!subject.IsValueType)
+            if (!body && !subject.IsValueType)
             {
                 builder.OpenBlock("if (" + Scan + ".TryReadNull(json, ref position))");
                 builder.Line("return null;");
@@ -315,7 +557,10 @@ namespace JsonGoddess.Generator.Emit
                 builder.Line();
             }
 
-            builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".OpenBrace);");
+            if (!body)
+            {
+                builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".OpenBrace);");
+            }
 
             var deferred = subject.NeedsDeferredConstruction;
 
@@ -329,7 +574,22 @@ namespace JsonGoddess.Generator.Emit
                 builder.Line();
             }
 
-            builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + Scan + ".CloseBrace))");
+            if (subject.IsPolymorphic && !body)
+            {
+                EmitDiscriminatorDispatch(builder, subject);
+            }
+
+            builder.OpenBlock(
+                body
+                    ? "if (!" + Scan + ".TryConsume(json, ref position, " + Scan + ".Comma))"
+                    : "if (" + Scan + ".TryConsume(json, ref position, " + Scan + ".CloseBrace))"
+                );
+
+            if (body)
+            {
+                builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".CloseBrace);");
+            }
+
             builder.Line(deferred ? "return " + Construct(subject, members) + ";" : "return result;");
             builder.CloseBlock();
             builder.Line();
@@ -345,6 +605,24 @@ namespace JsonGoddess.Generator.Emit
                 builder.Unindent();
                 builder.Line("dispatch:");
                 builder.Indent();
+
+                //Дискриминатор, встреченный не первым свойством, - отказ.
+                //Эталон здесь отказывает тоже, и принять такой документ
+                //значило бы прочесть то, чего не читает он. Проверка стои́т
+                //после ярлыка, чтобы сработать и на разэкранированном имени.
+                if (discriminatorGuard is not null)
+                {
+                    builder.OpenBlock(
+                        "if (global::System.MemoryExtensions.SequenceEqual(name, "
+                        + SourceBuilder.Utf8Literal(discriminatorGuard) + "))"
+                        );
+                    builder.Line(
+                        "throw new " + DocumentException
+                        + "(\"the type discriminator must be the first property\", position);"
+                        );
+                    builder.CloseBlock();
+                    builder.Line();
+                }
 
                 NameDispatcher.Emit(
                     builder,

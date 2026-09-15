@@ -168,6 +168,19 @@ namespace JsonGoddess.Tests.Interop
                     new Positional(1, "b", new List<int> { 2, 3, }),
                     PositionalSerializer.Serialize, ReadPositional),
 
+                //полиморфизм: дискриминатор первым свойством, дальше члены
+                //производного типа, потом базового
+                Form("poly/derived-string", "производный тип, строковый дискриминатор",
+                    new Dog { Name = "r", Barks = true, }, AnimalSerializer.Serialize, ReadAnimal),
+                Form("poly/derived-number", "производный тип, числовой дискриминатор",
+                    new Cat { Name = "m", Lives = 9, }, AnimalSerializer.Serialize, ReadAnimal),
+                Form("poly/base-itself", "база, не объявленная производной от себя: без дискриминатора",
+                    new Animal { Name = "plain", }, AnimalSerializer.Serialize, ReadAnimal),
+                Form("poly/nested", "два уровня и своё имя дискриминатора",
+                    new Middle { A = 1, B = 2, }, TopSerializer.Serialize, ReadTop),
+                Form("poly/member-and-collection", "полиморфный тип членом и внутри коллекции",
+                    Shelter.CreateSample(), ShelterSerializer.Serialize, ReadShelter),
+
                 //enum'ы
                 Form("marks/enums-full", "enum числом и именем, в коллекции и в словаре",
                     Marks.CreateSample(), MarksSerializer.Serialize, ReadMarks),
@@ -378,6 +391,24 @@ namespace JsonGoddess.Tests.Interop
         private static Positional? ReadPositional(ReadOnlySpan<byte> json)
         {
             PositionalSerializer.Deserialize(DefaultInjector.Instance, json, out Positional? result);
+            return result;
+        }
+
+        private static Animal? ReadAnimal(ReadOnlySpan<byte> json)
+        {
+            AnimalSerializer.Deserialize(DefaultInjector.Instance, json, out Animal? result);
+            return result;
+        }
+
+        private static Top? ReadTop(ReadOnlySpan<byte> json)
+        {
+            TopSerializer.Deserialize(DefaultInjector.Instance, json, out Top? result);
+            return result;
+        }
+
+        private static Shelter? ReadShelter(ReadOnlySpan<byte> json)
+        {
+            ShelterSerializer.Deserialize(DefaultInjector.Instance, json, out Shelter? result);
             return result;
         }
     }

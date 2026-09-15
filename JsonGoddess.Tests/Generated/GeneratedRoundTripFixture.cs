@@ -801,6 +801,116 @@ namespace JsonGoddess.Tests.Generated
             Assert.Equal(text, Reference.Write(back));
         }
 
+        /// <summary>
+        /// Полиморфизм: дискриминатор первым свойством, дальше члены
+        /// производного типа, потом базового. Все три образца - через базу,
+        /// потому что дискриминатор появляется только тогда, когда статический
+        /// тип и есть база.
+        /// </summary>
+        [Fact]
+        public void Polymorphic_documents_match_system_text_json()
+        {
+            AssertSame<Animal>(new Dog { Name = "r", Barks = true, }, AnimalSerializer.Serialize);
+            AssertSame<Animal>(new Cat { Name = "m", Lives = 9, }, AnimalSerializer.Serialize);
+            AssertSame<Animal>(new Animal { Name = "plain", }, AnimalSerializer.Serialize);
+        }
+
+        /// <summary>
+        /// Своё имя дискриминатора и два уровня. Набор производных не
+        /// транзитивен: <c>Bottom</c> как <c>Top</c> - отказ у обоих.
+        /// </summary>
+        [Fact]
+        public void Nested_hierarchy_and_custom_discriminator_name()
+        {
+            AssertSame<Top>(new Middle { A = 1, B = 2, }, TopSerializer.Serialize);
+
+            Assert.ThrowsAny<Exception>(() => Reference.Write<Top>(new Bottom { A = 1, B = 2, C = 3, }));
+
+            using var exhauster = new PooledUtf8Exhauster();
+            Assert.ThrowsAny<Exception>(
+                () => TopSerializer.Serialize(exhauster, new Bottom { A = 1, B = 2, C = 3, })
+                );
+        }
+
+        /// <summary>
+        /// Незарегистрированный потомок зарегистрированного потомка - отказ, а
+        /// не запись как база. Если бы диспетчер примерял <c>is</c> вместо
+        /// точного типа, документ вышел бы без половины членов и молча.
+        /// </summary>
+        [Fact]
+        public void Unregistered_runtime_type_is_refused_by_both()
+        {
+            var poodle = new Poodle { Name = "p", Curls = 3, };
+
+            Assert.ThrowsAny<Exception>(() => Reference.Write<Animal>(poodle));
+
+            using var exhauster = new PooledUtf8Exhauster();
+            Assert.ThrowsAny<Exception>(() => AnimalSerializer.Serialize(exhauster, poodle));
+        }
+
+        [Theory]
+        [InlineData("{\"$type\":\"dog\",\"Barks\":true,\"Name\":\"r\"}")]
+        [InlineData("{\"$type\":7,\"Lives\":9,\"Name\":\"m\"}")]
+        [InlineData("{\"Name\":\"plain\"}")]
+        public void Polymorphic_reading_matches_system_text_json(string json)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(json);
+
+            AnimalSerializer.Deserialize(DefaultInjector.Instance, utf8, out Animal? ours);
+            var theirs = JsonSerializer.Deserialize<Animal>(utf8, Reference.Relaxed);
+
+            Assert.Equal(theirs!.GetType(), ours!.GetType());
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+        }
+
+        /// <summary>
+        /// Дискриминатор не первым свойством эталон читать отказывается, и мы
+        /// тоже. Неизвестное значение - отказ у обоих.
+        /// </summary>
+        [Theory]
+        [InlineData("{\"Name\":\"r\",\"$type\":\"dog\"}")]
+        [InlineData("{\"$type\":\"fish\",\"Name\":\"r\"}")]
+        public void Polymorphic_reading_refuses_what_system_text_json_refuses(string json)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(json);
+
+            Assert.ThrowsAny<Exception>(() => JsonSerializer.Deserialize<Animal>(utf8, Reference.Relaxed));
+            Assert.ThrowsAny<Exception>(
+                () => AnimalSerializer.Deserialize(DefaultInjector.Instance, utf8, out Animal? _)
+                );
+        }
+
+        /// <summary>
+        /// Полиморфный тип на месте члена и внутри коллекции: тот же
+        /// дискриминатор, то же строение.
+        /// </summary>
+        [Fact]
+        public void Polymorphic_member_and_collection_round_trip()
+        {
+            var value = Shelter.CreateSample();
+            var text = Reference.Write(value);
+
+            using var exhauster = new PooledUtf8Exhauster();
+            ShelterSerializer.Serialize(exhauster, value);
+            Assert.Equal(text, Encoding.UTF8.GetString(exhauster.ToArray()));
+
+            var utf8 = Encoding.UTF8.GetBytes(text);
+            ShelterSerializer.Deserialize(DefaultInjector.Instance, utf8, out Shelter? ours);
+
+            Assert.Equal(
+                Reference.Write(JsonSerializer.Deserialize<Shelter>(utf8, Reference.Relaxed)),
+                Reference.Write(ours)
+                );
+        }
+
+        private static void AssertSame<T>(T value, Action<PooledUtf8Exhauster, T?> write)
+        {
+            using var exhauster = new PooledUtf8Exhauster();
+            write(exhauster, value);
+
+            Assert.Equal(Reference.Write(value), Encoding.UTF8.GetString(exhauster.ToArray()));
+        }
+
         private static string[] Names(string text)
         {
             return System.Text.RegularExpressions.Regex.Matches(text, "\"(\\w+)\":")

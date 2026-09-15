@@ -26,6 +26,8 @@ namespace JsonGoddess.Generator.Binding
         private const string JsonStringEnumConverterGenericName = "System.Text.Json.Serialization.JsonStringEnumConverter`1";
         private const string JsonPropertyOrderAttributeName = "System.Text.Json.Serialization.JsonPropertyOrderAttribute";
         private const string JsonConstructorAttributeName = "System.Text.Json.Serialization.JsonConstructorAttribute";
+        private const string JsonDerivedTypeAttributeName = "System.Text.Json.Serialization.JsonDerivedTypeAttribute";
+        private const string JsonPolymorphicAttributeName = "System.Text.Json.Serialization.JsonPolymorphicAttribute";
         private const string JsonSourceGenerationOptionsAttributeName = "System.Text.Json.Serialization.JsonSourceGenerationOptionsAttribute";
         private const string FlagsAttributeName = "System.FlagsAttribute";
 
@@ -43,6 +45,8 @@ namespace JsonGoddess.Generator.Binding
         public readonly INamedTypeSymbol? JsonStringEnumConverterGeneric;
         public readonly INamedTypeSymbol? JsonPropertyOrder;
         public readonly INamedTypeSymbol? JsonConstructor;
+        public readonly INamedTypeSymbol? JsonDerivedType;
+        public readonly INamedTypeSymbol? JsonPolymorphic;
         public readonly INamedTypeSymbol? JsonSourceGenerationOptions;
         public readonly INamedTypeSymbol? Flags;
 
@@ -62,6 +66,8 @@ namespace JsonGoddess.Generator.Binding
             JsonStringEnumConverterGeneric = compilation.GetTypeByMetadataName(JsonStringEnumConverterGenericName);
             JsonPropertyOrder = compilation.GetTypeByMetadataName(JsonPropertyOrderAttributeName);
             JsonConstructor = compilation.GetTypeByMetadataName(JsonConstructorAttributeName);
+            JsonDerivedType = compilation.GetTypeByMetadataName(JsonDerivedTypeAttributeName);
+            JsonPolymorphic = compilation.GetTypeByMetadataName(JsonPolymorphicAttributeName);
             JsonSourceGenerationOptions = compilation.GetTypeByMetadataName(JsonSourceGenerationOptionsAttributeName);
             Flags = compilation.GetTypeByMetadataName(FlagsAttributeName);
         }

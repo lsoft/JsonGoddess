@@ -338,6 +338,38 @@ namespace JsonGoddess.Generator.Model
         }
     }
 
+    /// <summary>
+    /// Производный тип, объявленный на базе через <c>[JsonDerivedType]</c>.
+    ///
+    /// Дискриминатор принадлежит <b>паре</b> «база + производный», а не
+    /// производному типу: один и тот же класс может стоять под двумя базами с
+    /// разными значениями, и писаться в каждом случае по-своему. Отсюда и имена
+    /// порождаемых методов - с обоими суффиксами.
+    /// </summary>
+    public sealed class DerivedTypeModel
+    {
+        public string FullName { get; }
+
+        public string MethodSuffix { get; }
+
+        /// <summary>
+        /// Значение дискриминатора, уже готовое для печати в документ:
+        /// <c>"dog"</c> с кавычками или <c>7</c> без них. <c>null</c> - у
+        /// <c>[JsonDerivedType(typeof(D))]</c> без значения: эталон такой тип
+        /// пишет <b>без</b> дискриминатора (проверено прогоном), то есть
+        /// односторонне - прочитать документ обратно производным он уже не
+        /// сможет.
+        /// </summary>
+        public string? DiscriminatorLiteral { get; }
+
+        public DerivedTypeModel(string fullName, string methodSuffix, string? discriminatorLiteral)
+        {
+            FullName = fullName;
+            MethodSuffix = methodSuffix;
+            DiscriminatorLiteral = discriminatorLiteral;
+        }
+    }
+
     public sealed class SubjectModel
     {
         /// <summary>Полное имя с <c>global::</c>: печатается в код как есть.</summary>
@@ -369,13 +401,27 @@ namespace JsonGoddess.Generator.Model
         /// </summary>
         public IReadOnlyList<ParameterModel> Parameters { get; }
 
+        /// <summary>
+        /// Производные типы, объявленные на этом. Пусто - тип неполиморфен, и
+        /// ни одной лишней строки в порождаемом коде у него не появляется.
+        /// </summary>
+        public IReadOnlyList<DerivedTypeModel> Derived { get; }
+
+        /// <summary>
+        /// Имя свойства-дискриминатора: <c>$type</c>, если не сказано иное
+        /// через <c>[JsonPolymorphic(TypeDiscriminatorPropertyName = ...)]</c>.
+        /// </summary>
+        public string DiscriminatorName { get; }
+
         public SubjectModel(
             string fullName,
             string methodSuffix,
             bool isRoot,
             bool isValueType,
             IReadOnlyList<MemberModel> members,
-            IReadOnlyList<ParameterModel> parameters
+            IReadOnlyList<ParameterModel> parameters,
+            IReadOnlyList<DerivedTypeModel> derived,
+            string discriminatorName
             )
         {
             FullName = fullName;
@@ -384,7 +430,11 @@ namespace JsonGoddess.Generator.Model
             IsValueType = isValueType;
             Members = members;
             Parameters = parameters;
+            Derived = derived;
+            DiscriminatorName = discriminatorName;
         }
+
+        public bool IsPolymorphic => Derived.Count > 0;
 
         /// <summary>
         /// Читатель обязан сложить всё в локальные и собрать объект в конце:

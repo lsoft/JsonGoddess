@@ -703,6 +703,115 @@ namespace Demo
         }
 
         /// <summary>
+        /// Производный тип обязан быть зарегистрирован: <c>[JsonDerivedType]</c>
+        /// объявляет иерархию, но обслуживать типы мы беремся только по
+        /// явному <c>[JsonSubject]</c> - регистрация есть решение автора, и
+        /// подменять его догадкой нельзя.
+        /// </summary>
+        [Fact]
+        public void Derived_type_must_be_registered()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    [JsonDerivedType(typeof(Dog), ""dog"")]
+    public class Animal { public string? Name { get; set; } }
+
+    public class Dog : Animal { public bool Barks { get; set; } }
+
+    [JsonSubject(typeof(Animal), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains("not registered", run.GeneratorDiagnostics.Single().GetMessage());
+        }
+
+        /// <summary>
+        /// То же правило, что у <c>[JsonSourceGenerationOptions]</c>: свойство,
+        /// которое мы не исполняем, - отказ, а не пропуск.
+        /// </summary>
+        [Fact]
+        public void Unsupported_polymorphic_option_is_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    [JsonPolymorphic(IgnoreUnrecognizedTypeDiscriminators = true)]
+    [JsonDerivedType(typeof(Dog), ""dog"")]
+    public class Animal { public string? Name { get; set; } }
+
+    public class Dog : Animal { public bool Barks { get; set; } }
+
+    [JsonSubject(typeof(Animal), true)]
+    [JsonSubject(typeof(Dog), false)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains("IgnoreUnrecognizedTypeDiscriminators", run.GeneratorDiagnostics.Single().GetMessage());
+        }
+
+        /// <summary>
+        /// Развилка на записи идёт по <b>точному</b> типу, а не по <c>is</c>:
+        /// иначе незарегистрированный потомок потомка уехал бы в документ как
+        /// его база, потеряв члены и не сказав об этом. Видно это на тексте.
+        /// </summary>
+        [Fact]
+        public void Polymorphic_writer_dispatches_on_the_exact_runtime_type()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    [JsonDerivedType(typeof(Dog), ""dog"")]
+    public class Animal { public string? Name { get; set; } }
+
+    public class Dog : Animal { public bool Barks { get; set; } }
+
+    [JsonSubject(typeof(Animal), true)]
+    [JsonSubject(typeof(Dog), false)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+
+            var text = run.SingleGeneratedFile;
+
+            Assert.Contains("runtimeType == typeof(global::Demo.Dog)", text);
+            Assert.DoesNotContain("value is global::Demo.Dog", text);
+
+            //дискриминатор склеен со скобкой в один литерал - он такая же
+            //часть строения документа, как имя первого члена
+            Assert.Contains("{\\\"$type\\\":\\\"dog\\\"", text);
+        }
+
+        /// <summary>
+        /// Неполиморфный тип не платит за полиморфизм ни строкой: ни развилки
+        /// по типу, ни проверки дискриминатора в его коде не появляется.
+        /// </summary>
+        [Fact]
+        public void A_type_without_derived_types_pays_nothing()
+        {
+            var run = GeneratorHarness.Run(Sources.Host(@"        public int Id { get; set; }"));
+
+            Assert.DoesNotContain("runtimeType", run.SingleGeneratedFile);
+            Assert.DoesNotContain("discriminator", run.SingleGeneratedFile);
+        }
+
+        /// <summary>
         /// Требование к версии языка, а не к таргету: и u8-литералы, и
         /// <c>scoped</c> - это про компилятор. netstandard2.0 и net472
         /// поддержанными остаются.

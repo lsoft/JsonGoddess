@@ -175,6 +175,14 @@ namespace JsonGoddess.Generator.Binding
                     continue;
                 }
 
+                if (!PolymorphismBinder.TryBind(
+                        registration.Type, byType, known, LocationInfo.From(host), diagnostics,
+                        out var derived, out var discriminatorName))
+                {
+                    failed = true;
+                    continue;
+                }
+
                 foreach (var member in members)
                 {
                     ValueBinder.CollectValues(member.Value, collections, stringEnums);
@@ -187,7 +195,9 @@ namespace JsonGoddess.Generator.Binding
                         registration.IsRoot,
                         registration.Type.IsValueType,
                         members,
-                        parameters
+                        parameters,
+                        derived,
+                        discriminatorName
                         )
                     );
             }
