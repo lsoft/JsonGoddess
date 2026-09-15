@@ -341,6 +341,157 @@ namespace JsonGoddess.Tests.Generated
             Assert.Equal(text, Reference.Write(back));
         }
 
+        [Fact]
+        public void Enum_document_matches_system_text_json_byte_for_byte()
+        {
+            var value = Marks.CreateSample();
+
+            using var exhauster = new PooledUtf8Exhauster();
+            MarksSerializer.Serialize(exhauster, value);
+
+            Assert.Equal(Reference.Write(value), Encoding.UTF8.GetString(exhauster.ToArray()));
+        }
+
+        /// <summary>
+        /// Формы, в которых enum отличается от всего остального. Строковый
+        /// режим принимает четыре разных написания одного значения, числовой -
+        /// только число; значение вне набора законно в обоих. Каждое
+        /// утверждение снимается с эталона на том же документе.
+        /// </summary>
+        [Theory]
+        [InlineData("{\"Plain\":40}")]
+        [InlineData("{\"Plain\":123}")]
+        [InlineData("{\"Plain\":0,\"Maybe\":1}")]
+        [InlineData("{\"Maybe\":null}")]
+        [InlineData("{\"Big\":18446744073709551615}")]
+        [InlineData("{\"Mode\":\"Sent\"}")]
+        [InlineData("{\"Mode\":\"sent\"}")]
+        [InlineData("{\"Mode\":\"SENT\"}")]
+        [InlineData("{\"Mode\":\"\\u0053ent\"}")]
+        [InlineData("{\"Mode\":\"sent-out\"}")]
+        [InlineData("{\"Mode\":1}")]
+        [InlineData("{\"Mode\":\"1\"}")]
+        [InlineData("{\"Mode\":77}")]
+        [InlineData("{\"MaybeMode\":null}")]
+        [InlineData("{\"Modes\":[\"Draft\",\"sent-out\"]}")]
+        [InlineData("{\"States\":{\"a\":40}}")]
+        public void Enum_forms_are_read_the_way_system_text_json_reads_them(string json)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(json);
+
+            var theirs = JsonSerializer.Deserialize<Marks>(utf8, Reference.Relaxed);
+            MarksSerializer.Deserialize(DefaultInjector.Instance, utf8, out var ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+        }
+
+        /// <summary>
+        /// И обратная сторона: то, что эталон отвергает, обязаны отвергать и
+        /// мы. Имя члена, переименованного через
+        /// <c>[JsonStringEnumMemberName]</c>, в другом регистре - именно такой
+        /// случай, и угадать его было нельзя: у остальных членов регистр не
+        /// значим.
+        ///
+        /// Утверждение здесь про <b>отказ</b>, а не про тип исключения: тип
+        /// зависит от слоя, на котором документ споткнулся. Лексема не той
+        /// формы - это <c>JsonDocumentException</c> от сканера, а лексема
+        /// нужной формы с нечитаемым содержимым - <c>FormatException</c> от
+        /// инжектора. Единый тип наружу - отдельный вопрос, и решать его внутри
+        /// работы над enum'ами было бы не к месту.
+        /// </summary>
+        [Theory]
+        [InlineData("{\"Mode\":\"Nope\"}")]
+        [InlineData("{\"Mode\":\"SENT-OUT\"}")]
+        [InlineData("{\"Mode\":\"Forwarded\"}")]
+        [InlineData("{\"Plain\":\"Sent\"}")]
+        [InlineData("{\"Plain\":null}")]
+        public void Enum_forms_refused_by_system_text_json_are_refused_here_too(string json)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(json);
+
+            Assert.ThrowsAny<Exception>(() => JsonSerializer.Deserialize<Marks>(utf8, Reference.Relaxed));
+
+            var ours = Record.Exception(() => MarksSerializer.Deserialize(DefaultInjector.Instance, utf8, out _));
+
+            Assert.NotNull(ours);
+            Assert.True(
+                ours is JsonDocumentException or FormatException,
+                "expected a document or format failure, got " + ours!.GetType().Name
+                );
+        }
+
+        /// <summary>
+        /// Словарь целиком: неудобные ключи, вложенный словарь, словарь
+        /// субъектов с <c>null</c>-значением, словарь коллекций.
+        /// </summary>
+        [Fact]
+        public void Dictionary_document_matches_system_text_json_byte_for_byte()
+        {
+            var value = Catalogue.CreateSample();
+
+            using var exhauster = new PooledUtf8Exhauster();
+            CatalogueSerializer.Serialize(exhauster, value);
+
+            Assert.Equal(Reference.Write(value), Encoding.UTF8.GetString(exhauster.ToArray()));
+        }
+
+        [Fact]
+        public void Dictionary_document_is_read_the_way_system_text_json_reads_it()
+        {
+            var utf8 = Encoding.UTF8.GetBytes(Reference.Write(Catalogue.CreateSample()));
+
+            var theirs = JsonSerializer.Deserialize<Catalogue>(utf8, Reference.Relaxed);
+            CatalogueSerializer.Deserialize(DefaultInjector.Instance, utf8, out var ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+        }
+
+        /// <summary>
+        /// Формы, в которых словарь отличается от списка: повторённый ключ,
+        /// экранированный ключ, пустой объект и <c>null</c> на месте словаря.
+        /// Повторённый ключ - тот случай, где <c>Add</c> бросил бы, а эталон
+        /// оставляет последнее вхождение.
+        /// </summary>
+        [Theory]
+        [InlineData("{\"Counts\":{\"a\":1,\"a\":2}}")]
+        [InlineData("{\"Counts\":{\"\\u0061\":1}}")]
+        [InlineData("{\"Counts\":{\"A\":1,\"a\":2}}")]
+        [InlineData("{\"Counts\":{}}")]
+        [InlineData("{\"Counts\":null,\"Items\":null}")]
+        [InlineData("{\"Items\":{\"k\":null}}")]
+        [InlineData("{\"Nested\":{\"o\":{}}}")]
+        public void Degenerate_dictionary_forms_are_read_the_way_system_text_json_reads_them(string json)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(json);
+
+            var theirs = JsonSerializer.Deserialize<Catalogue>(utf8, Reference.Relaxed);
+            CatalogueSerializer.Deserialize(DefaultInjector.Instance, utf8, out var ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+        }
+
+        /// <summary>
+        /// Ключ, экранированный энкодером эталона по умолчанию, обязан
+        /// читаться - ровно как имя свойства. Разница в том, что для ключа это
+        /// не обходной путь, а обычный: сравнивать его не с чем, он и так
+        /// материализуется строкой.
+        /// </summary>
+        [Fact]
+        public void Dictionary_key_escaped_by_system_text_json_defaults_is_read_back()
+        {
+            var value = new Catalogue
+            {
+                Counts = new System.Collections.Generic.Dictionary<string, int> { { "имя", 1 }, },
+            };
+
+            var escaped = Reference.WriteDefaultEncoder(value);
+            Assert.Contains("\\u0438", escaped, StringComparison.Ordinal);
+
+            CatalogueSerializer.Deserialize(DefaultInjector.Instance, Encoding.UTF8.GetBytes(escaped), out var ours);
+
+            Assert.Equal(1, ours!.Counts!["имя"]);
+        }
+
         /// <summary>
         /// Член без setter'а пишется, но не читается - и коллекция здесь не
         /// исключение, хотя наполнить уже созданный список технически можно.

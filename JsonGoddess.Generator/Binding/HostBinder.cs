@@ -23,15 +23,9 @@ namespace JsonGoddess.Generator.Binding
     /// </summary>
     public static class HostBinder
     {
-        public const string SubjectAttribute = "JsonGoddess.JsonSubjectAttribute";
-        private const string ExhausterAttribute = "JsonGoddess.JsonExhausterAttribute";
-        private const string InjectorAttribute = "JsonGoddess.JsonInjectorAttribute";
-        private const string ExhausterBase = "JsonGoddess.ExhausterBase";
-        private const string InjectorBase = "JsonGoddess.InjectorBase";
-
-        private const string JsonIgnoreAttribute = "System.Text.Json.Serialization.JsonIgnoreAttribute";
-        private const string JsonIncludeAttribute = "System.Text.Json.Serialization.JsonIncludeAttribute";
-        private const string JsonPropertyNameAttribute = "System.Text.Json.Serialization.JsonPropertyNameAttribute";
+        public const string SubjectAttribute = KnownSymbols.SubjectAttribute;
+        private const string ExhausterBase = KnownSymbols.ExhausterBaseName;
+        private const string InjectorBase = KnownSymbols.InjectorBaseName;
 
         public static GenerationResult Bind(
             Compilation compilation,
@@ -129,8 +123,8 @@ namespace JsonGoddess.Generator.Binding
                 return null;
             }
 
-            var exhausters = BindSinks(host, known.ExhausterAttribute, known.ExhausterBase, "an exhauster", diagnostics);
-            var injectors = BindSinks(host, known.InjectorAttribute, known.InjectorBase, "an injector", diagnostics);
+            var exhausters = BindSinks(host, known.Exhauster, known.ExhausterBase, "an exhauster", diagnostics);
+            var injectors = BindSinks(host, known.Injector, known.InjectorBase, "an injector", diagnostics);
 
             //Регистрации собираются целиком до того, как связан хоть один член:
             //член может сослаться на субъект, объявленный ниже по списку
@@ -157,6 +151,7 @@ namespace JsonGoddess.Generator.Binding
 
             var subjects = new List<SubjectModel>();
             var collections = new Dictionary<string, ValueModel>(System.StringComparer.Ordinal);
+            var stringEnums = new Dictionary<string, EnumModel>(System.StringComparer.Ordinal);
             var failed = accepted.Count != registered.Count;
 
             foreach (var registration in accepted)
@@ -170,7 +165,7 @@ namespace JsonGoddess.Generator.Binding
 
                 foreach (var member in members)
                 {
-                    ValueBinder.CollectCollections(member.Value, collections);
+                    ValueBinder.CollectValues(member.Value, collections, stringEnums);
                 }
 
                 subjects.Add(
@@ -196,8 +191,13 @@ namespace JsonGoddess.Generator.Binding
                 ? null
                 : host.ContainingNamespace.ToDisplayString();
 
+            //порядок вспомогательных методов фиксирован: текст порождаемого кода -
+            //предмет тестов, и зависеть от порядка обхода словаря он не должен
             var collectionList = new List<ValueModel>(collections.Values);
             collectionList.Sort((a, b) => System.StringComparer.Ordinal.Compare(a.MethodSuffix, b.MethodSuffix));
+
+            var enumList = new List<EnumModel>(stringEnums.Values);
+            enumList.Sort((a, b) => System.StringComparer.Ordinal.Compare(a.MethodSuffix, b.MethodSuffix));
 
             return new HostModel(
                 ns,
@@ -206,7 +206,8 @@ namespace JsonGoddess.Generator.Binding
                 exhausters.Count > 0 ? exhausters : new List<string> { "global::" + ExhausterBase },
                 injectors.Count > 0 ? injectors : new List<string> { "global::" + InjectorBase },
                 subjects,
-                collectionList
+                collectionList,
+                enumList
                 );
         }
 
@@ -234,7 +235,7 @@ namespace JsonGoddess.Generator.Binding
 
             foreach (var attribute in host.GetAttributes())
             {
-                if (!SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, known.SubjectAttribute))
+                if (!SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, known.Subject))
                 {
                     continue;
                 }
@@ -529,12 +530,12 @@ namespace JsonGoddess.Generator.Binding
             ref bool failed
             )
         {
-            if (HasAttribute(member, known.JsonIgnoreAttribute))
+            if (known.Has(member, known.JsonIgnore))
             {
                 return null;
             }
 
-            var included = HasAttribute(member, known.JsonIncludeAttribute);
+            var included = known.Has(member, known.JsonInclude);
 
             ITypeSymbol memberType;
             bool canWrite;
@@ -620,13 +621,25 @@ namespace JsonGoddess.Generator.Binding
                     return null;
             }
 
-            if (!ValueBinder.TryBind(memberType, byType, out var value, out var refusal))
+            //Конвертер на члене мы не воспроизводим и не игнорируем: игнорировать
+            //значило бы выдать документ, который эталон не выдаёт, - и не сказать
+            //об этом. Конвертер на самом типе разбирается там, где известен тип.
+            if (known.Has(member, known.JsonConverter))
+            {
+                Refuse(subject, member, memberType, location, diagnostics, ref failed,
+                    "the member carries [JsonConverter], and JsonGoddess cannot reproduce an arbitrary converter; "
+                    + "put [JsonConverter(typeof(JsonStringEnumConverter))] on the enum type instead, "
+                    + "or mark the member [JsonIgnore]");
+                return null;
+            }
+
+            if (!ValueBinder.TryBind(memberType, byType, known, out var value, out var refusal))
             {
                 Refuse(subject, member, memberType, location, diagnostics, ref failed, refusal);
                 return null;
             }
 
-            var jsonName = ReadPropertyName(member, known) ?? member.Name;
+            var jsonName = known.ReadStringArgument(member, known.JsonPropertyName) ?? member.Name;
 
             if (!JsonNameUtf8.TryEncode(jsonName, out var utf8))
             {
@@ -676,72 +689,5 @@ namespace JsonGoddess.Generator.Binding
             failed = true;
         }
 
-        private static string? ReadPropertyName(ISymbol member, KnownSymbols known)
-        {
-            if (known.JsonPropertyNameAttribute is null)
-            {
-                return null;
-            }
-
-            foreach (var attribute in member.GetAttributes())
-            {
-                if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, known.JsonPropertyNameAttribute)
-                    && attribute.ConstructorArguments.Length > 0
-                    && attribute.ConstructorArguments[0].Value is string name)
-                {
-                    return name;
-                }
-            }
-
-            return null;
-        }
-
-        private static bool HasAttribute(ISymbol member, INamedTypeSymbol? attributeType)
-        {
-            if (attributeType is null)
-            {
-                return false;
-            }
-
-            foreach (var attribute in member.GetAttributes())
-            {
-                if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, attributeType))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Типы, известные генератору по именам. Атрибуты System.Text.Json
-        /// могут отсутствовать вовсе - на них никто не обязан ссылаться, -
-        /// поэтому каждый из них nullable, и отсутствие означает "такого
-        /// атрибута в этой компиляции не бывает", а не ошибку.
-        /// </summary>
-        private sealed class KnownSymbols
-        {
-            public readonly INamedTypeSymbol? SubjectAttribute;
-            public readonly INamedTypeSymbol? ExhausterAttribute;
-            public readonly INamedTypeSymbol? InjectorAttribute;
-            public readonly INamedTypeSymbol? ExhausterBase;
-            public readonly INamedTypeSymbol? InjectorBase;
-            public readonly INamedTypeSymbol? JsonIgnoreAttribute;
-            public readonly INamedTypeSymbol? JsonIncludeAttribute;
-            public readonly INamedTypeSymbol? JsonPropertyNameAttribute;
-
-            public KnownSymbols(Compilation compilation)
-            {
-                SubjectAttribute = compilation.GetTypeByMetadataName(HostBinder.SubjectAttribute);
-                ExhausterAttribute = compilation.GetTypeByMetadataName(HostBinder.ExhausterAttribute);
-                InjectorAttribute = compilation.GetTypeByMetadataName(HostBinder.InjectorAttribute);
-                ExhausterBase = compilation.GetTypeByMetadataName(HostBinder.ExhausterBase);
-                InjectorBase = compilation.GetTypeByMetadataName(HostBinder.InjectorBase);
-                JsonIgnoreAttribute = compilation.GetTypeByMetadataName(HostBinder.JsonIgnoreAttribute);
-                JsonIncludeAttribute = compilation.GetTypeByMetadataName(HostBinder.JsonIncludeAttribute);
-                JsonPropertyNameAttribute = compilation.GetTypeByMetadataName(HostBinder.JsonPropertyNameAttribute);
-            }
-        }
     }
 }

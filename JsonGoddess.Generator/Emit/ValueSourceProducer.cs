@@ -48,6 +48,12 @@ namespace JsonGoddess.Generator.Emit
                     return;
                 }
 
+                case ValueForm.Enum:
+                {
+                    WriteEnum(builder, value, accessor, depth);
+                    return;
+                }
+
                 default:
                 {
                     WriteCollection(builder, value, accessor, depth);
@@ -56,11 +62,48 @@ namespace JsonGoddess.Generator.Emit
             }
         }
 
+        /// <summary>
+        /// Запись enum'а. В числовом режиме это приведение к подлежащему типу и
+        /// та же перегрузка <c>Append</c>, что у обычного числа: значение вне
+        /// набора при этом проезжает как есть - ровно так же ведёт себя эталон.
+        /// </summary>
+        private static void WriteEnum(SourceBuilder builder, ValueModel value, string accessor, int depth)
+        {
+            if (!value.IsStringEnum)
+            {
+                var cast = "(" + BuiltinTypes.GetTypeName(value.Builtin) + (value.IsNullable ? "?" : "") + ")";
+                builder.Line("exhauster.Append(" + cast + accessor + ");");
+                return;
+            }
+
+            if (!value.IsNullable)
+            {
+                builder.Line("WriteEnum_" + value.MethodSuffix + "(exhauster, " + accessor + ");");
+                return;
+            }
+
+            var local = "enumValue" + depth;
+
+            builder.OpenBlock();
+            builder.Line("var " + local + " = " + accessor + ";");
+
+            builder.OpenBlock("if (" + local + " is null)");
+            builder.Line("exhauster.AppendNull();");
+            builder.CloseBlock();
+
+            builder.OpenBlock("else");
+            builder.Line("WriteEnum_" + value.MethodSuffix + "(exhauster, " + local + ".Value);");
+            builder.CloseBlock();
+
+            builder.CloseBlock();
+        }
+
         private static void WriteCollection(SourceBuilder builder, ValueModel value, string accessor, int depth)
         {
+            var isMap = value.Form == ValueForm.Dictionary;
             var items = "items" + depth;
             var index = "i" + depth;
-            var count = value.Form == ValueForm.Array ? ".Length" : ".Count";
+            var pair = "pair" + depth;
 
             //собственный блок: у двух коллекций в одном объекте локальные имена
             //совпали бы, а нумеровать их по номеру члена значило бы поставить
@@ -74,23 +117,49 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
 
             builder.OpenBlock("else");
-            builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal("[") + ");");
+            builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(isMap ? "{" : "[") + ");");
 
-            builder.OpenBlock(
-                "for (var " + index + " = 0; " + index + " < " + items + count + "; " + index + "++)"
-                );
+            if (isMap)
+            {
+                //foreach по конкретному Dictionary<,> берёт структурный
+                //перечислитель и ничего не выделяет; по позиции словарь не
+                //индексируется, поэтому счётчик ведётся руками
+                builder.Line("var " + index + " = 0;");
+                builder.OpenBlock("foreach (var " + pair + " in " + items + ")");
+            }
+            else
+            {
+                builder.OpenBlock(
+                    "for (var " + index + " = 0; " + index + " < " + items
+                    + (value.Form == ValueForm.Array ? ".Length" : ".Count") + "; " + index + "++)"
+                    );
+            }
 
             builder.OpenBlock("if (" + index + " > 0)");
             builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(",") + ");");
             builder.CloseBlock();
             builder.Line();
 
-            WriteValue(builder, value.Element!, items + "[" + index + "]", depth + 1);
+            if (isMap)
+            {
+                builder.Line(index + "++;");
+
+                //ключ словаря - не константа этапа компиляции, и экранировать
+                //его приходится по-настоящему: System.Text.Json пишет ключ
+                //"a\"b" экранированным, и совпасть с ним иначе нельзя
+                builder.Line("exhauster.Append(" + pair + ".Key);");
+                builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(":") + ");");
+                WriteValue(builder, value.Element!, pair + ".Value", depth + 1);
+            }
+            else
+            {
+                WriteValue(builder, value.Element!, items + "[" + index + "]", depth + 1);
+            }
 
             builder.CloseBlock();
             builder.Line();
 
-            builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal("]") + ");");
+            builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(isMap ? "}" : "]") + ");");
             builder.CloseBlock();
 
             builder.CloseBlock();
@@ -120,6 +189,7 @@ namespace JsonGoddess.Generator.Emit
 
                 case ValueForm.List:
                 case ValueForm.Array:
+                case ValueForm.Dictionary:
                 {
                     builder.Line(
                         target + " = ReadCollection_" + value.MethodSuffix
@@ -135,12 +205,35 @@ namespace JsonGoddess.Generator.Emit
                 builder.Line(target + " = null;");
                 builder.CloseBlock();
                 builder.OpenBlock("else");
-                ReadLexeme(builder, value, target);
+                ReadScalar(builder, value, target);
                 builder.CloseBlock();
                 return;
             }
 
-            ReadLexeme(builder, value, target);
+            ReadScalar(builder, value, target);
+        }
+
+        private static void ReadScalar(SourceBuilder builder, ValueModel value, string target)
+        {
+            if (value.Form != ValueForm.Enum)
+            {
+                ReadLexeme(builder, value, target);
+                return;
+            }
+
+            if (value.IsStringEnum)
+            {
+                builder.Line(
+                    target + " = ReadEnum_" + value.MethodSuffix + "(injector, json, ref position, ref context);"
+                    );
+                return;
+            }
+
+            builder.Line("var raw = " + Scan + ".ReadNumberRaw(json, ref position);");
+            builder.Line(
+                "injector.Parse(ref context, raw, out " + BuiltinTypes.GetTypeName(value.Builtin) + " parsed);"
+                );
+            builder.Line(target + " = (" + value.TypeName + ")parsed;");
         }
 
         private static void ReadLexeme(SourceBuilder builder, ValueModel value, string target)

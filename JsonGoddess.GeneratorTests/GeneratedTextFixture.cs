@@ -313,6 +313,96 @@ namespace Demo
             Assert.Contains("item = Read_Demo_Node(injector", run.SingleGeneratedFile, StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Числовой enum метода не получает: он и есть одно приведение к
+        /// подлежащему типу плюс та же перегрузка <c>Append</c>, что у числа.
+        /// Вынести это в метод значило бы добавить вызов туда, где кода на одну
+        /// строку.
+        /// </summary>
+        [Fact]
+        public void Numeric_enum_is_written_in_place_as_its_underlying_type()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public enum Status : byte { Draft, Sent }
+
+    public class Payload
+    {
+        public Status Value { get; set; }
+        public Status? Maybe { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            var text = run.SingleGeneratedFile;
+
+            Assert.Empty(run.CompilationErrors);
+            Assert.Contains("exhauster.Append((byte)value.Value);", text, StringComparison.Ordinal);
+            Assert.Contains("exhauster.Append((byte?)value.Maybe);", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("ReadEnum_", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("WriteEnum_", text, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// А строковый получает - и получает <b>один</b> на тип, сколько бы
+        /// членов на него ни ссылалось.
+        ///
+        /// Способ сравнения выбирается по члену, а не по типу: имя из
+        /// <c>[JsonStringEnumMemberName]</c> эталон принимает только в
+        /// точности, C#-идентификатор - в любом регистре. Разницу видно только
+        /// здесь: round-trip прочитает документ и так, и так.
+        /// </summary>
+        [Fact]
+        public void String_enum_folds_case_only_for_names_that_came_from_csharp()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum Mode
+    {
+        Draft,
+
+        [JsonStringEnumMemberName(""sent-out"")]
+        Forwarded,
+    }
+
+    public class Payload
+    {
+        public Mode First { get; set; }
+        public Mode Second { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            var text = run.SingleGeneratedFile;
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+
+            Assert.Equal(1, Occurrences(text, "private static global::Demo.Mode ReadEnum_Demo_Mode("));
+            Assert.Equal(2, Occurrences(text, "= ReadEnum_Demo_Mode(injector"));
+
+            Assert.Contains("JsonAsciiName.EqualsIgnoreCase(raw, \"Draft\"u8)", text, StringComparison.Ordinal);
+            Assert.Contains("SequenceEqual(raw, \"sent-out\"u8)", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("EqualsIgnoreCase(raw, \"sent-out\"u8)", text, StringComparison.Ordinal);
+
+            //значение вне набора эталон пишет числом, и мы обязаны так же
+            Assert.Contains("exhauster.Append((int)value);", text, StringComparison.Ordinal);
+        }
+
         private static string Section(string text, string from, string until)
         {
             var start = text.IndexOf(from, StringComparison.Ordinal);

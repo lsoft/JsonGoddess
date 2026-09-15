@@ -17,7 +17,8 @@ namespace JsonGoddess.Generator.Binding
     public static class ValueBinder
     {
         private const string ListMetadataName = "List`1";
-        private const string ListNamespace = "System.Collections.Generic";
+        private const string DictionaryMetadataName = "Dictionary`2";
+        private const string CollectionsNamespace = "System.Collections.Generic";
 
         /// <summary>
         /// Класс, зарегистрированный <c>[JsonSubject]</c>, опознаётся по карте,
@@ -28,6 +29,7 @@ namespace JsonGoddess.Generator.Binding
         public static bool TryBind(
             ITypeSymbol type,
             IReadOnlyDictionary<ISymbol, string> subjects,
+            KnownSymbols known,
             out ValueModel? value,
             out string refusal
             )
@@ -56,17 +58,31 @@ namespace JsonGoddess.Generator.Binding
                 return true;
             }
 
+            if (type.TypeKind == TypeKind.Enum)
+            {
+                if (!TryBindEnum((INamedTypeSymbol)type, known, out var enumModel, out var isStringEnum, out refusal))
+                {
+                    return false;
+                }
+
+                value = new ValueModel(
+                    ValueForm.Enum,
+                    enumModel!.Underlying,
+                    enumModel.FullName,
+                    enumModel.MethodSuffix,
+                    null,
+                    isNullableValueType,
+                    enumModel,
+                    isStringEnum
+                    );
+                return true;
+            }
+
             //Nullable<T> над всем остальным не бывает: субъект и коллекция -
             //ссылочные типы, и null у них выражается самим типом
             if (isNullableValueType)
             {
-                refusal = "Nullable<> is only supported over builtin value types";
-                return false;
-            }
-
-            if (type.TypeKind == TypeKind.Enum)
-            {
-                refusal = "enums are not supported yet; they arrive later in phase 4";
+                refusal = "Nullable<> is only supported over builtin value types and enums";
                 return false;
             }
 
@@ -91,7 +107,7 @@ namespace JsonGoddess.Generator.Binding
                     return false;
                 }
 
-                if (!TryBind(array.ElementType, subjects, out var arrayElement, out refusal))
+                if (!TryBind(array.ElementType, subjects, known, out var arrayElement, out refusal))
                 {
                     return false;
                 }
@@ -107,9 +123,33 @@ namespace JsonGoddess.Generator.Binding
                 return true;
             }
 
+            if (IsDictionary(type, out var keyType, out var valueType))
+            {
+                if (keyType!.SpecialType != SpecialType.System_String)
+                {
+                    refusal = "only Dictionary<string, V> is supported; other key types arrive later";
+                    return false;
+                }
+
+                if (!TryBind(valueType!, subjects, known, out var dictionaryValue, out refusal))
+                {
+                    return false;
+                }
+
+                value = new ValueModel(
+                    ValueForm.Dictionary,
+                    default,
+                    type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    "MapOf_" + dictionaryValue!.MethodSuffix,
+                    dictionaryValue,
+                    true
+                    );
+                return true;
+            }
+
             if (IsList(type, out var listElementType))
             {
-                if (!TryBind(listElementType!, subjects, out var listElement, out refusal))
+                if (!TryBind(listElementType!, subjects, known, out var listElement, out refusal))
                 {
                     return false;
                 }
@@ -127,27 +167,196 @@ namespace JsonGoddess.Generator.Binding
 
             refusal = type.TypeKind == TypeKind.Class || type.TypeKind == TypeKind.Struct
                 ? "the type is not registered; add [JsonSubject(typeof(" + type.Name + "), false)] to the host, or mark the member [JsonIgnore]"
-                : "only builtin types, registered [JsonSubject] classes, List<T> and T[] are supported; dictionaries, interfaces and other collections arrive later";
+                : "only builtin types, registered [JsonSubject] classes, List<T>, T[] and Dictionary<string, V> are supported; interfaces and other collections arrive later";
             return false;
+        }
+
+        /// <summary>
+        /// Enum. Числовое представление - по умолчанию, как у эталона; строковое -
+        /// при <c>[JsonConverter(typeof(JsonStringEnumConverter))]</c> на самом
+        /// типе, в любой из двух форм конвертера.
+        ///
+        /// Два отказа здесь не от лени. <c>[Flags]</c> у эталона в строковом
+        /// режиме даёт <c>"Read, Write"</c> - комбинирование, у которого своя
+        /// грамматика, и повторять её вслепую нельзя. Имя члена вне ASCII он
+        /// сворачивает по регистру средствами Unicode, а мы сворачиваем по
+        /// ASCII, и на таком имени совпадение зависело бы от алфавита.
+        /// </summary>
+        private static bool TryBindEnum(
+            INamedTypeSymbol type,
+            KnownSymbols known,
+            out EnumModel? model,
+            out bool isStringEnum,
+            out string refusal
+            )
+        {
+            model = null;
+            isStringEnum = false;
+            refusal = string.Empty;
+
+            if (!BuiltinTypes.TryBind(type.EnumUnderlyingType!, out var underlying, out _))
+            {
+                refusal = "the underlying type of the enum is not supported";
+                return false;
+            }
+
+            isStringEnum = HasStringEnumConverter(type, known, out var unsupportedConverter);
+            if (unsupportedConverter is not null)
+            {
+                refusal = "type '" + unsupportedConverter
+                    + "' is registered as a converter, and JsonGoddess cannot reproduce an arbitrary JsonConverter";
+                return false;
+            }
+
+            if (isStringEnum && known.Has(type, known.Flags))
+            {
+                refusal = "[Flags] enums in string form are not supported: System.Text.Json combines them into "
+                    + "\"A, B\", and that grammar is not reproduced here";
+                return false;
+            }
+
+            var members = new List<EnumMemberModel>();
+            var byValue = new HashSet<string>(System.StringComparer.Ordinal);
+
+            foreach (var member in type.GetMembers())
+            {
+                if (member is not IFieldSymbol { IsConst: true, HasConstantValue: true } field)
+                {
+                    continue;
+                }
+
+                var custom = known.ReadStringArgument(field, known.JsonStringEnumMemberName);
+                var jsonName = custom ?? field.Name;
+
+                if (isStringEnum && !IsAscii(jsonName))
+                {
+                    refusal = "member '" + field.Name + "' maps to name '" + jsonName
+                        + "', which is not ASCII; System.Text.Json matches such names ignoring case by Unicode rules, "
+                        + "and JsonGoddess folds case by ASCII rules only";
+                    return false;
+                }
+
+                //Два имени на одно значение в строковом режиме - вопрос без
+                //ответа: какое из них напишет эталон, не определено и в самом
+                //BCL (Enum.GetName не обещает постоянства). Отказ здесь честнее
+                //выбора наугад, который выглядел бы как совместимость.
+                if (isStringEnum && !byValue.Add(field.ConstantValue?.ToString() ?? string.Empty))
+                {
+                    refusal = "members '" + field.Name + "' and an earlier one share the underlying value "
+                        + field.ConstantValue + "; in string form there is no defined answer to which name is written, "
+                        + "so JsonGoddess refuses instead of guessing";
+                    return false;
+                }
+
+                members.Add(new EnumMemberModel(field.Name, jsonName, custom is not null));
+            }
+
+            model = new EnumModel(
+                type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                type.ToDisplayString().Replace('.', '_'),
+                underlying,
+                members
+                );
+            return true;
+        }
+
+        private static bool HasStringEnumConverter(ITypeSymbol type, KnownSymbols known, out string? unsupported)
+        {
+            unsupported = null;
+
+            if (known.JsonConverter is null)
+            {
+                return false;
+            }
+
+            foreach (var attribute in type.GetAttributes())
+            {
+                if (!SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, known.JsonConverter)
+                    || attribute.ConstructorArguments.Length < 1
+                    || attribute.ConstructorArguments[0].Value is not INamedTypeSymbol converter)
+                {
+                    continue;
+                }
+
+                if (SymbolEqualityComparer.Default.Equals(converter, known.JsonStringEnumConverter)
+                    || SymbolEqualityComparer.Default.Equals(
+                        converter.OriginalDefinition,
+                        known.JsonStringEnumConverterGeneric))
+                {
+                    return true;
+                }
+
+                unsupported = converter.ToDisplayString();
+                return false;
+            }
+
+            return false;
+        }
+
+        private static bool IsAscii(string value)
+        {
+            foreach (var c in value)
+            {
+                if (c > (char)0x7F)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static bool IsList(ITypeSymbol type, out ITypeSymbol? element)
         {
             element = null;
 
-            if (type is not INamedTypeSymbol { IsGenericType: true } named)
+            if (!IsGeneric(type, ListMetadataName, out var named))
             {
                 return false;
             }
 
-            var definition = named.OriginalDefinition;
-            if (definition.MetadataName != ListMetadataName
-                || definition.ContainingNamespace?.ToDisplayString() != ListNamespace)
+            element = named!.TypeArguments[0];
+            return true;
+        }
+
+        private static bool IsDictionary(ITypeSymbol type, out ITypeSymbol? key, out ITypeSymbol? value)
+        {
+            key = null;
+            value = null;
+
+            if (!IsGeneric(type, DictionaryMetadataName, out var named))
             {
                 return false;
             }
 
-            element = named.TypeArguments[0];
+            key = named!.TypeArguments[0];
+            value = named.TypeArguments[1];
+            return true;
+        }
+
+        /// <summary>
+        /// Опознание по метаданным, а не по напечатанному имени: строка вида
+        /// <c>global::System.Collections.Generic.List&lt;T&gt;</c> зависит от
+        /// того, как Roslyn назовёт параметр типа, и сравнивать с ней значило бы
+        /// опираться на форматирование.
+        /// </summary>
+        private static bool IsGeneric(ITypeSymbol type, string metadataName, out INamedTypeSymbol? named)
+        {
+            named = null;
+
+            if (type is not INamedTypeSymbol { IsGenericType: true } candidate)
+            {
+                return false;
+            }
+
+            var definition = candidate.OriginalDefinition;
+            if (definition.MetadataName != metadataName
+                || definition.ContainingNamespace?.ToDisplayString() != CollectionsNamespace)
+            {
+                return false;
+            }
+
+            named = candidate;
             return true;
         }
 
@@ -157,19 +366,33 @@ namespace JsonGoddess.Generator.Binding
         /// порождаемого кода - предмет тестов, и он обязан не зависеть от того,
         /// в каком порядке Roslyn вернул члены.
         /// </summary>
-        public static void CollectCollections(ValueModel value, Dictionary<string, ValueModel> into)
+        public static void CollectValues(
+            ValueModel value,
+            Dictionary<string, ValueModel> collections,
+            Dictionary<string, EnumModel> stringEnums
+            )
         {
+            if (value.Form == ValueForm.Enum)
+            {
+                if (value.IsStringEnum && !stringEnums.ContainsKey(value.MethodSuffix))
+                {
+                    stringEnums.Add(value.MethodSuffix, value.Enum!);
+                }
+
+                return;
+            }
+
             if (!value.IsCollection)
             {
                 return;
             }
 
-            if (!into.ContainsKey(value.MethodSuffix))
+            if (!collections.ContainsKey(value.MethodSuffix))
             {
-                into.Add(value.MethodSuffix, value);
+                collections.Add(value.MethodSuffix, value);
             }
 
-            CollectCollections(value.Element!, into);
+            CollectValues(value.Element!, collections, stringEnums);
         }
     }
 }

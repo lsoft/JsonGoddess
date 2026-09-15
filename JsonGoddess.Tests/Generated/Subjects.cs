@@ -253,6 +253,125 @@ namespace JsonGoddess.Tests.Generated
     }
 
     /// <summary>
+    /// Enum по умолчанию - число подлежащего типа, и значение вне набора
+    /// проезжает как есть. Так ведёт себя эталон, и отказывать здесь значило бы
+    /// не прочитать документ, который он пишет.
+    /// </summary>
+    public enum Status
+    {
+        Draft,
+        Sent,
+        Archived = 40,
+    }
+
+    /// <summary>Подлежащий тип не <c>int</c>: значение обязано доехать целым.</summary>
+    public enum Huge : ulong
+    {
+        Max = 18446744073709551615UL,
+    }
+
+    /// <summary>
+    /// Строковый режим. Маркер - конвертер на самом типе; на члене конвертер мы
+    /// отвергаем, потому что повторить произвольный конвертер нельзя.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum Mode
+    {
+        Draft,
+        Sent,
+
+        [JsonStringEnumMemberName("sent-out")]
+        Forwarded,
+    }
+
+    public class Marks
+    {
+        public Status Plain { get; set; }
+        public Status? Maybe { get; set; }
+        public Huge Big { get; set; }
+        public Mode Mode { get; set; }
+        public Mode? MaybeMode { get; set; }
+        public List<Mode>? Modes { get; set; }
+        public Dictionary<string, Status>? States { get; set; }
+
+        public static Marks CreateSample()
+        {
+            return new Marks
+            {
+                Plain = Status.Archived,
+                Maybe = null,
+                Big = Huge.Max,
+                Mode = Mode.Forwarded,
+                MaybeMode = Mode.Sent,
+                Modes = new List<Mode> { Mode.Draft, Mode.Forwarded, },
+                States = new Dictionary<string, Status> { { "a", Status.Sent }, },
+            };
+        }
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Marks), true)]
+    public partial class MarksSerializer
+    {
+    }
+
+    /// <summary>
+    /// Словари. Ключ здесь - не константа этапа компиляции, и этим он
+    /// принципиально отличается от имени члена: он может требовать
+    /// экранирования, приезжать экранированным и повторяться.
+    ///
+    /// В образце ключи намеренно неудобные: кириллица, кавычка внутри, пустая
+    /// строка. Все три законны, и все три эталон пишет по-своему.
+    /// </summary>
+    public class Catalogue
+    {
+        public Dictionary<string, int>? Counts { get; set; }
+        public Dictionary<string, Item>? Items { get; set; }
+        public Dictionary<string, List<int>>? Series { get; set; }
+        public Dictionary<string, Dictionary<string, string>>? Nested { get; set; }
+
+        public static Catalogue CreateSample()
+        {
+            return new Catalogue
+            {
+                Counts = new Dictionary<string, int>
+                {
+                    { "b", 2 },
+                    { "a", 1 },
+                    { "имя", 3 },
+                    { "a\"b", 4 },
+                    { "", 5 },
+                    { "tab\there", 6 },
+                },
+                Items = new Dictionary<string, Item>
+                {
+                    { "head", new Item { Sku = "BRK-0001", Quantity = 4, Price = 129.99m, Note = "back order", } },
+                    { "missing", null! },
+                },
+                Series = new Dictionary<string, List<int>>
+                {
+                    { "x", new List<int> { 1, 2, } },
+                    { "empty", new List<int>() },
+                    { "none", null! },
+                },
+                Nested = new Dictionary<string, Dictionary<string, string>>
+                {
+                    { "outer", new Dictionary<string, string> { { "inner", "value" }, } },
+                },
+            };
+        }
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Catalogue), true)]
+    [JsonSubject(typeof(Item), false)]
+    public partial class CatalogueSerializer
+    {
+    }
+
+    /// <summary>
     /// Коллекция без setter'а. Соблазн «раз объект уже есть, наполним его»
     /// здесь обманчив: <c>System.Text.Json</c> с опциями по умолчанию такой
     /// член на чтении <b>пропускает</b> - наполнение существующей коллекции у

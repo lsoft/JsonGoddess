@@ -41,11 +41,25 @@ namespace JsonGoddess
         /// </summary>
         private byte[]? _nameBuffer;
 
+        /// <summary>
+        /// Буфер под разэкранированное <b>значение</b>, которое сравнивается в
+        /// байтах, - сейчас это имя члена enum'а.
+        ///
+        /// Он отдельный от <see cref="_nameBuffer"/> не из щедрости: имя
+        /// свойства живёт до конца диспетчеризации, а значение читается внутри
+        /// неё, и один буфер на двоих означал бы, что чтение значения затирает
+        /// имя, по которому в него попали. Сегодня это было бы безвредно -
+        /// после тела члена имя никто не читает, - и ровно поэтому опасно:
+        /// такая связь не видна на месте и ломается перестановкой строк.
+        /// </summary>
+        private byte[]? _valueBuffer;
+
         public JsonParseContext(ReadOnlySpan<byte> document)
         {
             Document = document;
             TokenStart = 0;
             _nameBuffer = null;
+            _valueBuffer = null;
         }
 
         /// <summary>
@@ -58,20 +72,46 @@ namespace JsonGoddess
         /// </summary>
         public ReadOnlySpan<byte> UnescapeName(scoped ReadOnlySpan<byte> raw)
         {
-            //разэкранирование никогда не удлиняет: \uXXXX - шесть байт на входе
-            //и максимум три на выходе
-            if (_nameBuffer is null || _nameBuffer.Length < raw.Length)
-            {
-                if (_nameBuffer is not null)
-                {
-                    ArrayPool<byte>.Shared.Return(_nameBuffer);
-                }
-
-                _nameBuffer = ArrayPool<byte>.Shared.Rent(raw.Length);
-            }
+            _nameBuffer = Ensure(_nameBuffer, raw.Length);
 
             var written = JsonNameUnescape.Decode(raw, _nameBuffer);
             return new ReadOnlySpan<byte>(_nameBuffer, 0, written);
+        }
+
+        /// <summary>
+        /// Разэкранированное значение в UTF-8 - в той же форме, в которой с ним
+        /// сравнивает порождённый код. Как и с именем, вызывается только тогда,
+        /// когда значение приехало экранированным.
+        /// </summary>
+        public ReadOnlySpan<byte> UnescapeValue(scoped ReadOnlySpan<byte> raw)
+        {
+            _valueBuffer = Ensure(_valueBuffer, raw.Length);
+
+            var written = JsonNameUnescape.Decode(raw, _valueBuffer);
+            return new ReadOnlySpan<byte>(_valueBuffer, 0, written);
+        }
+
+        /// <summary>
+        /// Буфер не меньше нужного. Возвращает массив, а не принимает его по
+        /// <c>ref</c>: поле ref-структуры, переданное по ссылке, закрывает
+        /// компилятору возможность доказать, что спан не переживёт контекст, -
+        /// и он отказывается, справедливо.
+        /// </summary>
+        private static byte[] Ensure(byte[]? buffer, int length)
+        {
+            //разэкранирование никогда не удлиняет: \uXXXX - шесть байт на входе
+            //и максимум три на выходе
+            if (buffer is not null && buffer.Length >= length)
+            {
+                return buffer;
+            }
+
+            if (buffer is not null)
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            return ArrayPool<byte>.Shared.Rent(length);
         }
 
         /// <summary>
@@ -85,6 +125,12 @@ namespace JsonGoddess
             {
                 ArrayPool<byte>.Shared.Return(_nameBuffer);
                 _nameBuffer = null;
+            }
+
+            if (_valueBuffer is not null)
+            {
+                ArrayPool<byte>.Shared.Return(_valueBuffer);
+                _valueBuffer = null;
             }
         }
     }

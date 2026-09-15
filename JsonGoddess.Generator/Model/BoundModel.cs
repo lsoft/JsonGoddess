@@ -59,6 +59,64 @@ namespace JsonGoddess.Generator.Model
         Subject,
         List,
         Array,
+
+        /// <summary><c>Dictionary&lt;string, V&gt;</c>: объект, имена свойств которого неизвестны на этапе компиляции.</summary>
+        Dictionary,
+
+        Enum,
+    }
+
+    /// <summary>
+    /// Член enum'а в строковом режиме.
+    /// </summary>
+    public sealed class EnumMemberModel
+    {
+        /// <summary>Имя члена в C#: печатается в <c>case global::Ns.T.Draft</c>.</summary>
+        public string MemberName { get; }
+
+        /// <summary>Имя в документе. Уже с учётом <c>[JsonStringEnumMemberName]</c>.</summary>
+        public string JsonName { get; }
+
+        /// <summary>
+        /// Сравнивать точно, а не сворачивая регистр. Так ведёт себя
+        /// <c>System.Text.Json</c>: имя, пришедшее из <c>[JsonStringEnumMemberName]</c>,
+        /// он принимает только в точности, а C#-идентификатор - в любом
+        /// регистре. Проверено прогоном: <c>"SENT-OUT"</c> он отвергает,
+        /// <c>"draft"</c> принимает.
+        /// </summary>
+        public bool MatchExactly { get; }
+
+        public EnumMemberModel(string memberName, string jsonName, bool matchExactly)
+        {
+            MemberName = memberName;
+            JsonName = jsonName;
+            MatchExactly = matchExactly;
+        }
+    }
+
+    public sealed class EnumModel
+    {
+        public string FullName { get; }
+
+        public string MethodSuffix { get; }
+
+        /// <summary>Подлежащий тип: им читается и пишется числовая форма.</summary>
+        public BuiltinKind Underlying { get; }
+
+        public IReadOnlyList<EnumMemberModel> Members { get; }
+
+        public EnumModel(
+            string fullName,
+            string methodSuffix,
+            BuiltinKind underlying,
+            IReadOnlyList<EnumMemberModel> members
+            )
+        {
+            FullName = fullName;
+            MethodSuffix = methodSuffix;
+            Underlying = underlying;
+            Members = members;
+        }
     }
 
     /// <summary>
@@ -99,13 +157,27 @@ namespace JsonGoddess.Generator.Model
         /// </summary>
         public bool IsNullable { get; }
 
+        /// <summary>Значим только при <see cref="ValueForm.Enum"/>.</summary>
+        public EnumModel? Enum { get; }
+
+        /// <summary>
+        /// Enum пишется именем, а не числом. Это свойство <b>типа</b>, а не
+        /// места: маркером служит <c>[JsonConverter(typeof(JsonStringEnumConverter))]</c>
+        /// на самом enum'е. Конвертер на члене мы отвергаем, потому что
+        /// повторить произвольный конвертер нельзя, а притвориться - худший из
+        /// исходов.
+        /// </summary>
+        public bool IsStringEnum { get; }
+
         public ValueModel(
             ValueForm form,
             BuiltinKind builtin,
             string typeName,
             string methodSuffix,
             ValueModel? element,
-            bool isNullable
+            bool isNullable,
+            EnumModel? enumModel = null,
+            bool isStringEnum = false
             )
         {
             Form = form;
@@ -114,12 +186,20 @@ namespace JsonGoddess.Generator.Model
             MethodSuffix = methodSuffix;
             Element = element;
             IsNullable = isNullable;
+            Enum = enumModel;
+            IsStringEnum = isStringEnum;
         }
 
         /// <summary>Тип, каким он печатается в объявление: с <c>?</c>, если значение может быть null.</summary>
         public string Declaration => IsNullable ? TypeName + "?" : TypeName;
 
-        public bool IsCollection => Form == ValueForm.List || Form == ValueForm.Array;
+        /// <summary>
+        /// Есть элемент, значит нужен свой метод чтения и рекурсия по
+        /// элементу. Словарь здесь тоже коллекция: от списка он отличается
+        /// только тем, что перед каждым элементом стоит ключ.
+        /// </summary>
+        public bool IsCollection =>
+            Form == ValueForm.List || Form == ValueForm.Array || Form == ValueForm.Dictionary;
     }
 
     public sealed class MemberModel
@@ -207,6 +287,12 @@ namespace JsonGoddess.Generator.Model
         /// </summary>
         public IReadOnlyList<ValueModel> Collections { get; }
 
+        /// <summary>
+        /// Enum'ы, встретившиеся в строковом режиме. Числовой режим методов не
+        /// требует: он печатается по месту одной строкой.
+        /// </summary>
+        public IReadOnlyList<EnumModel> StringEnums { get; }
+
         public HostModel(
             string? ns,
             string typeName,
@@ -214,9 +300,11 @@ namespace JsonGoddess.Generator.Model
             IReadOnlyList<string> exhausterTypes,
             IReadOnlyList<string> injectorTypes,
             IReadOnlyList<SubjectModel> subjects,
-            IReadOnlyList<ValueModel> collections
+            IReadOnlyList<ValueModel> collections,
+            IReadOnlyList<EnumModel> stringEnums
             )
         {
+            StringEnums = stringEnums;
             Namespace = ns;
             TypeName = typeName;
             FullName = fullName;

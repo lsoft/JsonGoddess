@@ -57,12 +57,12 @@ namespace Demo
         [Fact]
         public void Unsupported_member_type_is_refused_rather_than_skipped()
         {
-            //словари приезжают позже; пропустить член нельзя - документ без
-            //него это другой документ
+            //множества и прочие коллекции приезжают позже; пропустить член
+            //нельзя - документ без него это другой документ
             var run = GeneratorHarness.Run(
                 Sources.Host(@"
         public int Id { get; set; }
-        public System.Collections.Generic.Dictionary<string, int>? Values { get; set; }
+        public System.Collections.Generic.HashSet<int>? Values { get; set; }
 ")
                 );
 
@@ -162,20 +162,66 @@ namespace Demo
             Assert.Empty(run.CompilationErrors);
         }
 
+        /// <summary>
+        /// Enum в числовом режиме не знает ни про регистр, ни про комбинации
+        /// имён, поэтому ни <c>[Flags]</c>, ни не-ASCII ему не мешают: он
+        /// пишется числом подлежащего типа, и всё.
+        /// </summary>
         [Fact]
-        public void Enum_member_is_refused_until_enums_land()
+        public void Numeric_enum_is_served_even_with_flags_and_non_ascii_names()
         {
             var run = GeneratorHarness.Run(@"
+using System;
 using JsonGoddess;
 
 namespace Demo
 {
-    public enum Status { Draft, Sent }
+    [Flags]
+    public enum Access { None = 0, Read = 1, Write = 2 }
+
+    public enum Cyrillic { Черновик, Отправлено }
 
     public class Payload
     {
-        public int Id { get; set; }
-        public Status State { get; set; }
+        public Access Access { get; set; }
+        public Cyrillic Cyrillic { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+        }
+
+        /// <summary>
+        /// А в строковом режиме каждый из трёх случаев - отказ, и у каждого своя
+        /// причина. <c>[Flags]</c> - потому что у эталона там своя грамматика
+        /// (<c>"Read, Write"</c>); не-ASCII - потому что он свернул бы регистр
+        /// по Unicode, а мы по ASCII; два имени на одно значение - потому что
+        /// какое из них он напишет, не определено и в самом BCL.
+        /// </summary>
+        [Theory]
+        [InlineData("[System.Flags] public enum E { None = 0, Read = 1 }")]
+        [InlineData("public enum E { Черновик, Отправлено }")]
+        [InlineData("public enum E { None = 0, Default = 0 }")]
+        public void String_enum_refuses_what_cannot_be_matched_exactly(string declaration)
+        {
+            var run = GeneratorHarness.Run(@"
+using System;
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    " + declaration + @"
+
+    public class Payload
+    {
+        public E Value { get; set; }
     }
 
     [JsonSubject(typeof(Payload), true)]
@@ -184,6 +230,68 @@ namespace Demo
 ");
 
             Assert.Contains("JGD022", run.DiagnosticIds);
+            Assert.Empty(run.GeneratedFiles);
+        }
+
+        /// <summary>
+        /// Любой другой конвертер - отказ, и это закрывает дыру шире enum'ов:
+        /// молча проигнорировать <c>[JsonConverter]</c> значило бы выдать
+        /// документ, которого эталон не выдаёт, и не сказать об этом.
+        /// </summary>
+        [Fact]
+        public void Unknown_converter_on_a_type_is_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using System;
+using JsonGoddess;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    public sealed class Odd : JsonConverter<E>
+    {
+        public override E Read(ref Utf8JsonReader reader, Type t, JsonSerializerOptions o) => default;
+        public override void Write(Utf8JsonWriter writer, E value, JsonSerializerOptions o) { }
+    }
+
+    [JsonConverter(typeof(Odd))]
+    public enum E { Draft, Sent }
+
+    public class Payload { public E Value { get; set; } }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD022", run.DiagnosticIds);
+        }
+
+        [Fact]
+        public void Converter_on_a_member_is_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    public enum E { Draft, Sent }
+
+    public class Payload
+    {
+        [JsonConverter(typeof(JsonStringEnumConverter))]
+        public E Value { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD022", run.DiagnosticIds);
+            Assert.Contains("[JsonConverter]", Assert.Single(run.GeneratorDiagnostics).GetMessage());
         }
 
         /// <summary>
@@ -201,7 +309,7 @@ namespace Demo
 {
     public class Good { public int Id { get; set; } }
 
-    public class Bad { public System.Collections.Generic.Dictionary<string, int>? Values { get; set; } }
+    public class Bad { public System.Collections.Generic.HashSet<int>? Values { get; set; } }
 
     [JsonSubject(typeof(Good), true)]
     [JsonSubject(typeof(Bad), true)]

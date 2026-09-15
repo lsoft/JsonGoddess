@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using JsonGoddess.Generator.Binding;
 using JsonGoddess.Generator.Model;
 
 namespace JsonGoddess.Generator.Emit
@@ -16,6 +17,8 @@ namespace JsonGoddess.Generator.Emit
     public static class ClassSourceProducer
     {
         private const string Scan = ValueSourceProducer.Scan;
+        private const string TokenKind = "global::JsonGoddess.Internal.JsonTokenKind";
+        private const string AsciiName = "global::JsonGoddess.Internal.JsonAsciiName";
         private const string Context = "global::JsonGoddess.JsonParseContext";
         private const string Span = "global::System.ReadOnlySpan<byte>";
 
@@ -47,6 +50,11 @@ namespace JsonGoddess.Generator.Emit
 
                     EmitWriter(builder, subject, exhauster);
                 }
+
+                foreach (var enumModel in host.StringEnums)
+                {
+                    EmitEnumWriter(builder, enumModel, exhauster);
+                }
             }
 
             foreach (var injector in host.InjectorTypes)
@@ -64,6 +72,11 @@ namespace JsonGoddess.Generator.Emit
                 foreach (var collection in host.Collections)
                 {
                     EmitCollectionReader(builder, collection, injector);
+                }
+
+                foreach (var enumModel in host.StringEnums)
+                {
+                    EmitEnumReader(builder, enumModel, injector);
                 }
             }
 
@@ -251,10 +264,127 @@ namespace JsonGoddess.Generator.Emit
         /// через <c>List&lt;T&gt;.ToArray()</c>: у второго способа ровно те же
         /// перевыделения плюс лишняя копия и лишний объект.
         /// </summary>
+        /// <summary>
+        /// Запись enum'а именем. Значение вне набора уходит числом - это не
+        /// послабление, а поведение эталона: <c>(Named)77</c> он пишет как
+        /// <c>77</c>, а не отказывает.
+        /// </summary>
+        private static void EmitEnumWriter(SourceBuilder builder, EnumModel enumModel, string exhauster)
+        {
+            builder.OpenBlock(
+                "private static void WriteEnum_" + enumModel.MethodSuffix + "("
+                + exhauster + " exhauster, " + enumModel.FullName + " value)"
+                );
+
+            builder.OpenBlock("switch (value)");
+
+            foreach (var member in enumModel.Members)
+            {
+                builder.Line("case " + enumModel.FullName + "." + member.MemberName + ":");
+                builder.Indent();
+                builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal("\"" + member.JsonName + "\"") + ");");
+                builder.Line("return;");
+                builder.Unindent();
+                builder.Line();
+            }
+
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line("exhauster.Append((" + BuiltinTypes.GetTypeName(enumModel.Underlying) + ")value);");
+
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Чтение enum'а именем. Форм на входе три, и все три законны у эталона:
+        /// имя, имя в экранированном виде и число - в кавычках или без.
+        ///
+        /// Регистр сворачивается только у тех членов, чьё имя пришло из C#:
+        /// имя из <c>[JsonStringEnumMemberName]</c> эталон принимает лишь в
+        /// точности, и это проверено прогоном, а не выведено из его исходников.
+        /// </summary>
+        private static void EmitEnumReader(SourceBuilder builder, EnumModel enumModel, string injector)
+        {
+            var underlying = BuiltinTypes.GetTypeName(enumModel.Underlying);
+
+            builder.Line("private static " + enumModel.FullName + " ReadEnum_" + enumModel.MethodSuffix + "(");
+            builder.Indent();
+            builder.Line(injector + " injector,");
+            builder.Line("scoped " + Span + " json,");
+            builder.Line("scoped ref int position,");
+            builder.Line("scoped ref " + Context + " context");
+            builder.Line(")");
+            builder.Unindent();
+            builder.OpenBlock();
+
+            builder.OpenBlock(
+                "if (" + Scan + ".Peek(json, ref position) == " + TokenKind + ".String)"
+                );
+
+            builder.Line("var raw = " + Scan + ".ReadStringContent(json, ref position, out var rawEscaped);");
+            builder.OpenBlock("if (rawEscaped)");
+            builder.Line("raw = context.UnescapeValue(raw);");
+            builder.CloseBlock();
+            builder.Line();
+
+            var buckets = enumModel.Members
+                .GroupBy(m => System.Text.Encoding.UTF8.GetByteCount(m.JsonName))
+                .OrderBy(g => g.Key);
+
+            builder.OpenBlock("switch (raw.Length)");
+
+            foreach (var bucket in buckets)
+            {
+                builder.Line("case " + bucket.Key + ":");
+                builder.OpenBlock();
+
+                foreach (var member in bucket)
+                {
+                    var comparison = member.MatchExactly
+                        ? "global::System.MemoryExtensions.SequenceEqual(raw, "
+                            + SourceBuilder.Utf8Literal(member.JsonName) + ")"
+                        : AsciiName + ".EqualsIgnoreCase(raw, " + SourceBuilder.Utf8Literal(member.JsonName) + ")";
+
+                    builder.OpenBlock("if (" + comparison + ")");
+                    builder.Line("return " + enumModel.FullName + "." + member.MemberName + ";");
+                    builder.CloseBlock();
+                    builder.Line();
+                }
+
+                builder.Line("break;");
+                builder.CloseBlock();
+                builder.Line();
+            }
+
+            builder.CloseBlock();
+            builder.Line();
+
+            //имя не подошло - остаётся число в кавычках; не число даст отказ
+            //разбора, а он и требуется
+            builder.Line("injector.Parse(ref context, raw, out " + underlying + " named);");
+            builder.Line("return (" + enumModel.FullName + ")named;");
+
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line("var rawNumber = " + Scan + ".ReadNumberRaw(json, ref position);");
+            builder.Line("injector.Parse(ref context, rawNumber, out " + underlying + " number);");
+            builder.Line("return (" + enumModel.FullName + ")number;");
+
+            builder.CloseBlock();
+            builder.Line();
+        }
+
         private static void EmitCollectionReader(SourceBuilder builder, ValueModel collection, string injector)
         {
             var isArray = collection.Form == ValueForm.Array;
+            var isMap = collection.Form == ValueForm.Dictionary;
             var element = collection.Element!;
+
+            var open = Scan + (isMap ? ".OpenBrace" : ".OpenBracket");
+            var close = Scan + (isMap ? ".CloseBrace" : ".CloseBracket");
 
             builder.Line(
                 "private static " + collection.TypeName + "? ReadCollection_" + collection.MethodSuffix + "("
@@ -273,10 +403,10 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
             builder.Line();
 
-            builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".OpenBracket);");
+            builder.Line(Scan + ".Expect(json, ref position, " + open + ");");
             builder.Line();
 
-            builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + Scan + ".CloseBracket))");
+            builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + close + "))");
             builder.Line(
                 isArray
                     ? "return " + ValueSourceProducer.Array + ".Empty<" + element.Declaration + ">();"
@@ -298,6 +428,17 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
             builder.OpenBlock("while (true)");
 
+            if (isMap)
+            {
+                //ключ словаря приходится материализовать строкой: с именем
+                //члена его не сравнить - членов тут нет, - и положить в словарь
+                //спан нельзя
+                builder.Line("var rawKey = " + Scan + ".ReadStringContent(json, ref position, out var keyEscaped);");
+                builder.Line("injector.ParseText(ref context, rawKey, keyEscaped, out string key);");
+                builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".Colon);");
+                builder.Line();
+            }
+
             builder.Line(element.Declaration + " item;");
             ValueSourceProducer.ReadValue(builder, element, "item");
             builder.Line();
@@ -310,6 +451,12 @@ namespace JsonGoddess.Generator.Emit
                 builder.Line();
                 builder.Line("result[count] = item;");
                 builder.Line("count++;");
+            }
+            else if (isMap)
+            {
+                //индексатор, а не Add: повторённый ключ у System.Text.Json
+                //выигрывает последним вхождением, а Add бросил бы
+                builder.Line("result[key] = item;");
             }
             else
             {
@@ -324,7 +471,7 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
             builder.Line();
 
-            builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".CloseBracket);");
+            builder.Line(Scan + ".Expect(json, ref position, " + close + ");");
 
             if (isArray)
             {
