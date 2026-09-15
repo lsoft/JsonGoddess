@@ -156,6 +156,18 @@ namespace JsonGoddess.Tests.Interop
                 Form("struct/members-null", "все коллекции равны null",
                     new Route(), RouteSerializer.Serialize, ReadRoute),
 
+                //конструкторы: отложенная форма читателя, умолчание параметра и
+                //инициализатор обычного члена - три разных решения в одном типе
+                Form("ctor/parameterized", "единственный параметризованный ctor, все имена в документе",
+                    Ticket.CreateSample(), TicketSerializer.Serialize, ReadTicket),
+                Form("ctor/defaults", "умолчание параметра и инициализатор члена переживают отсутствие",
+                    new Ticket(1, null, 2), TicketSerializer.Serialize, ReadTicket),
+                Form("ctor/attribute", "[JsonConstructor] выбирает из двух",
+                    new Choice(1, 2), ChoiceSerializer.Serialize, ReadChoice),
+                Form("ctor/positional-record", "позиционный record-класс",
+                    new Positional(1, "b", new List<int> { 2, 3, }),
+                    PositionalSerializer.Serialize, ReadPositional),
+
                 //enum'ы
                 Form("marks/enums-full", "enum числом и именем, в коллекции и в словаре",
                     Marks.CreateSample(), MarksSerializer.Serialize, ReadMarks),
@@ -348,6 +360,24 @@ namespace JsonGoddess.Tests.Interop
         private static Route? ReadRoute(ReadOnlySpan<byte> json)
         {
             RouteSerializer.Deserialize(DefaultInjector.Instance, json, out Route? result);
+            return result;
+        }
+
+        private static Ticket? ReadTicket(ReadOnlySpan<byte> json)
+        {
+            TicketSerializer.Deserialize(DefaultInjector.Instance, json, out Ticket? result);
+            return result;
+        }
+
+        private static Choice? ReadChoice(ReadOnlySpan<byte> json)
+        {
+            ChoiceSerializer.Deserialize(DefaultInjector.Instance, json, out Choice? result);
+            return result;
+        }
+
+        private static Positional? ReadPositional(ReadOnlySpan<byte> json)
+        {
+            PositionalSerializer.Deserialize(DefaultInjector.Instance, json, out Positional? result);
             return result;
         }
     }

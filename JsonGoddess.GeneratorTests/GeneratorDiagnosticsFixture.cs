@@ -412,21 +412,42 @@ namespace Demo
         }
 
         [Fact]
-        public void Required_and_init_only_members_are_refused_until_phase_five()
+        public void Required_members_are_refused_until_presence_is_tracked()
         {
             var required = GeneratorHarness.Run(
                 Sources.Host(@"        public required int Id { get; set; }")
                 );
-            Assert.Contains("JGD022", required.DiagnosticIds);
 
-            var initOnly = GeneratorHarness.Run(
-                Sources.Host(@"        public int Id { get; init; }")
-                );
-            Assert.Contains("JGD022", initOnly.DiagnosticIds);
+            Assert.Contains("JGD022", required.DiagnosticIds);
         }
 
+        /// <summary>
+        /// <c>init</c>-член, который конструктору не аргумент, - отказ, и
+        /// причина в нём не «трудно присвоить», а «нельзя <b>не</b>
+        /// присвоить»: инициализатор объекта либо есть в тексте, либо нет.
+        /// А эталон оставляет такому члену его собственное значение, если
+        /// имени в документе не было.
+        /// </summary>
         [Fact]
-        public void Subject_without_a_parameterless_constructor_is_refused()
+        public void Standalone_init_only_member_is_refused_with_the_reason_named()
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(@"        public int Id { get; init; }")
+                );
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains(
+                "object initializer",
+                run.GeneratorDiagnostics.Single(d => d.Id == "JGD021").GetMessage()
+                );
+        }
+
+        /// <summary>
+        /// Единственный параметризованный конструктор берётся сам, без
+        /// атрибута, - ровно как у эталона.
+        /// </summary>
+        [Fact]
+        public void Single_parameterized_constructor_is_taken_without_an_attribute()
         {
             var run = GeneratorHarness.Run(@"
 using JsonGoddess;
@@ -436,6 +457,36 @@ namespace Demo
     public class Payload
     {
         public Payload(int id) { Id = id; }
+        public int Id { get; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+            Assert.Contains("new global::Demo.Payload(arg_Id)", run.SingleGeneratedFile);
+        }
+
+        /// <summary>
+        /// Конструктор без параметров побеждает даже при наличии публичного
+        /// параметризованного - проверено прогоном эталона на паре, дающей
+        /// разный результат. Видно это на тексте: отложенной формы нет.
+        /// </summary>
+        [Fact]
+        public void Parameterless_constructor_wins_over_a_parameterized_one()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Payload
+    {
+        public Payload() { }
+        public Payload(int id) { Id = id; }
         public int Id { get; set; }
     }
 
@@ -444,7 +495,105 @@ namespace Demo
 }
 ");
 
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Contains("new global::Demo.Payload()", run.SingleGeneratedFile);
+            Assert.DoesNotContain("arg_Id", run.SingleGeneratedFile);
+        }
+
+        /// <summary>
+        /// Два параметризованных конструктора без <c>[JsonConstructor]</c> - у
+        /// эталона <c>NotSupportedException</c> в рантайме. У нас то же
+        /// решение, только на компиляции.
+        /// </summary>
+        [Fact]
+        public void Two_parameterized_constructors_need_the_attribute()
+        {
+            var source = @"
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    public class Payload
+    {
+        MARK public Payload(int id) { Id = id; Extra = 0; }
+        public Payload(int id, int extra) { Id = id; Extra = extra; }
+        public int Id { get; }
+        public int Extra { get; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+";
+
+            var ambiguous = GeneratorHarness.Run(source.Replace("MARK", string.Empty));
+            Assert.Contains("JGD021", ambiguous.DiagnosticIds);
+            Assert.Contains("NotSupportedException", ambiguous.GeneratorDiagnostics.Single().GetMessage());
+
+            var marked = GeneratorHarness.Run(source.Replace("MARK", "[JsonConstructor]"));
+            Assert.Empty(marked.GeneratorDiagnostics);
+            Assert.Contains("new global::Demo.Payload(arg_Id)", marked.SingleGeneratedFile);
+        }
+
+        /// <summary>
+        /// Параметр, которому не нашлось члена, у эталона -
+        /// <c>InvalidOperationException</c> на <b>любом</b> документе, а не
+        /// только на том, где этого имени нет. Отказ на компиляции - то же
+        /// самое, сказанное вовремя.
+        /// </summary>
+        [Fact]
+        public void Constructor_parameter_without_a_member_is_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Payload
+    {
+        public Payload(int id, int missing) { Id = id + missing; }
+        public int Id { get; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
             Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains("'missing'", run.GeneratorDiagnostics.Single().GetMessage());
+        }
+
+        /// <summary>
+        /// Приватный конструктор с <c>[JsonConstructor]</c> эталон вызывает
+        /// рефлексией. У нас порождённый код лежит в чужом классе и такого
+        /// хода не имеет, поэтому отказ - и он прямо говорит, чем именно мы
+        /// отличаемся.
+        /// </summary>
+        [Fact]
+        public void Private_json_constructor_is_refused_because_generated_code_cannot_call_it()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    public class Payload
+    {
+        [JsonConstructor]
+        private Payload(int id) { Id = id; }
+        public int Id { get; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains("reflection", run.GeneratorDiagnostics.Single().GetMessage());
         }
 
         /// <summary>

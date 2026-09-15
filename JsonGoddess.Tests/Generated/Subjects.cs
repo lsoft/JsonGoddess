@@ -683,4 +683,99 @@ namespace JsonGoddess.Tests.Generated
     public partial class RouteSerializer
     {
     }
+
+    /// <summary>
+    /// Единственный параметризованный конструктор. Члены подобраны по тому, что
+    /// в отложенной форме читателя решается по-разному:
+    ///
+    /// <list type="bullet">
+    /// <item><c>Id</c> - аргумент без умолчания;</item>
+    /// <item><c>Tier</c> - аргумент <b>с</b> умолчанием: его отсутствие в
+    /// документе обязано дать 42, а не ноль;</item>
+    /// <item><c>Tags</c> - аргумент составного типа;</item>
+    /// <item><c>Note</c> - обычный член с инициализатором: его отсутствие в
+    /// документе обязано <b>сохранить</b> инициализатор, и ради этого в
+    /// порождаемом коде заводится флаг присутствия;</item>
+    /// <item><c>Renamed</c> - аргумент, чьё свойство переименовано: в документе
+    /// он ищется по JSON-имени, а с параметром связан по C#-имени.</item>
+    /// </list>
+    /// </summary>
+    public class Ticket
+    {
+        public int Id { get; }
+
+        public int Tier { get; }
+
+        public List<string>? Tags { get; }
+
+        public string? Note { get; set; } = "kept";
+
+        [JsonPropertyName("renamed")]
+        public int Renamed { get; }
+
+        public Ticket(int id, List<string>? tags, int renamed, int tier = 42)
+        {
+            Id = id;
+            Tags = tags;
+            Renamed = renamed;
+            Tier = tier;
+        }
+
+        public static Ticket CreateSample()
+        {
+            return new Ticket(7, new List<string> { "a", "b", }, 5) { Note = "written", };
+        }
+    }
+
+    /// <summary>
+    /// Два параметризованных конструктора: без <c>[JsonConstructor]</c> эталон
+    /// падает в рантайме, поэтому выбор обязан быть явным.
+    /// </summary>
+    public class Choice
+    {
+        public int Alpha { get; }
+
+        public int Beta { get; }
+
+        public Choice(int alpha)
+        {
+            Alpha = alpha;
+            Beta = -1;
+        }
+
+        [JsonConstructor]
+        public Choice(int alpha, int beta)
+        {
+            Alpha = alpha;
+            Beta = beta;
+        }
+    }
+
+    /// <summary>
+    /// Позиционный <c>record</c>-класс. Его <c>init</c>-свойства все до одного
+    /// аргументы конструктора, поэтому отдельного кода ему не нужно - но
+    /// убедиться в этом надо прогоном.
+    /// </summary>
+    public record Positional(int Alpha, string? Beta, List<int>? Items);
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Ticket), true)]
+    public partial class TicketSerializer
+    {
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Choice), true)]
+    public partial class ChoiceSerializer
+    {
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Positional), true)]
+    public partial class PositionalSerializer
+    {
+    }
 }

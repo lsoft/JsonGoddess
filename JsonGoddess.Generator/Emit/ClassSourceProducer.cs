@@ -316,11 +316,21 @@ namespace JsonGoddess.Generator.Emit
             }
 
             builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".OpenBrace);");
-            builder.Line("var result = new " + subject.FullName + "();");
-            builder.Line();
+
+            var deferred = subject.NeedsDeferredConstruction;
+
+            if (deferred)
+            {
+                EmitDeferredLocals(builder, subject, members);
+            }
+            else
+            {
+                builder.Line("var result = new " + subject.FullName + "();");
+                builder.Line();
+            }
 
             builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + Scan + ".CloseBrace))");
-            builder.Line("return result;");
+            builder.Line(deferred ? "return " + Construct(subject, members) + ";" : "return result;");
             builder.CloseBlock();
             builder.Line();
 
@@ -339,7 +349,15 @@ namespace JsonGoddess.Generator.Emit
                 NameDispatcher.Emit(
                     builder,
                     members,
-                    member => ValueSourceProducer.ReadValue(builder, member.Value, "result." + member.MemberName)
+                    member =>
+                    {
+                        ValueSourceProducer.ReadValue(builder, member.Value, Target(member, deferred));
+
+                        if (deferred && !member.IsConstructorParameter)
+                        {
+                            builder.Line(Seen(member) + " = true;");
+                        }
+                    }
                     );
 
                 //Экранированное имя не совпадёт ни с одним литералом, потому
@@ -374,11 +392,82 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
 
             builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".CloseBrace);");
+
+            if (deferred)
+            {
+                builder.Line();
+                builder.Line("var result = " + Construct(subject, members) + ";");
+
+                foreach (var member in members.Where(m => !m.IsConstructorParameter))
+                {
+                    builder.OpenBlock("if (" + Seen(member) + ")");
+                    builder.Line("result." + member.MemberName + " = " + Assigned(member) + ";");
+                    builder.CloseBlock();
+                }
+            }
+
             builder.Line("return result;");
 
             builder.CloseBlock();
             builder.Line();
         }
+
+        /// <summary>
+        /// Локальные отложенной формы: по одной на каждый читаемый член, плюс
+        /// флаг присутствия на тех, кого присваивает не конструктор.
+        ///
+        /// Аргумент заводится <b>объявленным умолчанием параметра</b>, и это
+        /// заменяет флаг для него целиком: не было имени в документе -
+        /// осталось умолчание, ровно как у эталона (проверено прогоном:
+        /// <c>beta = 42</c> на документе без <c>beta</c> даёт 42).
+        /// </summary>
+        private static void EmitDeferredLocals(
+            SourceBuilder builder,
+            SubjectModel subject,
+            IReadOnlyList<MemberModel> members
+            )
+        {
+            foreach (var parameter in subject.Parameters)
+            {
+                var member = members.First(m => m.MemberName == parameter.MemberName);
+                builder.Line("var " + Argument(member) + " = " + parameter.DefaultExpression + ";");
+            }
+
+            foreach (var member in members.Where(m => !m.IsConstructorParameter))
+            {
+                builder.Line("var " + Assigned(member) + " = default(" + member.Value.Declaration + ");");
+                builder.Line("var " + Seen(member) + " = false;");
+            }
+
+            builder.Line();
+        }
+
+        private static string Construct(SubjectModel subject, IReadOnlyList<MemberModel> members)
+        {
+            var arguments = subject.Parameters
+                .Select(p => Argument(members.First(m => m.MemberName == p.MemberName)));
+
+            return "new " + subject.FullName + "(" + string.Join(", ", arguments) + ")";
+        }
+
+        private static string Target(MemberModel member, bool deferred)
+        {
+            if (!deferred)
+            {
+                return "result." + member.MemberName;
+            }
+
+            return member.IsConstructorParameter ? Argument(member) : Assigned(member);
+        }
+
+        //префиксы, а не голые имена члена: в теле читателя уже живут name,
+        //position, context, result и локальные, которые печатает читатель
+        //значения, - и совпасть с любым из них член вправе
+        private static string Argument(MemberModel member) => "arg_" + member.MemberName;
+
+        private static string Assigned(MemberModel member) => "set_" + member.MemberName;
+
+        private static string Seen(MemberModel member) => "has_" + member.MemberName;
 
         /// <summary>
         /// Читатель коллекции. Отличие от объекта не только в скобках: у

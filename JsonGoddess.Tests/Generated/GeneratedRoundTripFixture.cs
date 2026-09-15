@@ -716,6 +716,91 @@ namespace JsonGoddess.Tests.Generated
                 );
         }
 
+        /// <summary>
+        /// Тип с параметризованным конструктором: документ и чтение те же, что
+        /// у эталона.
+        /// </summary>
+        [Fact]
+        public void Constructor_bound_type_round_trips()
+        {
+            var value = Ticket.CreateSample();
+            var text = Reference.Write(value);
+
+            using var exhauster = new PooledUtf8Exhauster();
+            TicketSerializer.Serialize(exhauster, value);
+            Assert.Equal(text, Encoding.UTF8.GetString(exhauster.ToArray()));
+
+            var utf8 = Encoding.UTF8.GetBytes(text);
+            TicketSerializer.Deserialize(DefaultInjector.Instance, utf8, out Ticket? ours);
+
+            Assert.Equal(
+                Reference.Write(JsonSerializer.Deserialize<Ticket>(utf8, Reference.Relaxed)),
+                Reference.Write(ours)
+                );
+        }
+
+        /// <summary>
+        /// Два случая, которые легко сделать неправильно и не заметить:
+        /// умолчание параметра исполняется, а инициализатор обычного члена
+        /// переживает отсутствие имени в документе. Ожидание в обоих - прогон
+        /// эталона, а не литерал.
+        /// </summary>
+        [Theory]
+        [InlineData("{\"Id\":1,\"renamed\":2}")]
+        [InlineData("{\"Id\":1,\"Tier\":7,\"renamed\":2,\"Note\":\"given\"}")]
+        [InlineData("{}")]
+        public void Constructor_defaults_and_member_initializers_survive_an_absent_name(string json)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(json);
+
+            TicketSerializer.Deserialize(DefaultInjector.Instance, utf8, out Ticket? ours);
+
+            Assert.Equal(
+                Reference.Write(JsonSerializer.Deserialize<Ticket>(utf8, Reference.Relaxed)),
+                Reference.Write(ours)
+                );
+        }
+
+        /// <summary>
+        /// <c>[JsonConstructor]</c> выбирает конструктор, и выбор виден по
+        /// результату: второй ставит <c>Beta</c> из документа, первый - минус
+        /// единицу.
+        /// </summary>
+        [Fact]
+        public void Json_constructor_attribute_picks_the_constructor()
+        {
+            var utf8 = Encoding.UTF8.GetBytes("{\"Alpha\":1,\"Beta\":2}");
+
+            ChoiceSerializer.Deserialize(DefaultInjector.Instance, utf8, out Choice? ours);
+
+            Assert.Equal(
+                Reference.Write(JsonSerializer.Deserialize<Choice>(utf8, Reference.Relaxed)),
+                Reference.Write(ours)
+                );
+
+            Assert.Equal(2, ours!.Beta);
+        }
+
+        /// <summary>
+        /// Позиционный <c>record</c>: отдельного кода ему не нужно, но
+        /// утверждение об этом стои́т прогоном.
+        /// </summary>
+        [Fact]
+        public void Positional_record_needs_no_special_case()
+        {
+            var value = new Positional(1, "b", new System.Collections.Generic.List<int> { 2, 3, });
+            var text = Reference.Write(value);
+
+            using var exhauster = new PooledUtf8Exhauster();
+            PositionalSerializer.Serialize(exhauster, value);
+            Assert.Equal(text, Encoding.UTF8.GetString(exhauster.ToArray()));
+
+            PositionalSerializer.Deserialize(
+                DefaultInjector.Instance, Encoding.UTF8.GetBytes(text), out Positional? back
+                );
+            Assert.Equal(text, Reference.Write(back));
+        }
+
         private static string[] Names(string text)
         {
             return System.Text.RegularExpressions.Regex.Matches(text, "\"(\\w+)\":")

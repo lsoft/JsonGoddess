@@ -166,6 +166,15 @@ namespace JsonGoddess.Generator.Binding
                     continue;
                 }
 
+                var parameters = ConstructorBinder.Bind(
+                    registration.Type, members, known, LocationInfo.From(host), diagnostics, ref failed
+                    );
+
+                if (parameters is null)
+                {
+                    continue;
+                }
+
                 foreach (var member in members)
                 {
                     ValueBinder.CollectValues(member.Value, collections, stringEnums);
@@ -177,7 +186,8 @@ namespace JsonGoddess.Generator.Binding
                         MethodSuffix(registration.Type),
                         registration.IsRoot,
                         registration.Type.IsValueType,
-                        members
+                        members,
+                        parameters
                         )
                     );
             }
@@ -418,10 +428,6 @@ namespace JsonGoddess.Generator.Binding
             {
                 refusal = "generic types are not supported";
             }
-            else if (!HasUsableParameterlessConstructor(subject))
-            {
-                refusal = "no accessible parameterless constructor (constructor binding arrives in phase 5)";
-            }
             else if (IsCollectionShaped(subject))
             {
                 refusal =
@@ -479,23 +485,6 @@ namespace JsonGoddess.Generator.Binding
             return false;
         }
 
-        private static bool HasUsableParameterlessConstructor(INamedTypeSymbol subject)
-        {
-            foreach (var constructor in subject.InstanceConstructors)
-            {
-                if (constructor.Parameters.Length != 0)
-                {
-                    continue;
-                }
-
-                if (constructor.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
 
         /// <summary>
         /// Порядок членов целиком снят с <c>System.Text.Json</c> прогоном, и
@@ -653,6 +642,7 @@ namespace JsonGoddess.Generator.Binding
             ITypeSymbol memberType;
             bool canWrite;
             bool canRead;
+            var isInitOnly = false;
 
             switch (member)
             {
@@ -682,16 +672,14 @@ namespace JsonGoddess.Generator.Binding
                         return null;
                     }
 
-                    if (property.SetMethod is { IsInitOnly: true, DeclaredAccessibility: Accessibility.Public })
-                    {
-                        Refuse(subject, member, property.Type, location, diagnostics, ref failed,
-                            "init-only setters are not supported yet: the generated code assigns members after new T()");
-                        return null;
-                    }
-
                     memberType = property.Type;
                     canWrite = property.GetMethod is { DeclaredAccessibility: Accessibility.Public };
-                    canRead = property.SetMethod is { DeclaredAccessibility: Accessibility.Public, IsInitOnly: false };
+
+                    //init-member читается: присвоить его можно, просто не там,
+                    //где остальные, - в инициализаторе объекта, после того как
+                    //прочитано всё. Эталон их обслуживает, проверено прогоном
+                    canRead = property.SetMethod is { DeclaredAccessibility: Accessibility.Public };
+                    isInitOnly = property.SetMethod is { IsInitOnly: true };
 
                     if (!canWrite && !canRead)
                     {
@@ -791,7 +779,8 @@ namespace JsonGoddess.Generator.Binding
                 canWrite,
                 canRead,
                 condition,
-                known.ReadInt32Argument(member, known.JsonPropertyOrder, 0)
+                known.ReadInt32Argument(member, known.JsonPropertyOrder, 0),
+                isInitOnly: isInitOnly
                 );
         }
 

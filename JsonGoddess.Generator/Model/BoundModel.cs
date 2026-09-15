@@ -261,6 +261,27 @@ namespace JsonGoddess.Generator.Model
         /// <summary><c>[JsonPropertyOrder]</c>; по умолчанию 0.</summary>
         public int Order { get; }
 
+        /// <summary>
+        /// Член связан с параметром конструктора.
+        ///
+        /// Присваивается он тогда <b>только</b> конструктором, и setter'а, если
+        /// он есть, не касается никто. Проверено прогоном: у члена с setter'ом,
+        /// связанного с параметром, из документа со значением 1 выходит 10 -
+        /// то есть отработал конструктор, умножающий на десять, а setter после
+        /// него не отработал.
+        /// </summary>
+        public bool IsConstructorParameter { get; }
+
+        /// <summary>
+        /// Setter объявлен как <c>init</c>.
+        ///
+        /// Присвоить его можно только в инициализаторе объекта, то есть уже
+        /// после того, как всё прочитано. Эталон такие члены обслуживает
+        /// (проверено прогоном), поэтому отказывать нельзя - но и печатать
+        /// <c>result.X = ...</c> внутри цикла тоже.
+        /// </summary>
+        public bool IsInitOnly { get; }
+
         public MemberModel(
             string memberName,
             string jsonName,
@@ -269,9 +290,13 @@ namespace JsonGoddess.Generator.Model
             bool canWrite,
             bool canRead,
             WriteCondition condition,
-            int order
+            int order,
+            bool isConstructorParameter = false,
+            bool isInitOnly = false
             )
         {
+            IsConstructorParameter = isConstructorParameter;
+            IsInitOnly = isInitOnly;
             MemberName = memberName;
             JsonName = jsonName;
             JsonNameUtf8 = jsonNameUtf8;
@@ -280,6 +305,36 @@ namespace JsonGoddess.Generator.Model
             CanRead = canRead;
             Condition = condition;
             Order = order;
+        }
+    }
+
+    /// <summary>
+    /// Параметр конструктора десериализации.
+    ///
+    /// Своего значения у него нет: он всегда связан с членом, и эталон
+    /// настаивает на этом жёстче нас - параметр, которому не нашлось члена, у
+    /// него <c>InvalidOperationException</c>, и не в момент чтения такого
+    /// документа, а на любом. Поэтому связь выражена именем члена, а не типом.
+    /// </summary>
+    public sealed class ParameterModel
+    {
+        /// <summary>Имя связанного члена: по нему же названа локальная переменная.</summary>
+        public string MemberName { get; }
+
+        /// <summary>
+        /// Значение параметра, если его имени в документе не было.
+        ///
+        /// Умолчание, объявленное в конструкторе, а не <c>default(T)</c>:
+        /// проверено прогоном - <c>ctor(int alpha, int beta = 42)</c> на
+        /// документе без <c>beta</c> даёт 42. Инициализация локальной этим
+        /// выражением заменяет отслеживание «было ли имя в документе» целиком.
+        /// </summary>
+        public string DefaultExpression { get; }
+
+        public ParameterModel(string memberName, string defaultExpression)
+        {
+            MemberName = memberName;
+            DefaultExpression = defaultExpression;
         }
     }
 
@@ -308,12 +363,19 @@ namespace JsonGoddess.Generator.Model
 
         public IReadOnlyList<MemberModel> Members { get; }
 
+        /// <summary>
+        /// Параметры конструктора десериализации. Пусто - конструктор без
+        /// параметров, то есть обычный случай.
+        /// </summary>
+        public IReadOnlyList<ParameterModel> Parameters { get; }
+
         public SubjectModel(
             string fullName,
             string methodSuffix,
             bool isRoot,
             bool isValueType,
-            IReadOnlyList<MemberModel> members
+            IReadOnlyList<MemberModel> members,
+            IReadOnlyList<ParameterModel> parameters
             )
         {
             FullName = fullName;
@@ -321,7 +383,26 @@ namespace JsonGoddess.Generator.Model
             IsRoot = isRoot;
             IsValueType = isValueType;
             Members = members;
+            Parameters = parameters;
         }
+
+        /// <summary>
+        /// Читатель обязан сложить всё в локальные и собрать объект в конце:
+        /// аргумент конструктора нельзя передать объекту, которого ещё нет.
+        ///
+        /// Форма эта дороже - локальная на член, плюс флаг присутствия на
+        /// каждый член, который конструктору не аргумент, - и потому не
+        /// навязывается никому лишнему. У типа с конструктором без параметров
+        /// остаётся прямое присваивание в <c>result.X</c> в ветке диспетчера,
+        /// без единой лишней переменной.
+        ///
+        /// Флаги присутствия не перестраховка: инициализатор члена
+        /// <b>переживает</b> отсутствие имени в документе - проверено прогоном
+        /// эталона, - а значит просто присвоить прочитанное нельзя, иначе
+        /// <c>Beta = 5</c> превратится в ноль на документе, в котором
+        /// <c>Beta</c> не было.
+        /// </summary>
+        public bool NeedsDeferredConstruction => Parameters.Count > 0;
 
         /// <summary>Тип, каким он печатается в сигнатуру точки входа и писателя.</summary>
         public string Declaration => IsValueType ? FullName : FullName + "?";
