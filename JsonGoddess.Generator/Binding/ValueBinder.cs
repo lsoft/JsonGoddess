@@ -78,14 +78,9 @@ namespace JsonGoddess.Generator.Binding
                 return true;
             }
 
-            //Nullable<T> над всем остальным не бывает: субъект и коллекция -
-            //ссылочные типы, и null у них выражается самим типом
-            if (isNullableValueType)
-            {
-                refusal = "Nullable<> is only supported over builtin value types and enums";
-                return false;
-            }
-
+            //Субъект стоит раньше отказа по Nullable<>, потому что субъектом
+            //может быть структура, и тогда Nullable<> над ним - обычное дело.
+            //У класса IsNullable всегда true: ссылка описывает null сама.
             if (subjects.TryGetValue(type, out var subjectSuffix))
             {
                 value = new ValueModel(
@@ -94,9 +89,18 @@ namespace JsonGoddess.Generator.Binding
                     type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                     subjectSuffix,
                     null,
-                    true
+                    type.IsReferenceType || isNullableValueType,
+                    isValueType: type.IsValueType
                     );
                 return true;
+            }
+
+            //Nullable<T> над остальным не бывает: коллекции ссылочные, и null у
+            //них выражается самим типом
+            if (isNullableValueType)
+            {
+                refusal = "Nullable<> is only supported over builtin value types, enums and registered struct subjects";
+                return false;
             }
 
             if (type is IArrayTypeSymbol array)

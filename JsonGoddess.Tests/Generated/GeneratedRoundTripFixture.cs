@@ -617,6 +617,113 @@ namespace JsonGoddess.Tests.Generated
                 );
         }
 
+        /// <summary>
+        /// Структура-субъект: документ и порядок членов те же, что у эталона.
+        /// Порядок вынут отдельно, потому что у структуры поле среди свойств -
+        /// обычное дело, и правило «свойства раньше полей» здесь заметнее, чем
+        /// у класса.
+        /// </summary>
+        [Fact]
+        public void Struct_subject_writes_what_system_text_json_writes()
+        {
+            var value = Coordinate.CreateSample();
+            var text = Reference.Write(value);
+
+            using var exhauster = new PooledUtf8Exhauster();
+            CoordinateSerializer.Serialize(exhauster, value);
+
+            Assert.Equal(text, Encoding.UTF8.GetString(exhauster.ToArray()));
+            Assert.Equal(new[] { "X", "Y", "Sum", "Label", }, Names(text));
+        }
+
+        /// <summary>
+        /// get-only свойство структуры эталон пишет, а на чтении молча роняет.
+        /// Повторяем в точности: чтение сравнивается с его же чтением, а не с
+        /// исходным объектом, - иначе потеря выглядела бы нашей ошибкой.
+        /// </summary>
+        [Fact]
+        public void Struct_subject_is_read_the_way_system_text_json_reads_it()
+        {
+            var utf8 = Encoding.UTF8.GetBytes(Reference.Write(Coordinate.CreateSample()));
+
+            var theirs = JsonSerializer.Deserialize<Coordinate>(utf8, Reference.Relaxed);
+            CoordinateSerializer.Deserialize(DefaultInjector.Instance, utf8, out Coordinate ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+        }
+
+        /// <summary>
+        /// Позиционная <c>record struct</c>: отдельного кода ей не нужно, но
+        /// утверждение об этом стои́т прогоном.
+        /// </summary>
+        [Fact]
+        public void Positional_record_struct_needs_no_special_case()
+        {
+            var value = new Segment(1, 2);
+            var text = Reference.Write(value);
+
+            using var exhauster = new PooledUtf8Exhauster();
+            SegmentSerializer.Serialize(exhauster, value);
+            Assert.Equal(text, Encoding.UTF8.GetString(exhauster.ToArray()));
+
+            SegmentSerializer.Deserialize(DefaultInjector.Instance, Encoding.UTF8.GetBytes(text), out Segment back);
+            Assert.Equal(text, Reference.Write(back));
+        }
+
+        /// <summary>
+        /// Структура на месте члена во всех видах сразу: сама,
+        /// <c>Nullable&lt;&gt;</c> и внутри трёх коллекций. Два образца, потому
+        /// что заполненный <c>Nullable</c> и пустая коллекция дают документы
+        /// другого строения.
+        /// </summary>
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Struct_members_round_trip_in_every_shape(bool filled)
+        {
+            var value = filled ? Route.CreateFilled() : Route.CreateSample();
+            var text = Reference.Write(value);
+
+            using var exhauster = new PooledUtf8Exhauster();
+            RouteSerializer.Serialize(exhauster, value);
+            Assert.Equal(text, Encoding.UTF8.GetString(exhauster.ToArray()));
+
+            var utf8 = Encoding.UTF8.GetBytes(text);
+            RouteSerializer.Deserialize(DefaultInjector.Instance, utf8, out Route? ours);
+
+            Assert.Equal(
+                Reference.Write(JsonSerializer.Deserialize<Route>(utf8, Reference.Relaxed)),
+                Reference.Write(ours)
+                );
+        }
+
+        /// <summary>
+        /// <c>null</c> на месте не-nullable структуры - отказ, и у эталона он
+        /// тоже отказ (<c>JsonException</c>). Принять его значило бы принять
+        /// документ, которого тип описать не может.
+        /// </summary>
+        [Fact]
+        public void Null_where_a_struct_is_expected_is_refused_by_both()
+        {
+            var utf8 = Encoding.UTF8.GetBytes("{\"Start\":null}");
+
+            Assert.ThrowsAny<Exception>(
+                () => JsonSerializer.Deserialize<Route>(utf8, Reference.Relaxed)
+                );
+
+            Assert.ThrowsAny<Exception>(
+                () => RouteSerializer.Deserialize(DefaultInjector.Instance, utf8, out Route? _)
+                );
+        }
+
+        private static string[] Names(string text)
+        {
+            return System.Text.RegularExpressions.Regex.Matches(text, "\"(\\w+)\":")
+                .Cast<System.Text.RegularExpressions.Match>()
+                .Select(m => m.Groups[1].Value)
+                .ToArray();
+        }
+
         private static string Serialize(Flat value)
         {
             using var exhauster = new PooledUtf8Exhauster();

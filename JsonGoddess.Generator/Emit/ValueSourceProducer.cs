@@ -63,6 +63,21 @@ namespace JsonGoddess.Generator.Emit
 
                 case ValueForm.Subject:
                 {
+                    //Класс разбирает null сам, внутри Write_: тело у него одно
+                    //на все места, где он встретился. Nullable<структура> так
+                    //не может - Write_ принимает не-nullable, - поэтому null
+                    //снимается здесь, на месте члена.
+                    if (value.IsValueType && value.IsNullable)
+                    {
+                        WriteNullable(
+                            builder,
+                            accessor,
+                            depth,
+                            local => "Write_" + value.MethodSuffix + "(exhauster, " + local + ".Value);"
+                            );
+                        return;
+                    }
+
                     builder.Line("Write_" + value.MethodSuffix + "(exhauster, " + accessor + ");");
                     return;
                 }
@@ -101,7 +116,30 @@ namespace JsonGoddess.Generator.Emit
                 return;
             }
 
-            var local = "enumValue" + depth;
+            WriteNullable(
+                builder,
+                accessor,
+                depth,
+                local => "WriteEnum_" + value.MethodSuffix + "(exhauster, " + local + ".Value);"
+                );
+        }
+
+        /// <summary>
+        /// <c>Nullable&lt;T&gt;</c> над тем, чей писатель принимает не-nullable:
+        /// enum в строковой форме и структура-субъект.
+        ///
+        /// Локальная переменная, а не два обращения к члену: член может быть
+        /// свойством с телом, и вычислять его дважды - менять смысл кода ради
+        /// более короткого текста.
+        /// </summary>
+        private static void WriteNullable(
+            SourceBuilder builder,
+            string accessor,
+            int depth,
+            System.Func<string, string> writeValue
+            )
+        {
+            var local = "nullable" + depth;
 
             builder.OpenBlock();
             builder.Line("var " + local + " = " + accessor + ";");
@@ -111,7 +149,7 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
 
             builder.OpenBlock("else");
-            builder.Line("WriteEnum_" + value.MethodSuffix + "(exhauster, " + local + ".Value);");
+            builder.Line(writeValue(local));
             builder.CloseBlock();
 
             builder.CloseBlock();
@@ -200,9 +238,25 @@ namespace JsonGoddess.Generator.Emit
             {
                 case ValueForm.Subject:
                 {
-                    builder.Line(
-                        target + " = Read_" + value.MethodSuffix + "(injector, json, ref position, ref context);"
-                        );
+                    var read = target + " = Read_" + value.MethodSuffix
+                        + "(injector, json, ref position, ref context);";
+
+                    //У класса null снимает сам Read_. У структуры его снимать
+                    //нечем и не нужно: null на её месте - отказ, и Read_ им и
+                    //кончится. Остаётся Nullable<структура>, где null законен,
+                    //а Read_ его вернуть не может.
+                    if (value.IsValueType && value.IsNullable)
+                    {
+                        builder.OpenBlock("if (" + Scan + ".TryReadNull(json, ref position))");
+                        builder.Line(target + " = null;");
+                        builder.CloseBlock();
+                        builder.OpenBlock("else");
+                        builder.Line(read);
+                        builder.CloseBlock();
+                        return;
+                    }
+
+                    builder.Line(read);
                     return;
                 }
 

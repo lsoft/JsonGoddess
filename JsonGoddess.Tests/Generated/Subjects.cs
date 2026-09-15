@@ -571,4 +571,116 @@ namespace JsonGoddess.Tests.Generated
     public partial class RenamedBaseSerializer
     {
     }
+
+    /// <summary>
+    /// Структура-субъект. Три её члена подобраны по тому, что у структуры
+    /// решается иначе, чем у класса:
+    ///
+    /// <list type="bullet">
+    /// <item>обычное свойство - чтобы было что читать;</item>
+    /// <item><c>[JsonInclude]</c>-поле - у структур поля идиоматичнее, чем у
+    /// классов, и порядок «свойства раньше полей» обязан соблюдаться здесь
+    /// так же (проверено прогоном эталона);</item>
+    /// <item>get-only свойство - эталон его <b>пишет</b> и молча роняет на
+    /// чтении; повторяется в точности.</item>
+    /// </list>
+    /// </summary>
+    public struct Coordinate
+    {
+        public int X { get; set; }
+
+        public int Y { get; set; }
+
+        public int Sum => X + Y;
+
+        [JsonInclude]
+        public string? Label;
+
+        public static Coordinate CreateSample()
+        {
+            return new Coordinate { X = 3, Y = 4, Label = "corner", };
+        }
+    }
+
+    /// <summary>
+    /// Позиционная <c>record struct</c>. Отдельного кода ей не нужно: у неё
+    /// есть и конструктор без параметров (он есть у любой структуры), и
+    /// setter'ы у позиционных свойств, - но убедиться в этом надо прогоном, а
+    /// не рассуждением.
+    /// </summary>
+    public record struct Segment(int From, int To);
+
+    /// <summary>
+    /// Структура на месте члена во всех трёх видах: сама, под
+    /// <c>Nullable&lt;&gt;</c> и внутри коллекций. Именно здесь ветка на
+    /// <c>null</c> отличается от классовой: <c>Write_</c> у структуры
+    /// принимает не-nullable, и снимать <c>null</c> приходится на месте члена.
+    /// </summary>
+    public class Route
+    {
+        public Coordinate Start { get; set; }
+
+        public Coordinate? Finish { get; set; }
+
+        public List<Coordinate>? Waypoints { get; set; }
+
+        public Coordinate[]? Corners { get; set; }
+
+        public Dictionary<string, Coordinate>? Named { get; set; }
+
+        public Segment Leg { get; set; }
+
+        public static Route CreateSample()
+        {
+            return new Route
+            {
+                Start = Coordinate.CreateSample(),
+                Finish = null,
+                Waypoints = new List<Coordinate> { Coordinate.CreateSample(), new Coordinate { X = 1, }, },
+                Corners = new[] { new Coordinate { Y = 2, }, },
+                Named = new Dictionary<string, Coordinate> { { "home", new Coordinate { X = 9, } }, },
+                Leg = new Segment(1, 2),
+            };
+        }
+
+        /// <summary>
+        /// Второй образец: тот же тип, но <c>Nullable</c> заполнен, а коллекции
+        /// пусты. Форма документа у него другая, и проверять надо обе.
+        /// </summary>
+        public static Route CreateFilled()
+        {
+            return new Route
+            {
+                Start = new Coordinate(),
+                Finish = Coordinate.CreateSample(),
+                Waypoints = new List<Coordinate>(),
+                Corners = new Coordinate[0],
+                Named = new Dictionary<string, Coordinate>(),
+                Leg = new Segment(0, 0),
+            };
+        }
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Coordinate), true)]
+    public partial class CoordinateSerializer
+    {
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Segment), true)]
+    public partial class SegmentSerializer
+    {
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Route), true)]
+    [JsonSubject(typeof(Coordinate), false)]
+    [JsonSubject(typeof(Segment), false)]
+    public partial class RouteSerializer
+    {
+    }
 }

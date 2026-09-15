@@ -33,6 +33,18 @@ namespace JsonGoddess.GeneratorTests.Stj
         /// <summary>Причина отказа словами генератора - <c>null</c> у принятых.</summary>
         public required string? Reason { get; init; }
 
+        /// <summary>
+        /// <b>Все</b> причины, а не первая.
+        ///
+        /// Разница обошлась дорого: по первой причине выходило, что их
+        /// <c>SimpleStruct</c> держит двадцать типов и поддержка структур
+        /// откроет их разом. Открылся один. Остальные девятнадцать просто
+        /// назвали следующую свою причину - у них их было по нескольку с
+        /// самого начала. Считать «что разблокирует работа» по первой причине
+        /// нельзя, и теперь этого не сделать.
+        /// </summary>
+        public required IReadOnlyList<string> Reasons { get; init; }
+
         public override string ToString() => Name;
     }
 
@@ -327,8 +339,9 @@ namespace JsonGoddess.GeneratorTests.Stj
 
                 var run = GeneratorHarness.Continue(driver, compilation);
 
-                var error = run.GeneratorDiagnostics
-                    .FirstOrDefault(d => d.Severity == DiagnosticSeverity.Error);
+                var errors = run.GeneratorDiagnostics
+                    .Where(d => d.Severity == DiagnosticSeverity.Error)
+                    .ToList();
 
                 result.Add(
                     new StjVerdict
@@ -336,9 +349,10 @@ namespace JsonGoddess.GeneratorTests.Stj
                         Name = candidate.Name,
                         FullName = candidate.ToDisplayString(),
                         ClosureSize = closure.Count,
-                        Accepted = error is null,
-                        DiagnosticId = error?.Id,
-                        Reason = error?.GetMessage(),
+                        Accepted = errors.Count == 0,
+                        DiagnosticId = errors.Count == 0 ? null : errors[0].Id,
+                        Reason = errors.Count == 0 ? null : errors[0].GetMessage(),
+                        Reasons = errors.Select(e => e.Id + " " + e.GetMessage()).ToList(),
                     }
                     );
             }

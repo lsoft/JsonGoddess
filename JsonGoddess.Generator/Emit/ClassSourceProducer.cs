@@ -22,6 +22,7 @@ namespace JsonGoddess.Generator.Emit
         private const string AsciiName = "global::JsonGoddess.Internal.JsonAsciiName";
         private const string Context = "global::JsonGoddess.JsonParseContext";
         private const string Span = "global::System.ReadOnlySpan<byte>";
+        private const string EqualityComparer = "global::System.Collections.Generic.EqualityComparer";
 
         public static string Produce(HostModel host)
         {
@@ -94,7 +95,7 @@ namespace JsonGoddess.Generator.Emit
         private static void EmitSerializeEntry(SourceBuilder builder, SubjectModel subject, string exhauster)
         {
             builder.OpenBlock(
-                "public static void Serialize(" + exhauster + " exhauster, " + subject.FullName + "? value)"
+                "public static void Serialize(" + exhauster + " exhauster, " + subject.Declaration + " value)"
                 );
             builder.Line("Write_" + subject.MethodSuffix + "(exhauster, value);");
             builder.CloseBlock();
@@ -105,7 +106,7 @@ namespace JsonGoddess.Generator.Emit
         {
             builder.OpenBlock(
                 "public static void Deserialize(" + injector + " injector, " + Span + " json, out "
-                + subject.FullName + "? result)"
+                + subject.Declaration + " result)"
                 );
             builder.Line("var position = 0;");
             builder.Line("var context = new " + Context + "(json);");
@@ -146,14 +147,20 @@ namespace JsonGoddess.Generator.Emit
 
             builder.OpenBlock(
                 "private static void Write_" + subject.MethodSuffix + "("
-                + exhauster + " exhauster, " + subject.FullName + "? value)"
+                + exhauster + " exhauster, " + subject.Declaration + " value)"
                 );
 
-            builder.OpenBlock("if (value is null)");
-            builder.Line("exhauster.AppendNull();");
-            builder.Line("return;");
-            builder.CloseBlock();
-            builder.Line();
+            //у структуры проверки нет, и это не экономия ветки: значение
+            //структуры null описать не может, а Nullable<> над ней разбирается
+            //на месте члена, до вызова
+            if (!subject.IsValueType)
+            {
+                builder.OpenBlock("if (value is null)");
+                builder.Line("exhauster.AppendNull();");
+                builder.Line("return;");
+                builder.CloseBlock();
+                builder.Line();
+            }
 
             if (members.Count == 0)
             {
@@ -267,6 +274,18 @@ namespace JsonGoddess.Generator.Emit
                 return candidate + " is not null";
             }
 
+            //Структура-субъект: у неё нет operator !=, и печатать сравнение
+            //значило бы выдать код, который не компилируется. Эталон в этом
+            //месте сравнивает через EqualityComparer<T>.Default - проверено
+            //прогоном: структура в значении по умолчанию из документа
+            //исчезает, - и цена его вызова тут уместна, потому что платит за
+            //неё тот, кто явно написал WhenWritingDefault на структуре.
+            if (member.Value.IsValueType)
+            {
+                return "!" + EqualityComparer + "<" + member.Value.TypeName + ">.Default.Equals("
+                    + candidate + ", default(" + member.Value.TypeName + "))";
+            }
+
             return candidate + " != default(" + member.Value.TypeName + ")";
         }
 
@@ -274,7 +293,7 @@ namespace JsonGoddess.Generator.Emit
         {
             var members = subject.Members.Where(m => m.CanRead).ToList();
 
-            builder.Line("private static " + subject.FullName + "? Read_" + subject.MethodSuffix + "(");
+            builder.Line("private static " + subject.Declaration + " Read_" + subject.MethodSuffix + "(");
             builder.Indent();
             builder.Line(injector + " injector,");
             builder.Line("scoped " + Span + " json,");
@@ -284,10 +303,17 @@ namespace JsonGoddess.Generator.Emit
             builder.Unindent();
             builder.OpenBlock();
 
-            builder.OpenBlock("if (" + Scan + ".TryReadNull(json, ref position))");
-            builder.Line("return null;");
-            builder.CloseBlock();
-            builder.Line();
+            //У структуры ветки на null нет, и это тоже не экономия: null на
+            //месте структуры обязан кончиться отказом - ровно так ведёт себя
+            //эталон, - и он кончается им сам, на Expect(OpenBrace) ниже.
+            //Nullable<> над структурой разбирается на месте члена, до вызова.
+            if (!subject.IsValueType)
+            {
+                builder.OpenBlock("if (" + Scan + ".TryReadNull(json, ref position))");
+                builder.Line("return null;");
+                builder.CloseBlock();
+                builder.Line();
+            }
 
             builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".OpenBrace);");
             builder.Line("var result = new " + subject.FullName + "();");

@@ -302,23 +302,53 @@ namespace JsonGoddess.GeneratorTests.Stj
         }
 
         /// <summary>
-        /// Кто мешает чаще всех.
+        /// Кто мешает чаще всех — и, отдельно, кого снятие причины
+        /// действительно откроет.
         ///
-        /// Отказы каскадны: один <c>SimpleStruct</c> среди членов закрывает
-        /// два десятка их типов сразу. Без этой таблицы список отказов читался
-        /// бы как двадцать разных задач вместо одной, и приоритет фазы 5
-        /// назначался бы на глаз.
+        /// Два столбца, а не один, и это исправление ошибки, которая уже успела
+        /// соврать. По первой причине выходило, что <c>SimpleStruct</c> держит
+        /// двадцать типов; поддержка структур открыла <b>один</b>. Остальные
+        /// девятнадцать просто назвали следующую свою причину — у них их было
+        /// по нескольку с самого начала.
+        ///
+        /// Поэтому второй столбец считает типы, у которых эта причина
+        /// <b>единственная</b>. Только он и отвечает на вопрос «что даст
+        /// работа», и только на него можно опираться, назначая порядок фаз.
         /// </summary>
         private static void AppendBlockers(StringBuilder report)
         {
-            var blockers = StjCatalogue.Verdicts
-                .Where(v => !v.Accepted)
-                .Select(Culprit)
-                .Where(c => c is not null)
-                .GroupBy(c => c!, StringComparer.Ordinal)
-                .Where(g => g.Count() > 1)
-                .OrderByDescending(g => g.Count())
-                .ThenBy(g => g.Key, StringComparer.Ordinal)
+            var refused = StjCatalogue.Verdicts.Where(v => !v.Accepted).ToList();
+
+            var mentioned = new Dictionary<string, int>(StringComparer.Ordinal);
+            var soleReason = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            foreach (var verdict in refused)
+            {
+                //группировка по ПРИЧИНЕ, а не по виноватому типу: работа
+                //снимает правило, а не конкретный чужой класс, и планировать
+                //надо тем же, чем работаешь
+                var kinds = verdict.Reasons
+                    .Select(r => Kind(Tail(r)))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+
+                foreach (var kind in kinds)
+                {
+                    mentioned.TryGetValue(kind, out var count);
+                    mentioned[kind] = count + 1;
+
+                    if (kinds.Count == 1)
+                    {
+                        soleReason.TryGetValue(kind, out var sole);
+                        soleReason[kind] = sole + 1;
+                    }
+                }
+            }
+
+            var blockers = mentioned
+                .OrderByDescending(p => soleReason.TryGetValue(p.Key, out var s) ? s : 0)
+                .ThenByDescending(p => p.Value)
+                .ThenBy(p => p.Key, StringComparer.Ordinal)
                 .Take(10)
                 .ToList();
 
@@ -327,16 +357,21 @@ namespace JsonGoddess.GeneratorTests.Stj
                 return;
             }
 
-            report.Append("## Что мешает чаще всего\n\n");
-            report.Append("Отказы каскадны: один негодный член закрывает весь тип, а один негодный тип —\n");
-            report.Append("всех, кто на него ссылается. Здесь это видно как порядок работ, а не как\n");
-            report.Append("список из сотни строк.\n\n");
+            report.Append("## Что даст следующая работа\n\n");
+            report.Append("У типа причин бывает несколько, и снятие одной открывает не тип, а следующую\n");
+            report.Append("причину. Поэтому столбца два. **Упоминается** — во скольких отказах причина\n");
+            report.Append("названа вообще. **Единственная** — у скольких типов она одна, то есть сколько\n");
+            report.Append("откроется, если её снять.\n\n");
+            report.Append("Планировать можно только по второму. По первому уже вышла ошибка: отказ на\n");
+            report.Append("структурах упоминался у двадцати типов, поддержка структур открыла **один** —\n");
+            report.Append("остальные девятнадцать просто назвали следующую свою причину.\n\n");
 
-            report.Append("| Тип | Закрывает их типов |\n|---|:-:|\n");
+            report.Append("| Причина | Упоминается | Единственная |\n|---|:-:|:-:|\n");
 
             foreach (var blocker in blockers)
             {
-                report.Append("| `").Append(blocker.Key).Append("` | ").Append(N(blocker.Count())).Append(" |\n");
+                report.Append("| `").Append(blocker.Key).Append("` | ").Append(N(blocker.Value)).Append(" | ")
+                    .Append(N(soleReason.TryGetValue(blocker.Key, out var sole) ? sole : 0)).Append(" |\n");
             }
 
             report.Append('\n');
@@ -384,6 +419,22 @@ namespace JsonGoddess.GeneratorTests.Stj
         }
 
         /// <summary>
+        /// Причина без имени типа внутри неё.
+        ///
+        /// «Тип не зарегистрирован» с именем в тексте - это одно правило, а не
+        /// сорок; в таблице приоритетов оно обязано стоять одной строкой,
+        /// иначе самое массовое выглядит самым мелким.
+        /// </summary>
+        private static string Kind(string reason)
+        {
+            const string NotRegistered = "the type is not registered";
+
+            return reason.StartsWith(NotRegistered, StringComparison.Ordinal)
+                ? NotRegistered + " (member type JsonGoddess cannot serve)"
+                : reason;
+        }
+
+        /// <summary>
         /// Тип в таблице отказов - и, если отказ пришёлся не на него самого, то
         /// на кого именно.
         ///
@@ -406,13 +457,21 @@ namespace JsonGoddess.GeneratorTests.Stj
         /// это отказанный тип, у <c>JGD022</c> - член вида <c>Тип.Член</c>.
         /// Разбор своего же формата, а не чужого, - он наш и стабилен.
         /// </summary>
-        private static string? Culprit(StjVerdict verdict)
+        private static string? Culprit(StjVerdict verdict) =>
+            verdict.Reason is null ? null : CulpritOf(verdict.DiagnosticId + " " + verdict.Reason);
+
+        /// <summary>
+        /// То же по строке вида <c>«JGD0NN сообщение»</c>: так хранится каждая
+        /// причина в <see cref="StjVerdict.Reasons"/>.
+        /// </summary>
+        private static string? CulpritOf(string? reason)
         {
-            var reason = verdict.Reason;
             if (reason is null)
             {
                 return null;
             }
+
+            var isMember = reason.StartsWith("JGD022", StringComparison.Ordinal);
 
             var open = reason.IndexOf('\'');
             var close = open < 0 ? -1 : reason.IndexOf('\'', open + 1);
@@ -423,7 +482,7 @@ namespace JsonGoddess.GeneratorTests.Stj
 
             var quoted = reason.Substring(open + 1, close - open - 1);
 
-            if (verdict.DiagnosticId == "JGD022")
+            if (isMember)
             {
                 var member = quoted.LastIndexOf('.');
                 quoted = member < 0 ? quoted : quoted.Substring(0, member);

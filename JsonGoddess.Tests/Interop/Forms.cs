@@ -141,6 +141,21 @@ namespace JsonGoddess.Tests.Interop
                     naming: System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
                     dictionaryKeys: System.Text.Json.JsonNamingPolicy.SnakeCaseLower),
 
+                //структуры: корень, член, Nullable<> и внутри коллекций - это
+                //разные места кода, и null в каждом решается по-своему
+                StructForm("struct/root", "структура корнем: свойства, [JsonInclude]-поле, get-only",
+                    Coordinate.CreateSample(), CoordinateSerializer.Serialize, ReadCoordinate),
+                StructForm("struct/root-default", "структура корнем на умолчаниях",
+                    new Coordinate(), CoordinateSerializer.Serialize, ReadCoordinate),
+                StructForm("struct/positional-record", "позиционная record struct",
+                    new Segment(1, 2), SegmentSerializer.Serialize, ReadSegment),
+                Form("struct/members", "структура членом, Nullable пуст, коллекции заполнены",
+                    Route.CreateSample(), RouteSerializer.Serialize, ReadRoute),
+                Form("struct/members-filled", "Nullable заполнен, коллекции пусты",
+                    Route.CreateFilled(), RouteSerializer.Serialize, ReadRoute),
+                Form("struct/members-null", "все коллекции равны null",
+                    new Route(), RouteSerializer.Serialize, ReadRoute),
+
                 //enum'ы
                 Form("marks/enums-full", "enum числом и именем, в коллекции и в словаре",
                     Marks.CreateSample(), MarksSerializer.Serialize, ReadMarks),
@@ -164,6 +179,18 @@ namespace JsonGoddess.Tests.Interop
             where T : class
         {
             return new InteropForm<T>(name, what, sample, write, read, divergence, naming, dictionaryKeys);
+        }
+
+        private static InteropForm StructForm<T>(
+            string name,
+            string what,
+            T sample,
+            FormWriter<T> write,
+            StructFormReader<T> read
+            )
+            where T : struct
+        {
+            return new InteropStructForm<T>(name, what, sample, write, read);
         }
 
         /// <summary>
@@ -303,6 +330,24 @@ namespace JsonGoddess.Tests.Interop
         private static Fields? ReadFields(ReadOnlySpan<byte> json)
         {
             InteropSerializer.Deserialize(DefaultInjector.Instance, json, out Fields? result);
+            return result;
+        }
+
+        private static Coordinate ReadCoordinate(ReadOnlySpan<byte> json)
+        {
+            CoordinateSerializer.Deserialize(DefaultInjector.Instance, json, out Coordinate result);
+            return result;
+        }
+
+        private static Segment ReadSegment(ReadOnlySpan<byte> json)
+        {
+            SegmentSerializer.Deserialize(DefaultInjector.Instance, json, out Segment result);
+            return result;
+        }
+
+        private static Route? ReadRoute(ReadOnlySpan<byte> json)
+        {
+            RouteSerializer.Deserialize(DefaultInjector.Instance, json, out Route? result);
             return result;
         }
     }

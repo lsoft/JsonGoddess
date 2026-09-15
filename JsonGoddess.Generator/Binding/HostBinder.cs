@@ -176,6 +176,7 @@ namespace JsonGoddess.Generator.Binding
                         registration.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                         MethodSuffix(registration.Type),
                         registration.IsRoot,
+                        registration.Type.IsValueType,
                         members
                         )
                     );
@@ -398,9 +399,16 @@ namespace JsonGoddess.Generator.Binding
             var location = LocationInfo.From(host);
 
             string? refusal = null;
-            if (subject.TypeKind != TypeKind.Class)
+            if (subject.TypeKind is not (TypeKind.Class or TypeKind.Struct))
             {
-                refusal = "only classes are supported (structs and records with positional parameters arrive in phase 5)";
+                refusal = "only classes and structs are supported";
+            }
+            else if (subject.IsRefLikeType)
+            {
+                //ref struct нельзя ни положить в поле, ни передать как
+                //аргумент обобщённого типа; эталон его не сериализует тем
+                //более - у него T обобщённый
+                refusal = "ref structs cannot be serialized: they cannot be stored in a field or used as a type argument";
             }
             else if (subject.IsAbstract || subject.IsStatic)
             {
@@ -709,16 +717,15 @@ namespace JsonGoddess.Generator.Binding
                         return null;
                     }
 
-                    if (field.IsReadOnly || field.IsConst)
-                    {
-                        Refuse(subject, member, field.Type, location, diagnostics, ref failed,
-                            "readonly and const fields cannot be assigned by the generated reader");
-                        return null;
-                    }
-
                     memberType = field.Type;
                     canWrite = true;
-                    canRead = true;
+
+                    //readonly-поле с [JsonInclude] эталон ПИШЕТ и молча роняет
+                    //на чтении - проверено прогоном: документ со значением 9
+                    //оставляет поле равным 5. Ровно так же он ведёт себя с
+                    //get-only свойством, и отказывать здесь значило бы
+                    //отвергать то, что он обслуживает.
+                    canRead = !field.IsReadOnly;
                     break;
                 }
 

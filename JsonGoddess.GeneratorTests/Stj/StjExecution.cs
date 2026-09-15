@@ -190,9 +190,12 @@ namespace JsonGoddess.GeneratorTests.Stj
 
             builder.AppendLine("        public static object? Read(byte[] json)");
             builder.AppendLine("        {");
+
+            //у структуры "?" означал бы Nullable<T> - другую сигнатуру, а не
+            //ту же с допущением null
             builder.AppendLine(
                 "            " + host + ".Deserialize(global::JsonGoddess.DefaultInjector.Instance, json, out "
-                + subject + "? value);"
+                + subject + (type.IsValueType ? "" : "?") + " value);"
                 );
             builder.AppendLine("            return value;");
             builder.AppendLine("        }");

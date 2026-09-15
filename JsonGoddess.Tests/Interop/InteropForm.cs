@@ -65,6 +65,74 @@ namespace JsonGoddess.Tests.Interop
         public override string ToString() => Name;
     }
 
+    /// <summary>Наш читатель корневой структуры: <c>null</c> она вернуть не может.</summary>
+    public delegate T StructFormReader<T>(ReadOnlySpan<byte> json)
+        where T : struct;
+
+    /// <summary>
+    /// Форма, у которой корень - <b>структура</b>.
+    ///
+    /// Отдельный класс, а не снятое ограничение: у структуры <c>T?</c>
+    /// означает <c>Nullable&lt;T&gt;</c>, то есть другой тип, а не тот же с
+    /// допущением <c>null</c>. Один обобщённый класс на оба случая пришлось бы
+    /// писать в <c>default!</c> и подавлениях - а подавление в харнессе, чья
+    /// работа ловить расхождения, стоит дороже лишнего класса.
+    /// </summary>
+    public sealed class InteropStructForm<T> : InteropForm
+        where T : struct
+    {
+        private readonly T _sample;
+        private readonly FormWriter<T> _write;
+        private readonly StructFormReader<T> _read;
+
+        public InteropStructForm(
+            string name,
+            string what,
+            T sample,
+            FormWriter<T> write,
+            StructFormReader<T> read,
+            string? divergence = null
+            )
+        {
+            Name = name;
+            What = what;
+            Divergence = divergence;
+            _sample = sample;
+            _write = write;
+            _read = read;
+        }
+
+        public override string Name { get; }
+
+        public override string What { get; }
+
+        public override string? Divergence { get; }
+
+        public override string WriteOurs()
+        {
+            using var exhauster = new PooledUtf8Exhauster();
+            _write(exhauster, _sample);
+            return Encoding.UTF8.GetString(exhauster.ToArray());
+        }
+
+        public override string WriteTheirs() => JsonSerializer.Serialize(_sample, Reference.Relaxed);
+
+        public override string WriteTheirsEscaped() => JsonSerializer.Serialize(_sample, Reference.Default);
+
+        public override string TheirsReadsThenWrites(string json)
+        {
+            return JsonSerializer.Serialize(
+                JsonSerializer.Deserialize<T>(json, Reference.Relaxed),
+                Reference.Relaxed
+                );
+        }
+
+        public override string OursReadsThenTheirsWrites(string json)
+        {
+            return JsonSerializer.Serialize(_read(Encoding.UTF8.GetBytes(json)), Reference.Relaxed);
+        }
+    }
+
     public sealed class InteropForm<T> : InteropForm
         where T : class
     {

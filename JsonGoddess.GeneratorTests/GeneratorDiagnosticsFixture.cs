@@ -448,6 +448,62 @@ namespace Demo
         }
 
         /// <summary>
+        /// <c>ref struct</c> - единственная форма структуры, которая остаётся
+        /// отказом: её нельзя ни положить в поле, ни передать аргументом
+        /// обобщённого типа, так что эталон её не сериализует тем более - у
+        /// него <c>T</c> обобщённый.
+        /// </summary>
+        [Fact]
+        public void Ref_struct_stays_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public ref struct Payload
+    {
+        public int Id { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains("ref struct", run.GeneratorDiagnostics.Single(d => d.Id == "JGD021").GetMessage());
+        }
+
+        /// <summary>
+        /// readonly-поле с <c>[JsonInclude]</c> эталон <b>пишет</b> и молча
+        /// роняет на чтении - проверено прогоном. Раньше мы на нём отказывали,
+        /// то есть отвергали то, что он обслуживает; теперь оно только на
+        /// запись, как и get-only свойство.
+        /// </summary>
+        [Fact]
+        public void Readonly_included_field_is_written_but_not_read()
+        {
+            var run = GeneratorHarness.Run(Sources.Host(@"
+        [JsonInclude]
+        public readonly int Frozen = 5;
+
+        public int Normal { get; set; }
+"));
+
+            Assert.Empty(run.GeneratorDiagnostics);
+
+            var text = run.SingleGeneratedFile;
+
+            //имя приезжает внутрь u8-литерала, то есть с экранированными
+            //кавычками: \"Frozen\"
+            Assert.Contains("\\\"Frozen\\\"", text);
+
+            //в диспетчере читателя имени быть не должно: присвоить его нечем
+            Assert.DoesNotContain("result.Frozen", text);
+        }
+
+        /// <summary>
         /// Найдено переносом набора System.Text.Json (§11.1) - их
         /// <c>StringListWrapper : List&lt;string&gt; { }</c> мы принимали и
         /// писали <c>{}</c> вместо <c>["Hello","World"]</c>.

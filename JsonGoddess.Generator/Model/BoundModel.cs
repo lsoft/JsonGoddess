@@ -170,6 +170,16 @@ namespace JsonGoddess.Generator.Model
         /// </summary>
         public bool IsStringEnum { get; }
 
+        /// <summary>
+        /// Значение - структура. Значим при <see cref="ValueForm.Subject"/>, и
+        /// вместе с <see cref="IsNullable"/> задаёт все три случая: класс
+        /// (<c>null</c> разбирает сам <c>Write_</c>/<c>Read_</c>), структура
+        /// (<c>null</c> невозможен) и <c>Nullable&lt;структура&gt;</c>
+        /// (<c>null</c> разбирается здесь, потому что <c>Write_</c> принимает
+        /// не-nullable).
+        /// </summary>
+        public bool IsValueType { get; }
+
         public ValueModel(
             ValueForm form,
             BuiltinKind builtin,
@@ -178,9 +188,11 @@ namespace JsonGoddess.Generator.Model
             ValueModel? element,
             bool isNullable,
             EnumModel? enumModel = null,
-            bool isStringEnum = false
+            bool isStringEnum = false,
+            bool isValueType = false
             )
         {
+            IsValueType = isValueType;
             Form = form;
             Builtin = builtin;
             TypeName = typeName;
@@ -281,15 +293,38 @@ namespace JsonGoddess.Generator.Model
 
         public bool IsRoot { get; }
 
+        /// <summary>
+        /// Субъект - структура.
+        ///
+        /// Меняет три места, и каждое - по своей причине. Писателю не нужна
+        /// проверка на <c>null</c>: значение её описать не может. Читателю не
+        /// нужна ветка <c>TryReadNull</c>, и это не экономия - <c>null</c> на
+        /// месте структуры обязан кончиться отказом, а он и кончается им сам,
+        /// на <c>Expect(OpenBrace)</c>. Точке входа не нужен <c>?</c> у типа:
+        /// у структуры он означал бы <c>Nullable&lt;T&gt;</c>, то есть другую
+        /// сигнатуру, чем <c>Serialize&lt;T&gt;</c> у эталона.
+        /// </summary>
+        public bool IsValueType { get; }
+
         public IReadOnlyList<MemberModel> Members { get; }
 
-        public SubjectModel(string fullName, string methodSuffix, bool isRoot, IReadOnlyList<MemberModel> members)
+        public SubjectModel(
+            string fullName,
+            string methodSuffix,
+            bool isRoot,
+            bool isValueType,
+            IReadOnlyList<MemberModel> members
+            )
         {
             FullName = fullName;
             MethodSuffix = methodSuffix;
             IsRoot = isRoot;
+            IsValueType = isValueType;
             Members = members;
         }
+
+        /// <summary>Тип, каким он печатается в сигнатуру точки входа и писателя.</summary>
+        public string Declaration => IsValueType ? FullName : FullName + "?";
     }
 
     public sealed class HostModel
