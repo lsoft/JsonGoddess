@@ -446,13 +446,21 @@ namespace JsonGoddess.Generator.Binding
         }
 
         /// <summary>
-        /// От производного типа к базовому - и это не вкус, а <b>проверенное
-        /// поведение</b> <c>System.Text.Json</c>: он печатает члены самого
-        /// производного типа первыми (<c>{"C","D","A","B"}</c> для
-        /// <c>Derived : Base</c>), и документ обязан совпасть с его документом
-        /// байт в байт. Тот же порядок заодно даёт и правильное перекрытие:
-        /// член, объявленный <c>new</c> в производном типе, встречается первым
-        /// и вытесняет одноимённый базовый, а не наоборот.
+        /// Порядок членов целиком снят с <c>System.Text.Json</c> прогоном, и
+        /// он двухуровневый:
+        /// <list type="number">
+        /// <item>типы - от производного к базовому (<c>{"C","D","A","B"}</c>
+        /// для <c>Derived : Base</c>);</item>
+        /// <item>внутри каждого типа - сначала свойства, потом поля
+        /// (<c>{"DerivedProp","DerivedField","BaseProp","BaseField"}</c>).</item>
+        /// </list>
+        /// Второй уровень нашёл дифференциальный харнесс: на типах без полей
+        /// он не проявляется никак, а первый же тип с <c>[JsonInclude]</c>-полем
+        /// давал другой документ.
+        ///
+        /// Тот же порядок заодно даёт и правильное перекрытие: член,
+        /// объявленный <c>new</c> в производном типе, встречается первым и
+        /// вытесняет одноимённый базовый, а не наоборот.
         /// </summary>
         private static List<MemberModel>? BindMembers(
             INamedTypeSymbol subject,
@@ -475,13 +483,8 @@ namespace JsonGoddess.Generator.Binding
 
             foreach (var type in chain)
             {
-                foreach (var member in type.GetMembers())
+                foreach (var member in Ordered(type))
                 {
-                    if (member.IsStatic || member.IsImplicitlyDeclared)
-                    {
-                        continue;
-                    }
-
                     var bound = BindMember(subject, member, byType, known, location, diagnostics, ref failed);
                     if (bound is null)
                     {
@@ -528,6 +531,32 @@ namespace JsonGoddess.Generator.Binding
             //Проверено прогоном: Derived : Base с [JsonPropertyOrder(-5)] на
             //базовом члене даёт {BaseEarly, DerivedA, BaseA}.
             return result.OrderBy(m => m.Order).ToList();
+        }
+
+        /// <summary>
+        /// Члены одного типа в том порядке, в котором их печатает эталон:
+        /// свойства, затем поля. Внутри каждой из двух групп - порядок
+        /// объявления, каким его возвращает Roslyn.
+        /// </summary>
+        private static IEnumerable<ISymbol> Ordered(INamedTypeSymbol type)
+        {
+            var members = type.GetMembers();
+
+            foreach (var member in members)
+            {
+                if (member is IPropertySymbol { IsStatic: false, IsImplicitlyDeclared: false })
+                {
+                    yield return member;
+                }
+            }
+
+            foreach (var member in members)
+            {
+                if (member is IFieldSymbol { IsStatic: false, IsImplicitlyDeclared: false })
+                {
+                    yield return member;
+                }
+            }
         }
 
         private static MemberModel? BindMember(
