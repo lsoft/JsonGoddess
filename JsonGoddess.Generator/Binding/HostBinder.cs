@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
+using JsonGoddess.Generator.Shared;
 using JsonGoddess.Generator.Diagnostics;
 using JsonGoddess.Generator.Emit;
 using JsonGoddess.Generator.Model;
@@ -154,9 +155,11 @@ namespace JsonGoddess.Generator.Binding
             var stringEnums = new Dictionary<string, EnumModel>(System.StringComparer.Ordinal);
             var failed = accepted.Count != registered.Count;
 
+            var options = SerializationOptions.Read(host, known, diagnostics, ref failed);
+
             foreach (var registration in accepted)
             {
-                var members = BindMembers(registration.Type, byType, known, LocationInfo.From(host), diagnostics);
+                var members = BindMembers(registration.Type, byType, known, options, LocationInfo.From(host), diagnostics);
                 if (members is null)
                 {
                     failed = true;
@@ -207,7 +210,8 @@ namespace JsonGoddess.Generator.Binding
                 injectors.Count > 0 ? injectors : new List<string> { "global::" + InjectorBase },
                 subjects,
                 collectionList,
-                enumList
+                enumList,
+                options.DictionaryKeyNaming
                 );
         }
 
@@ -466,6 +470,7 @@ namespace JsonGoddess.Generator.Binding
             INamedTypeSymbol subject,
             Dictionary<ISymbol, string> byType,
             KnownSymbols known,
+            SerializationOptions options,
             LocationInfo? location,
             List<DiagnosticInfo> diagnostics
             )
@@ -485,7 +490,7 @@ namespace JsonGoddess.Generator.Binding
             {
                 foreach (var member in Ordered(type))
                 {
-                    var bound = BindMember(subject, member, byType, known, location, diagnostics, ref failed);
+                    var bound = BindMember(subject, member, byType, known, options, location, diagnostics, ref failed);
                     if (bound is null)
                     {
                         continue;
@@ -564,6 +569,7 @@ namespace JsonGoddess.Generator.Binding
             ISymbol member,
             Dictionary<ISymbol, string> byType,
             KnownSymbols known,
+            SerializationOptions options,
             LocationInfo? location,
             List<DiagnosticInfo> diagnostics,
             ref bool failed
@@ -698,7 +704,10 @@ namespace JsonGoddess.Generator.Binding
                 return null;
             }
 
-            var jsonName = known.ReadStringArgument(member, known.JsonPropertyName) ?? member.Name;
+            //[JsonPropertyName] сильнее политики - и это поведение эталона, а не
+            //наше соглашение: имя, названное явно, он политикой не трогает
+            var jsonName = known.ReadStringArgument(member, known.JsonPropertyName)
+                ?? JsonNaming.Convert(member.Name, options.PropertyNaming);
 
             if (!JsonNameUtf8.TryEncode(jsonName, out var utf8))
             {

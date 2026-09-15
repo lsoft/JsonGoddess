@@ -71,6 +71,8 @@ namespace JsonGoddess.Tests.Interop
         private readonly T _sample;
         private readonly FormWriter<T> _write;
         private readonly FormReader<T> _read;
+        private readonly JsonSerializerOptions _relaxed;
+        private readonly JsonSerializerOptions _escaped;
 
         public InteropForm(
             string name,
@@ -78,7 +80,9 @@ namespace JsonGoddess.Tests.Interop
             T sample,
             FormWriter<T> write,
             FormReader<T> read,
-            string? divergence
+            string? divergence,
+            JsonNamingPolicy? naming = null,
+            JsonNamingPolicy? dictionaryKeys = null
             )
         {
             Name = name;
@@ -87,6 +91,31 @@ namespace JsonGoddess.Tests.Interop
             _sample = sample;
             _write = write;
             _read = read;
+
+            //Политика именования - часть настройки эталона, а не формы
+            //документа, поэтому опции строятся на форму. Иначе ожидание для
+            //camelCase-хоста снималось бы с эталона без политики, то есть
+            //сравнивалось бы не с тем.
+            _relaxed = Options(Reference.Relaxed, naming, dictionaryKeys);
+            _escaped = Options(Reference.Default, naming, dictionaryKeys);
+        }
+
+        private static JsonSerializerOptions Options(
+            JsonSerializerOptions source,
+            JsonNamingPolicy? naming,
+            JsonNamingPolicy? dictionaryKeys
+            )
+        {
+            if (naming is null && dictionaryKeys is null)
+            {
+                return source;
+            }
+
+            return new JsonSerializerOptions(source)
+            {
+                PropertyNamingPolicy = naming,
+                DictionaryKeyPolicy = dictionaryKeys,
+            };
         }
 
         public override string Name { get; }
@@ -102,18 +131,18 @@ namespace JsonGoddess.Tests.Interop
             return Encoding.UTF8.GetString(exhauster.ToArray());
         }
 
-        public override string WriteTheirs() => Reference.Write(_sample);
+        public override string WriteTheirs() => JsonSerializer.Serialize(_sample, _relaxed);
 
-        public override string WriteTheirsEscaped() => Reference.WriteDefaultEncoder(_sample);
+        public override string WriteTheirsEscaped() => JsonSerializer.Serialize(_sample, _escaped);
 
         public override string TheirsReadsThenWrites(string json)
         {
-            return Reference.Write(JsonSerializer.Deserialize<T>(json, Reference.Relaxed));
+            return JsonSerializer.Serialize(JsonSerializer.Deserialize<T>(json, _relaxed), _relaxed);
         }
 
         public override string OursReadsThenTheirsWrites(string json)
         {
-            return Reference.Write(_read(Encoding.UTF8.GetBytes(json)));
+            return JsonSerializer.Serialize(_read(Encoding.UTF8.GetBytes(json)), _relaxed);
         }
     }
 }

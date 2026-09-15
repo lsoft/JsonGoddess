@@ -170,6 +170,67 @@ namespace JsonGoddess.Tests.Interop
         }
     }
 
+    /// <summary>
+    /// Имена членов, на которых политика именования нетривиальна: пробег
+    /// заглавных, цифра внутри, аббревиатура целиком и явное переименование,
+    /// которое политика трогать не должна.
+    /// </summary>
+    public class Named
+    {
+        public int OrderId { get; set; }
+        public string? CustomerName { get; set; }
+        public int HTTPResponseCode { get; set; }
+        public int X509Certificate { get; set; }
+        public int ID { get; set; }
+        public Dictionary<string, int>? SomeMap { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("kept-as-is")]
+        public int Explicit { get; set; }
+
+        public static Named CreateSample()
+        {
+            return new Named
+            {
+                OrderId = 1,
+                CustomerName = "Acme",
+                HTTPResponseCode = 200,
+                X509Certificate = 2,
+                ID = 3,
+                SomeMap = new Dictionary<string, int> { { "SomeKey", 4 }, { "already_snake", 5 }, },
+                Explicit = 6,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Настройки читаются из <b>их</b> атрибута, а не из своего: у эталона тут
+    /// та же задача - настроить генератор, у которого нет объекта опций, - и
+    /// он её уже решил.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonSourceGenerationOptions(
+        PropertyNamingPolicy = System.Text.Json.Serialization.JsonKnownNamingPolicy.CamelCase)]
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Named), true)]
+    public partial class CamelSerializer
+    {
+    }
+
+    /// <summary>
+    /// Ключи словаря - отдельная политика, и она применяется <b>только на
+    /// записи</b>: на чтении ключ приезжает как есть, обратного преобразования
+    /// эталон не делает. Проверено прогоном.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonSourceGenerationOptions(
+        PropertyNamingPolicy = System.Text.Json.Serialization.JsonKnownNamingPolicy.SnakeCaseLower,
+        DictionaryKeyPolicy = System.Text.Json.Serialization.JsonKnownNamingPolicy.SnakeCaseLower)]
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Named), true)]
+    public partial class SnakeSerializer
+    {
+    }
+
     [JsonExhauster(typeof(PooledUtf8Exhauster))]
     [JsonInjector(typeof(DefaultInjector))]
     [JsonSubject(typeof(Extremes), true)]

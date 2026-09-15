@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using JsonGoddess.Generator.Binding;
 using JsonGoddess.Generator.Model;
+using JsonGoddess.Generator.Shared;
 
 namespace JsonGoddess.Generator.Emit
 {
@@ -48,7 +49,7 @@ namespace JsonGoddess.Generator.Emit
                         EmitSerializeEntry(builder, subject, exhauster);
                     }
 
-                    EmitWriter(builder, subject, exhauster);
+                    EmitWriter(builder, subject, exhauster, host.DictionaryKeyNaming);
                 }
 
                 foreach (var enumModel in host.StringEnums)
@@ -134,7 +135,12 @@ namespace JsonGoddess.Generator.Emit
         /// причине: условно опускаемых членов ещё нет, поэтому запятые
         /// безусловны.
         /// </summary>
-        private static void EmitWriter(SourceBuilder builder, SubjectModel subject, string exhauster)
+        private static void EmitWriter(
+            SourceBuilder builder,
+            SubjectModel subject,
+            string exhauster,
+            JsonNamingStyle keyNaming
+            )
         {
             var members = subject.Members.Where(m => m.CanWrite).ToList();
 
@@ -186,7 +192,7 @@ namespace JsonGoddess.Generator.Emit
                     }
 
                     builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(literal) + ");");
-                    ValueSourceProducer.WriteValue(builder, member.Value, "value." + member.MemberName, 0);
+                    ValueSourceProducer.WriteValue(builder, member.Value, "value." + member.MemberName, 0, keyNaming);
 
                     pendingOpen = false;
                     commaIsCertain = true;
@@ -231,7 +237,7 @@ namespace JsonGoddess.Generator.Emit
                 }
 
                 builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(conditionalLiteral) + ");");
-                ValueSourceProducer.WriteValue(builder, member.Value, candidate, 0);
+                ValueSourceProducer.WriteValue(builder, member.Value, candidate, 0, keyNaming);
 
                 builder.CloseBlock();
                 builder.CloseBlock();

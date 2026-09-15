@@ -466,6 +466,69 @@ namespace Demo
             Assert.Contains("exhauster.AppendRaw(\",\\\"C\\\":\"u8);", writer, StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Политика именования для <b>членов</b> бесплатна: имя преобразуется
+        /// на компиляции и печатается литералом, а читатель сравнивает сырые
+        /// байты с ним же. Ни одного лишнего вызова в рантайме - и это видно
+        /// только в тексте.
+        ///
+        /// Для <b>ключа словаря</b> так нельзя: он данные, а не объявление, и
+        /// вызов появляется. Появляется он при этом ровно тогда, когда политика
+        /// объявлена.
+        /// </summary>
+        [Fact]
+        public void Naming_policy_is_baked_into_literals_for_members_and_called_for_keys()
+        {
+            var source = @"
+using System.Collections.Generic;
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    public class Payload
+    {
+        public int OrderId { get; set; }
+        public int HTTPResponseCode { get; set; }
+        public Dictionary<string, int>? SomeMap { get; set; }
+    }
+
+    [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+";
+
+            var run = GeneratorHarness.Run(source);
+            var text = run.SingleGeneratedFile;
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+
+            Assert.Contains("\"orderId\\\":", text, StringComparison.Ordinal);
+            Assert.Contains("\"httpResponseCode\\\":", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("OrderId\\\":", text, StringComparison.Ordinal);
+
+            //диспетчер сравнивает с преобразованным именем, а не с исходным
+            Assert.Contains("SequenceEqual(name, \"orderId\"u8)", text, StringComparison.Ordinal);
+
+            //политики для ключей нет - значит и вызова нет
+            Assert.DoesNotContain("JsonNaming.Convert", text, StringComparison.Ordinal);
+
+            var withKeys = GeneratorHarness.Run(
+                source.Replace(
+                    "PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase",
+                    "PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, DictionaryKeyPolicy = JsonKnownNamingPolicy.SnakeCaseLower")
+                );
+
+            Assert.Empty(withKeys.CompilationErrors);
+            Assert.Contains(
+                "JsonNaming.Convert(pair0.Key, global::JsonGoddess.Internal.JsonNamingStyle.SnakeCaseLower)",
+                withKeys.SingleGeneratedFile,
+                StringComparison.Ordinal
+                );
+        }
+
         private static string Section(string text, string from, string until)
         {
             var start = text.IndexOf(from, StringComparison.Ordinal);

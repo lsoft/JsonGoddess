@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using JsonGoddess.Generator.Shared;
 
 namespace JsonGoddess.Generator.Model
 {
@@ -324,6 +325,14 @@ namespace JsonGoddess.Generator.Model
         /// </summary>
         public IReadOnlyList<EnumModel> StringEnums { get; }
 
+        /// <summary>
+        /// Политика для ключей словарей. Имена членов преобразуются на
+        /// компиляции и приезжают сюда уже готовыми; ключ - не константа, и его
+        /// приходится преобразовывать на записи, поэтому политика доживает до
+        /// эмиттера.
+        /// </summary>
+        public JsonNamingStyle DictionaryKeyNaming { get; }
+
         public HostModel(
             string? ns,
             string typeName,
@@ -332,10 +341,12 @@ namespace JsonGoddess.Generator.Model
             IReadOnlyList<string> injectorTypes,
             IReadOnlyList<SubjectModel> subjects,
             IReadOnlyList<ValueModel> collections,
-            IReadOnlyList<EnumModel> stringEnums
+            IReadOnlyList<EnumModel> stringEnums,
+            JsonNamingStyle dictionaryKeyNaming
             )
         {
             StringEnums = stringEnums;
+            DictionaryKeyNaming = dictionaryKeyNaming;
             Namespace = ns;
             TypeName = typeName;
             FullName = fullName;

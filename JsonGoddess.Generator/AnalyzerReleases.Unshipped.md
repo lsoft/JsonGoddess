@@ -14,3 +14,4 @@ JGD024 | JsonGoddess | Error | Registered sink type does not derive from Exhaust
 JGD025 | JsonGoddess | Error | Host type shape is not supported (nested, generic or static)
 JGD026 | JsonGoddess | Error | Project language version is below C# 11
 JGD027 | JsonGoddess | Error | JSON property name requires escaping
+JGD028 | JsonGoddess | Error | Option on [JsonSourceGenerationOptions] is not supported

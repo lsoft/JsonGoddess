@@ -24,6 +24,7 @@ namespace JsonGoddess.Generator.Diagnostics
         public const string HostShapeIsNotSupportedId = "JGD025";
         public const string LanguageVersionIsTooLowId = "JGD026";
         public const string JsonNameRequiresEscapingId = "JGD027";
+        public const string SerializationOptionIsNotSupportedId = "JGD028";
 
         public static readonly DiagnosticDescriptor SinkIsNotSealed = new DiagnosticDescriptor(
             SinkIsNotSealedId,
@@ -126,6 +127,20 @@ namespace JsonGoddess.Generator.Diagnostics
                 + "зависело бы от того, как его написал отправитель."
             );
 
+        public static readonly DiagnosticDescriptor SerializationOptionIsNotSupported = new DiagnosticDescriptor(
+            SerializationOptionIsNotSupportedId,
+            "Serialization option is not supported",
+            "Option {0} on '{1}' cannot be honoured: {2}",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            description:
+                "JsonGoddess читает настройки из [JsonSourceGenerationOptions] - того же атрибута, "
+                + "которым настраивается source-генератор System.Text.Json. Свойство, которое мы не "
+                + "исполняем, обязано быть отказом, а не пропуском: иначе человек написал бы "
+                + "настройку, увидел бы зелёную сборку и получил бы документ, которого не просил."
+            );
+
         private static readonly Dictionary<string, DiagnosticDescriptor> _all =
             new Dictionary<string, DiagnosticDescriptor>
             {
@@ -138,6 +153,7 @@ namespace JsonGoddess.Generator.Diagnostics
                 { HostShapeIsNotSupportedId, HostShapeIsNotSupported },
                 { LanguageVersionIsTooLowId, LanguageVersionIsTooLow },
                 { JsonNameRequiresEscapingId, JsonNameRequiresEscaping },
+                { SerializationOptionIsNotSupportedId, SerializationOptionIsNotSupported },
             };
 
         public static DiagnosticDescriptor Get(string id) => _all[id];

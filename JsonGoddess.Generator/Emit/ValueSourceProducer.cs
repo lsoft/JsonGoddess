@@ -1,5 +1,6 @@
 using JsonGoddess.Generator.Binding;
 using JsonGoddess.Generator.Model;
+using JsonGoddess.Generator.Shared;
 
 namespace JsonGoddess.Generator.Emit
 {
@@ -17,6 +18,24 @@ namespace JsonGoddess.Generator.Emit
     {
         public const string Scan = "global::JsonGoddess.Internal.JsonScan";
         public const string Array = "global::System.Array";
+        public const string Naming = "global::JsonGoddess.Internal.JsonNaming";
+        public const string NamingStyle = "global::JsonGoddess.Internal.JsonNamingStyle";
+
+        /// <summary>
+        /// Ключ словаря под политикой именования.
+        ///
+        /// Имена членов преобразуются на компиляции и печатаются литералами,
+        /// то есть политика для них бесплатна. С ключом так нельзя: он данные,
+        /// а не объявление, и преобразовывать его приходится на каждой записи -
+        /// со строкой на ключ. Поэтому без политики здесь не появляется ни
+        /// одного лишнего вызова, а с политикой цена видна и названа.
+        /// </summary>
+        private static string Key(string accessor, JsonNamingStyle style)
+        {
+            return style == JsonNamingStyle.None
+                ? accessor
+                : Naming + ".Convert(" + accessor + ", " + NamingStyle + "." + style + ")";
+        }
 
         /// <summary>
         /// Запись. Sink пишет законченную лексему вместе с кавычками, поэтому
@@ -28,7 +47,7 @@ namespace JsonGoddess.Generator.Emit
         /// значило бы добавить вызов на каждую коллекцию ради экономии,
         /// которой нет. Чтение устроено наоборот, и почему - сказано там же.
         /// </summary>
-        public static void WriteValue(SourceBuilder builder, ValueModel value, string accessor, int depth)
+        public static void WriteValue(SourceBuilder builder, ValueModel value, string accessor, int depth, JsonNamingStyle keyNaming)
         {
             switch (value.Form)
             {
@@ -56,7 +75,7 @@ namespace JsonGoddess.Generator.Emit
 
                 default:
                 {
-                    WriteCollection(builder, value, accessor, depth);
+                    WriteCollection(builder, value, accessor, depth, keyNaming);
                     return;
                 }
             }
@@ -98,7 +117,7 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
         }
 
-        private static void WriteCollection(SourceBuilder builder, ValueModel value, string accessor, int depth)
+        private static void WriteCollection(SourceBuilder builder, ValueModel value, string accessor, int depth, JsonNamingStyle keyNaming)
         {
             var isMap = value.Form == ValueForm.Dictionary;
             var items = "items" + depth;
@@ -147,13 +166,13 @@ namespace JsonGoddess.Generator.Emit
                 //ключ словаря - не константа этапа компиляции, и экранировать
                 //его приходится по-настоящему: System.Text.Json пишет ключ
                 //"a\"b" экранированным, и совпасть с ним иначе нельзя
-                builder.Line("exhauster.Append(" + pair + ".Key);");
+                builder.Line("exhauster.Append(" + Key(pair + ".Key", keyNaming) + ");");
                 builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(":") + ");");
-                WriteValue(builder, value.Element!, pair + ".Value", depth + 1);
+                WriteValue(builder, value.Element!, pair + ".Value", depth + 1, keyNaming);
             }
             else
             {
-                WriteValue(builder, value.Element!, items + "[" + index + "]", depth + 1);
+                WriteValue(builder, value.Element!, items + "[" + index + "]", depth + 1, keyNaming);
             }
 
             builder.CloseBlock();

@@ -15,6 +15,9 @@
     -->
     <IsPackable>false</IsPackable>
     <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <!-- разводит общий с рантаймом исходник по разным пространствам имён -->
+    <DefineConstants>$(DefineConstants);JSONGODDESS_GENERATOR</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,6 +27,18 @@
       новый SDK от каждого потребителя.
     -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.6.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Один исходник на две сборки, а не ссылка на проект: анализатор обязан
+      везти с собой все свои зависимости, и тащить в контекст загрузки
+      компилятора рантайм-сборку ради одного алгоритма - плохая сделка.
+
+      А держать две копии алгоритма нельзя вовсе: имена членов преобразуются на
+      компиляции, ключи словарей - в рантайме, и разъехаться они не имеют права.
+    -->
+    <Compile Include="..\JsonGoddess.Common\JsonNaming.cs" Link="Shared\JsonNaming.cs" />
   </ItemGroup>
 
   <ItemGroup>

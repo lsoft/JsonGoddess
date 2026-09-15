@@ -268,6 +268,72 @@ namespace Demo
             Assert.Contains("JGD022", run.DiagnosticIds);
         }
 
+        /// <summary>
+        /// Настройки читаются из <c>[JsonSourceGenerationOptions]</c> - того же
+        /// атрибута, которым настраивается source-генератор эталона. Цена
+        /// решения взять чужой атрибут, а не завести свой, - обязательство
+        /// разобрать каждое его свойство: их двадцать семь, и молча пропустить
+        /// хоть одно значило бы выдать документ, которого не просили.
+        /// </summary>
+        [Theory]
+        [InlineData("WriteIndented = true")]
+        [InlineData("DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull")]
+        [InlineData("IncludeFields = true")]
+        [InlineData("PropertyNameCaseInsensitive = true")]
+        [InlineData("UseStringEnumConverter = true")]
+        [InlineData("AllowTrailingCommas = true")]
+        [InlineData("MaxDepth = 8")]
+        public void Option_we_do_not_implement_is_refused(string option)
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(
+                    "        public int Id { get; set; }",
+                    "[JsonSourceGenerationOptions(" + option + ")]"
+                    )
+                );
+
+            Assert.Contains("JGD028", run.DiagnosticIds);
+            Assert.Empty(run.GeneratedFiles);
+        }
+
+        /// <summary>
+        /// Конструктор с <c>JsonSerializerDefaults.Web</c> включает разом
+        /// camelCase, нечувствительность к регистру имён и чтение чисел из
+        /// строк. Принять его значило бы принять три решения вместо одного, из
+        /// которых два мы не исполняем.
+        /// </summary>
+        [Fact]
+        public void Web_defaults_constructor_is_refused()
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(
+                    "        public int Id { get; set; }",
+                    "[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]"
+                    )
+                );
+
+            Assert.Contains("JGD028", run.DiagnosticIds);
+        }
+
+        /// <summary>
+        /// А <c>GenerationMode</c> описывает, какой код порождать <b>их</b>
+        /// генератору, и документа не касается вовсе - его можно не исполнять,
+        /// ничего не нарушив.
+        /// </summary>
+        [Fact]
+        public void Generation_mode_is_none_of_our_business_and_passes()
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(
+                    "        public int Id { get; set; }",
+                    "[JsonSourceGenerationOptions(GenerationMode = JsonSourceGenerationMode.Serialization)]"
+                    )
+                );
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+        }
+
         [Fact]
         public void Converter_on_a_member_is_refused()
         {

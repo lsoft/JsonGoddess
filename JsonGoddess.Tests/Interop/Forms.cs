@@ -132,6 +132,15 @@ namespace JsonGoddess.Tests.Interop
                     new OrderedDerived { BaseA = 1, BaseEarly = 2, DerivedA = 3, Late = 4, LateToo = 5, },
                     SparseSerializer.Serialize, ReadOrdered),
 
+                //политика именования
+                Form("naming/camel-case", "имена членов по camelCase, [JsonPropertyName] сильнее политики",
+                    Named.CreateSample(), CamelSerializer.Serialize, ReadCamel,
+                    naming: System.Text.Json.JsonNamingPolicy.CamelCase),
+                Form("naming/snake-case", "имена членов и ключи словаря по snake_case",
+                    Named.CreateSample(), SnakeSerializer.Serialize, ReadSnake,
+                    naming: System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
+                    dictionaryKeys: System.Text.Json.JsonNamingPolicy.SnakeCaseLower),
+
                 //enum'ы
                 Form("marks/enums-full", "enum числом и именем, в коллекции и в словаре",
                     Marks.CreateSample(), MarksSerializer.Serialize, ReadMarks),
@@ -148,11 +157,13 @@ namespace JsonGoddess.Tests.Interop
             T sample,
             FormWriter<T> write,
             FormReader<T> read,
-            string? divergence = null
+            string? divergence = null,
+            System.Text.Json.JsonNamingPolicy? naming = null,
+            System.Text.Json.JsonNamingPolicy? dictionaryKeys = null
             )
             where T : class
         {
-            return new InteropForm<T>(name, what, sample, write, read, divergence);
+            return new InteropForm<T>(name, what, sample, write, read, divergence, naming, dictionaryKeys);
         }
 
         /// <summary>
@@ -274,6 +285,18 @@ namespace JsonGoddess.Tests.Interop
         private static Moments? ReadMoments(ReadOnlySpan<byte> json)
         {
             InteropSerializer.Deserialize(DefaultInjector.Instance, json, out Moments? result);
+            return result;
+        }
+
+        private static Named? ReadCamel(ReadOnlySpan<byte> json)
+        {
+            CamelSerializer.Deserialize(DefaultInjector.Instance, json, out var result);
+            return result;
+        }
+
+        private static Named? ReadSnake(ReadOnlySpan<byte> json)
+        {
+            SnakeSerializer.Deserialize(DefaultInjector.Instance, json, out var result);
             return result;
         }
 

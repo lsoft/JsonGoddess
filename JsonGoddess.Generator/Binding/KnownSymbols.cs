@@ -25,6 +25,7 @@ namespace JsonGoddess.Generator.Binding
         private const string JsonStringEnumConverterName = "System.Text.Json.Serialization.JsonStringEnumConverter";
         private const string JsonStringEnumConverterGenericName = "System.Text.Json.Serialization.JsonStringEnumConverter`1";
         private const string JsonPropertyOrderAttributeName = "System.Text.Json.Serialization.JsonPropertyOrderAttribute";
+        private const string JsonSourceGenerationOptionsAttributeName = "System.Text.Json.Serialization.JsonSourceGenerationOptionsAttribute";
         private const string FlagsAttributeName = "System.FlagsAttribute";
 
         public readonly INamedTypeSymbol? Subject;
@@ -40,6 +41,7 @@ namespace JsonGoddess.Generator.Binding
         public readonly INamedTypeSymbol? JsonStringEnumConverter;
         public readonly INamedTypeSymbol? JsonStringEnumConverterGeneric;
         public readonly INamedTypeSymbol? JsonPropertyOrder;
+        public readonly INamedTypeSymbol? JsonSourceGenerationOptions;
         public readonly INamedTypeSymbol? Flags;
 
         public KnownSymbols(Compilation compilation)
@@ -57,6 +59,7 @@ namespace JsonGoddess.Generator.Binding
             JsonStringEnumConverter = compilation.GetTypeByMetadataName(JsonStringEnumConverterName);
             JsonStringEnumConverterGeneric = compilation.GetTypeByMetadataName(JsonStringEnumConverterGenericName);
             JsonPropertyOrder = compilation.GetTypeByMetadataName(JsonPropertyOrderAttributeName);
+            JsonSourceGenerationOptions = compilation.GetTypeByMetadataName(JsonSourceGenerationOptionsAttributeName);
             Flags = compilation.GetTypeByMetadataName(FlagsAttributeName);
         }
 
