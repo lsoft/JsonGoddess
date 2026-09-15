@@ -1,3 +1,4 @@
+using System.Linq;
 using JsonGoddess.GeneratorTests.Harness;
 using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
@@ -444,6 +445,56 @@ namespace Demo
 ");
 
             Assert.Contains("JGD021", run.DiagnosticIds);
+        }
+
+        /// <summary>
+        /// Найдено переносом набора System.Text.Json (§11.1) - их
+        /// <c>StringListWrapper : List&lt;string&gt; { }</c> мы принимали и
+        /// писали <c>{}</c> вместо <c>["Hello","World"]</c>.
+        ///
+        /// Проверяются обе формы, потому что они разные по причине: у
+        /// наследника коллекции своих членов нет вовсе, а у класса с
+        /// <c>ICollection&lt;T&gt;</c> они есть - и эталон их молча
+        /// выбрасывает, потому что смотрит на интерфейс, а не на свойства.
+        /// Принять вторую значило бы выдать документ, в котором есть то, чего
+        /// у эталона нет.
+        /// </summary>
+        [Theory]
+        [InlineData("public class Payload : global::System.Collections.Generic.List<string> { }")]
+        [InlineData(@"
+    public class Payload : global::System.Collections.Generic.ICollection<string>
+    {
+        public int Unrelated { get; set; }
+        public int Count => 0;
+        public bool IsReadOnly => false;
+        public void Add(string item) { }
+        public void Clear() { }
+        public bool Contains(string item) => false;
+        public void CopyTo(string[] array, int index) { }
+        public bool Remove(string item) => false;
+        public global::System.Collections.Generic.IEnumerator<string> GetEnumerator() => null!;
+        global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => null!;
+    }")]
+        public void Subject_that_is_itself_a_collection_is_refused(string payload)
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+" + payload + @"
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains(
+                "IEnumerable",
+                run.GeneratorDiagnostics.Single(d => d.Id == "JGD021").GetMessage()
+                );
+            Assert.Empty(run.GeneratedFiles);
         }
 
         /// <summary>

@@ -414,6 +414,13 @@ namespace JsonGoddess.Generator.Binding
             {
                 refusal = "no accessible parameterless constructor (constructor binding arrives in phase 5)";
             }
+            else if (IsCollectionShaped(subject))
+            {
+                refusal =
+                    "the type implements IEnumerable, so System.Text.Json writes it as a JSON array of its "
+                    + "elements and ignores its properties entirely; serving it as an object would produce a "
+                    + "document the reference implementation never produces (collection-shaped subjects arrive later)";
+            }
 
             if (refusal is not null)
             {
@@ -429,6 +436,39 @@ namespace JsonGoddess.Generator.Binding
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Тип, который сам является коллекцией.
+        ///
+        /// Найдено переносом их набора (§11.1): <c>class StringListWrapper :
+        /// List&lt;string&gt; { }</c> мы принимали и писали <c>{}</c>, а эталон
+        /// пишет <c>["Hello","World"]</c>. Проверено прогоном и на классе с
+        /// собственным свойством: <c>ICollection&lt;string&gt;</c> с
+        /// property-членом эталон пишет как <c>["a"]</c> - свойство исчезает
+        /// целиком.
+        ///
+        /// То есть отличался не порядок и не состав, а <b>строение</b>
+        /// документа, и отличался молча. Ровно тот исход, который план
+        /// называет худшим.
+        ///
+        /// Проверка стоит после конструктора и по <c>IEnumerable</c>, а не по
+        /// <c>IEnumerable&lt;T&gt;</c>: эталон смотрит на негенерический
+        /// интерфейс. <c>string</c>, <c>byte[]</c>, <c>List&lt;T&gt;</c> и
+        /// словарь сюда не доезжают - их разбирает связыватель значений раньше,
+        /// каждый своей веткой.
+        /// </summary>
+        private static bool IsCollectionShaped(INamedTypeSymbol subject)
+        {
+            foreach (var contract in subject.AllInterfaces)
+            {
+                if (contract.SpecialType == SpecialType.System_Collections_IEnumerable)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool HasUsableParameterlessConstructor(INamedTypeSymbol subject)

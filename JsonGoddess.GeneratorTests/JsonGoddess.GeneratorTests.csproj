@@ -13,6 +13,20 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      Корпус System.Text.Json вендорится как ДАННЫЕ, а не как исходники: он
+      уезжает в CSharpGeneratorDriver текстом, вместе с хостом, который мы
+      печатаем сами. Компилироваться в эту сборку он не должен и не может -
+      половина его типов существует именно для того, чтобы наш генератор от
+      них отказался, а отказ генератора здесь ошибка компиляции.
+    -->
+    <Compile Remove="Stj\corpus\**" />
+    <None Include="Stj\corpus\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Update, а не Include: .md уже подобран стандартным глобом None -->
+    <None Update="Stj\PINNED.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
