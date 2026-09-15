@@ -517,7 +517,17 @@ namespace JsonGoddess.Generator.Binding
                 }
             }
 
-            return failed ? null : result;
+            if (failed)
+            {
+                return null;
+            }
+
+            //[JsonPropertyOrder] применяется поверх уже разложенной иерархии, а
+            //не вместо неё, и сортировка обязана быть устойчивой: члены с
+            //одинаковым порядком у эталона сохраняют взаимное расположение.
+            //Проверено прогоном: Derived : Base с [JsonPropertyOrder(-5)] на
+            //базовом члене даёт {BaseEarly, DerivedA, BaseA}.
+            return result.OrderBy(m => m.Order).ToList();
         }
 
         private static MemberModel? BindMember(
@@ -530,9 +540,29 @@ namespace JsonGoddess.Generator.Binding
             ref bool failed
             )
         {
-            if (known.Has(member, known.JsonIgnore))
+            //[JsonIgnore] без Condition означает Always, то есть член исчезает в
+            //обе стороны. Condition = Never - наоборот, «писать всегда», и это
+            //не то же самое, что отсутствие атрибута только на вид: смысл тот
+            //же, но сказано явно.
+            var condition = WriteCondition.Always;
+            if (known.TryReadIgnore(member, out var ignoreCondition))
             {
-                return null;
+                switch (ignoreCondition)
+                {
+                    case KnownSymbols.JsonIgnoreConditionNever:
+                        break;
+
+                    case KnownSymbols.JsonIgnoreConditionWhenWritingDefault:
+                        condition = WriteCondition.WhenNotDefault;
+                        break;
+
+                    case KnownSymbols.JsonIgnoreConditionWhenWritingNull:
+                        condition = WriteCondition.WhenNotNull;
+                        break;
+
+                    default:
+                        return null;
+                }
             }
 
             var included = known.Has(member, known.JsonInclude);
@@ -656,13 +686,27 @@ namespace JsonGoddess.Generator.Binding
                 return null;
             }
 
+            //Эталон отвергает WhenWritingNull на значимом типе - в рантайме, при
+            //построении метаданных. Мы можем отвергнуть на компиляции, и это
+            //единственный случай во всей фазе, где отказ строже не потому, что
+            //мы чего-то не умеем.
+            if (condition == WriteCondition.WhenNotNull && !value!.IsNullable)
+            {
+                Refuse(subject, member, memberType, location, diagnostics, ref failed,
+                    "JsonIgnoreCondition.WhenWritingNull is not valid on a value-type member, and "
+                    + "System.Text.Json refuses it at run time; use JsonIgnoreCondition.WhenWritingDefault");
+                return null;
+            }
+
             return new MemberModel(
                 member.Name,
                 jsonName,
                 utf8,
                 value!,
                 canWrite,
-                canRead
+                canRead,
+                condition,
+                known.ReadInt32Argument(member, known.JsonPropertyOrder, 0)
                 );
         }
 

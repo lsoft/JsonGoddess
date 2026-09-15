@@ -157,18 +157,111 @@ namespace JsonGoddess.Generator.Emit
                 return;
             }
 
+            //Состояние на этапе компиляции, а не в рантайме. pendingOpen -
+            //фигурная скобка ещё не напечатана и склеится с именем первого
+            //члена; commaIsCertain - до этого места точно что-то написано, и
+            //запятая снова становится частью литерала.
+            var pendingOpen = true;
+            var commaIsCertain = false;
+            var needCommaDeclared = false;
+
             for (var i = 0; i < members.Count; i++)
             {
                 var member = members[i];
-                var prefix = (i == 0 ? "{" : ",") + "\"" + member.JsonName + "\":";
 
-                builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(prefix) + ");");
-                ValueSourceProducer.WriteValue(builder, member.Value, "value." + member.MemberName, 0);
+                if (member.Condition == WriteCondition.Always)
+                {
+                    //скобка склеивается с именем первого члена только здесь: у
+                    //условного члена она обязана быть напечатана снаружи его
+                    //ветки, иначе объект без членов остался бы без скобки
+                    var literal = (pendingOpen ? "{" : commaIsCertain ? "," : string.Empty)
+                        + "\"" + member.JsonName + "\":";
+
+                    if (!pendingOpen && !commaIsCertain && needCommaDeclared)
+                    {
+                        builder.OpenBlock("if (needComma)");
+                        builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(",") + ");");
+                        builder.CloseBlock();
+                        builder.Line();
+                    }
+
+                    builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(literal) + ");");
+                    ValueSourceProducer.WriteValue(builder, member.Value, "value." + member.MemberName, 0);
+
+                    pendingOpen = false;
+                    commaIsCertain = true;
+                    continue;
+                }
+
+                if (pendingOpen)
+                {
+                    builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal("{") + ");");
+                    pendingOpen = false;
+                }
+
+                if (!commaIsCertain && !needCommaDeclared)
+                {
+                    builder.Line("var needComma = false;");
+                    needCommaDeclared = true;
+                }
+
+                builder.Line();
+
+                var candidate = "candidate" + i;
+                var conditionalLiteral = (commaIsCertain ? "," : string.Empty)
+                    + "\"" + member.JsonName + "\":";
+
+                builder.OpenBlock();
+                builder.Line("var " + candidate + " = value." + member.MemberName + ";");
+                builder.OpenBlock("if (" + Condition(member, candidate) + ")");
+
+                if (!commaIsCertain)
+                {
+                    //у самого первого члена needComma заведомо false, и ветка
+                    //здесь была бы веткой ради симметрии
+                    if (i > 0)
+                    {
+                        builder.OpenBlock("if (needComma)");
+                        builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(",") + ");");
+                        builder.CloseBlock();
+                        builder.Line();
+                    }
+
+                    builder.Line("needComma = true;");
+                }
+
+                builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(conditionalLiteral) + ");");
+                ValueSourceProducer.WriteValue(builder, member.Value, candidate, 0);
+
+                builder.CloseBlock();
+                builder.CloseBlock();
+                builder.Line();
+            }
+
+            if (pendingOpen)
+            {
+                builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal("{") + ");");
             }
 
             builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal("}") + ");");
             builder.CloseBlock();
             builder.Line();
+        }
+
+        /// <summary>
+        /// Условие записи. Для <c>default</c> сравнение печатается прямое, а не
+        /// через <c>EqualityComparer&lt;T&gt;.Default</c>: тип известен, и на
+        /// всех обслуживаемых типах <c>!=</c> даёт тот же ответ - включая
+        /// <c>-0.0</c>, который эталон тоже опускает.
+        /// </summary>
+        private static string Condition(MemberModel member, string candidate)
+        {
+            if (member.Condition == WriteCondition.WhenNotNull || member.Value.IsNullable)
+            {
+                return candidate + " is not null";
+            }
+
+            return candidate + " != default(" + member.Value.TypeName + ")";
         }
 
         private static void EmitReader(SourceBuilder builder, SubjectModel subject, string injector)

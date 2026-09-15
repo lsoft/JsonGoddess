@@ -403,6 +403,69 @@ namespace Demo
             Assert.Contains("exhauster.Append((int)value);", text, StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Главное утверждение §8.3, и оно тоньше, чем «условные члены заводят
+        /// needComma».
+        ///
+        /// Флаг нужен ровно до первого <b>безусловного</b> члена: после него
+        /// известно, что что-то уже написано, и запятая снова становится частью
+        /// литерала. Поэтому у типа, где первый член безусловен, флага нет
+        /// вовсе - сколько бы условных членов ни стояло дальше.
+        /// </summary>
+        [Fact]
+        public void Conditional_members_after_an_unconditional_one_cost_no_flag()
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(@"
+        public int First { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Name { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public int Count { get; set; }
+")
+                );
+
+            var writer = Section(run.SingleGeneratedFile, "private static void Write_", "private static ");
+
+            Assert.Empty(run.CompilationErrors);
+            Assert.DoesNotContain("needComma", writer, StringComparison.Ordinal);
+
+            //скобка по-прежнему склеена с именем первого члена, а запятые - с
+            //именами последующих
+            Assert.Contains("exhauster.AppendRaw(\"{\\\"First\\\":\"u8);", writer, StringComparison.Ordinal);
+            Assert.Contains("exhauster.AppendRaw(\",\\\"Name\\\":\"u8);", writer, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// И наоборот: когда условен уже первый член, платить приходится - но
+        /// ровно до первого безусловного, а не до конца метода.
+        /// </summary>
+        [Fact]
+        public void Flag_appears_only_while_nothing_is_certain_to_have_been_written()
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(@"
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? A { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? B { get; set; }
+        public int Certain { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? C { get; set; }
+")
+                );
+
+            var writer = Section(run.SingleGeneratedFile, "private static void Write_", "private static ");
+
+            Assert.Empty(run.CompilationErrors);
+
+            //скобка печатается отдельно: объект может не получить ни одного члена
+            Assert.Contains("exhauster.AppendRaw(\"{\"u8);", writer, StringComparison.Ordinal);
+
+            //Флаг читают все члены до первого безусловного включительно: перед
+            //Certain тоже ничего не гарантировано, и запятую он обязан
+            //поставить по флагу. А вот после него - уже нет, и C получает
+            //запятую литералом.
+            Assert.Equal(2, Occurrences(writer, "if (needComma)"));
+            Assert.Equal(2, Occurrences(writer, "needComma = true;"));
+            Assert.Contains("exhauster.AppendRaw(\",\\\"C\\\":\"u8);", writer, StringComparison.Ordinal);
+        }
+
         private static string Section(string text, string from, string until)
         {
             var start = text.IndexOf(from, StringComparison.Ordinal);

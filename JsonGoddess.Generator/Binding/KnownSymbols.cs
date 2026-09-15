@@ -24,6 +24,7 @@ namespace JsonGoddess.Generator.Binding
         private const string JsonStringEnumMemberNameAttributeName = "System.Text.Json.Serialization.JsonStringEnumMemberNameAttribute";
         private const string JsonStringEnumConverterName = "System.Text.Json.Serialization.JsonStringEnumConverter";
         private const string JsonStringEnumConverterGenericName = "System.Text.Json.Serialization.JsonStringEnumConverter`1";
+        private const string JsonPropertyOrderAttributeName = "System.Text.Json.Serialization.JsonPropertyOrderAttribute";
         private const string FlagsAttributeName = "System.FlagsAttribute";
 
         public readonly INamedTypeSymbol? Subject;
@@ -38,6 +39,7 @@ namespace JsonGoddess.Generator.Binding
         public readonly INamedTypeSymbol? JsonStringEnumMemberName;
         public readonly INamedTypeSymbol? JsonStringEnumConverter;
         public readonly INamedTypeSymbol? JsonStringEnumConverterGeneric;
+        public readonly INamedTypeSymbol? JsonPropertyOrder;
         public readonly INamedTypeSymbol? Flags;
 
         public KnownSymbols(Compilation compilation)
@@ -54,6 +56,7 @@ namespace JsonGoddess.Generator.Binding
             JsonStringEnumMemberName = compilation.GetTypeByMetadataName(JsonStringEnumMemberNameAttributeName);
             JsonStringEnumConverter = compilation.GetTypeByMetadataName(JsonStringEnumConverterName);
             JsonStringEnumConverterGeneric = compilation.GetTypeByMetadataName(JsonStringEnumConverterGenericName);
+            JsonPropertyOrder = compilation.GetTypeByMetadataName(JsonPropertyOrderAttributeName);
             Flags = compilation.GetTypeByMetadataName(FlagsAttributeName);
         }
 
@@ -99,5 +102,68 @@ namespace JsonGoddess.Generator.Binding
 
             return null;
         }
+
+        public int ReadInt32Argument(ISymbol symbol, INamedTypeSymbol? attributeType, int fallback)
+        {
+            if (attributeType is null)
+            {
+                return fallback;
+            }
+
+            foreach (var attribute in symbol.GetAttributes())
+            {
+                if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, attributeType)
+                    && attribute.ConstructorArguments.Length > 0
+                    && attribute.ConstructorArguments[0].Value is int order)
+                {
+                    return order;
+                }
+            }
+
+            return fallback;
+        }
+
+        /// <summary>
+        /// <c>[JsonIgnore]</c> и его <c>Condition</c>. Возвращает <c>false</c>,
+        /// если атрибута нет вовсе; значение <c>Condition</c> - в
+        /// <paramref name="condition"/>, и отсутствие именованного аргумента
+        /// означает <c>Always</c>, как и в самом атрибуте.
+        /// </summary>
+        public bool TryReadIgnore(ISymbol symbol, out int condition)
+        {
+            condition = JsonIgnoreConditionAlways;
+
+            if (JsonIgnore is null)
+            {
+                return false;
+            }
+
+            foreach (var attribute in symbol.GetAttributes())
+            {
+                if (!SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, JsonIgnore))
+                {
+                    continue;
+                }
+
+                foreach (var named in attribute.NamedArguments)
+                {
+                    if (named.Key == "Condition" && named.Value.Value is int value)
+                    {
+                        condition = value;
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        //значения JsonIgnoreCondition; читаются из метаданных числом, потому что
+        //enum-константа чужой сборки приезжает сюда именно числом
+        public const int JsonIgnoreConditionNever = 0;
+        public const int JsonIgnoreConditionAlways = 1;
+        public const int JsonIgnoreConditionWhenWritingDefault = 2;
+        public const int JsonIgnoreConditionWhenWritingNull = 3;
     }
 }

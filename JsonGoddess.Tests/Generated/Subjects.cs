@@ -253,6 +253,103 @@ namespace JsonGoddess.Tests.Generated
     }
 
     /// <summary>
+    /// Условно опускаемые члены. Здесь ломается инвариант фазы 2 «разделители -
+    /// константы»: пропуск члена меняет разметку соседей, чего в XML не бывает
+    /// вовсе.
+    ///
+    /// Безусловные члены стоят и до, и после условных намеренно: эмиттер обязан
+    /// платить за <c>needComma</c> только на том участке, где он действительно
+    /// нужен, а не на всём методе.
+    /// </summary>
+    public class Sparse
+    {
+        public int First { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Name { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int Count { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public Guid Reference { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public List<int>? Values { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Maybe { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+        public string? Always { get; set; }
+
+        public int Last { get; set; }
+
+        public static Sparse CreateEmpty() => new Sparse();
+
+        public static Sparse CreateFull()
+        {
+            return new Sparse
+            {
+                First = 1,
+                Name = "Ada",
+                Count = 2,
+                Reference = new Guid("6f9619ff-8b86-d011-b42d-00cf4fc964ff"),
+                Values = new List<int>(),
+                Maybe = 0,
+                Always = "here",
+                Last = 3,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Все члены условные: фигурная скобка перестаёт склеиваться с именем
+    /// первого члена, а документ может оказаться пустым объектом.
+    /// </summary>
+    public class AllSparse
+    {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? A { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? B { get; set; }
+    }
+
+    /// <summary>
+    /// Порядок членов задан явно и поверх иерархии. Эталон сортирует устойчиво
+    /// и уже <b>после</b> того, как разложил наследование от производного к
+    /// базовому.
+    /// </summary>
+    public class OrderedBase
+    {
+        public int BaseA { get; set; }
+
+        [JsonPropertyOrder(-5)]
+        public int BaseEarly { get; set; }
+    }
+
+    public class OrderedDerived : OrderedBase
+    {
+        public int DerivedA { get; set; }
+
+        [JsonPropertyOrder(5)]
+        public int Late { get; set; }
+
+        [JsonPropertyOrder(5)]
+        public int LateToo { get; set; }
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Sparse), true)]
+    [JsonSubject(typeof(AllSparse), true)]
+    [JsonSubject(typeof(OrderedDerived), true)]
+    public partial class SparseSerializer
+    {
+    }
+
+    /// <summary>
     /// Enum по умолчанию - число подлежащего типа, и значение вне набора
     /// проезжает как есть. Так ведёт себя эталон, и отказывать здесь значило бы
     /// не прочитать документ, который он пишет.

@@ -341,6 +341,82 @@ namespace JsonGoddess.Tests.Generated
             Assert.Equal(text, Reference.Write(back));
         }
 
+        /// <summary>
+        /// Условно опускаемые члены в обоих крайних состояниях: всё на
+        /// умолчаниях (остаются только безусловные) и всё заполнено. Между ними
+        /// лежит вся арифметика запятых, и байтовое совпадение с эталоном -
+        /// единственная проверка, которая её ловит.
+        /// </summary>
+        [Fact]
+        public void Conditional_members_are_omitted_exactly_where_system_text_json_omits_them()
+        {
+            foreach (var value in new[] { Sparse.CreateEmpty(), Sparse.CreateFull(), })
+            {
+                using var exhauster = new PooledUtf8Exhauster();
+                SparseSerializer.Serialize(exhauster, value);
+
+                Assert.Equal(Reference.Write(value), Encoding.UTF8.GetString(exhauster.ToArray()));
+            }
+        }
+
+        /// <summary>
+        /// Когда условны все члены, документ может оказаться пустым объектом - и
+        /// фигурная скобка перестаёт склеиваться с именем первого члена.
+        /// </summary>
+        [Theory]
+        [InlineData(null, null)]
+        [InlineData("a", null)]
+        [InlineData(null, "b")]
+        [InlineData("a", "b")]
+        public void Object_with_only_conditional_members_still_matches(string? a, string? b)
+        {
+            var value = new AllSparse { A = a, B = b, };
+
+            using var exhauster = new PooledUtf8Exhauster();
+            SparseSerializer.Serialize(exhauster, value);
+
+            Assert.Equal(Reference.Write(value), Encoding.UTF8.GetString(exhauster.ToArray()));
+        }
+
+        /// <summary>
+        /// Опущенный на записи член читается как обычный: условие относится к
+        /// записи и только к ней.
+        /// </summary>
+        [Fact]
+        public void Conditionally_omitted_members_are_still_read()
+        {
+            var utf8 = Encoding.UTF8.GetBytes("{\"Name\":\"Ada\",\"Count\":7,\"Maybe\":0}");
+
+            var theirs = JsonSerializer.Deserialize<Sparse>(utf8, Reference.Relaxed);
+
+            //тип назван явно: у хоста несколько корней, и перегрузки Deserialize
+            //различаются только out-параметром, так что out var неоднозначен
+            SparseSerializer.Deserialize(DefaultInjector.Instance, utf8, out Sparse? ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+            Assert.Equal(7, ours!.Count);
+        }
+
+        [Fact]
+        public void Explicit_member_order_is_applied_on_top_of_the_hierarchy()
+        {
+            var value = new OrderedDerived { BaseA = 1, BaseEarly = 2, DerivedA = 3, Late = 4, LateToo = 5, };
+            var text = Reference.Write(value);
+
+            using var exhauster = new PooledUtf8Exhauster();
+            SparseSerializer.Serialize(exhauster, value);
+
+            Assert.Equal(text, Encoding.UTF8.GetString(exhauster.ToArray()));
+
+            Assert.Equal(
+                new[] { "BaseEarly", "DerivedA", "BaseA", "Late", "LateToo", },
+                System.Text.RegularExpressions.Regex.Matches(text, "\"(\\w+)\":")
+                    .Cast<System.Text.RegularExpressions.Match>()
+                    .Select(m => m.Groups[1].Value)
+                    .ToArray()
+                );
+        }
+
         [Fact]
         public void Enum_document_matches_system_text_json_byte_for_byte()
         {

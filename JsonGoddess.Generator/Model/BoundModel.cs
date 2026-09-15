@@ -202,6 +202,24 @@ namespace JsonGoddess.Generator.Model
             Form == ValueForm.List || Form == ValueForm.Array || Form == ValueForm.Dictionary;
     }
 
+    /// <summary>
+    /// Когда член попадает в документ. Названо от записи, а не от пропуска
+    /// (<c>JsonIgnoreCondition</c> у эталона названо наоборот), потому что
+    /// эмиттер печатает условие записи, и двойное отрицание в коде читалось бы
+    /// хуже, чем в имени.
+    /// </summary>
+    public enum WriteCondition
+    {
+        /// <summary>Всегда. Разделители вокруг такого члена - константы.</summary>
+        Always,
+
+        /// <summary><c>WhenWritingNull</c>: только если значение не <c>null</c>.</summary>
+        WhenNotNull,
+
+        /// <summary><c>WhenWritingDefault</c>: только если значение не равно <c>default</c>.</summary>
+        WhenNotDefault,
+    }
+
     public sealed class MemberModel
     {
         /// <summary>Имя члена в C#: <c>value.Id</c>, <c>result.Id</c>.</summary>
@@ -221,13 +239,24 @@ namespace JsonGoddess.Generator.Model
         /// <summary>Есть публичный setter - член попадает в чтение.</summary>
         public bool CanRead { get; }
 
+        /// <summary>
+        /// Условие записи. На чтении не значит ничего: эталон читает условно
+        /// опускаемый член так же, как любой другой.
+        /// </summary>
+        public WriteCondition Condition { get; }
+
+        /// <summary><c>[JsonPropertyOrder]</c>; по умолчанию 0.</summary>
+        public int Order { get; }
+
         public MemberModel(
             string memberName,
             string jsonName,
             byte[] jsonNameUtf8,
             ValueModel value,
             bool canWrite,
-            bool canRead
+            bool canRead,
+            WriteCondition condition,
+            int order
             )
         {
             MemberName = memberName;
@@ -236,6 +265,8 @@ namespace JsonGoddess.Generator.Model
             Value = value;
             CanWrite = canWrite;
             CanRead = canRead;
+            Condition = condition;
+            Order = order;
         }
     }
 
