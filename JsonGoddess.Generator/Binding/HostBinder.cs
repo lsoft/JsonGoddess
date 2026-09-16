@@ -95,7 +95,11 @@ namespace JsonGoddess.Generator.Binding
             List<DiagnosticInfo> diagnostics
             )
         {
-            var location = LocationInfo.From(host) ?? reference.Location;
+            //позиция хоста снимается один раз: она одна на весь хост, а
+            //спрашивали её на каждого субъекта по три раза, и каждый раз это
+            //разбор позиции в тексте
+            var hostLocation = LocationInfo.From(host);
+            var location = hostLocation ?? reference.Location;
 
             if (host.ContainingType is not null || host.IsGenericType)
             {
@@ -141,7 +145,7 @@ namespace JsonGoddess.Generator.Binding
 
             foreach (var registration in registered)
             {
-                if (!IsSubjectShapeSupported(registration.Type, host, diagnostics))
+                if (!IsSubjectShapeSupported(registration.Type, hostLocation, diagnostics))
                 {
                     continue;
                 }
@@ -153,13 +157,14 @@ namespace JsonGoddess.Generator.Binding
             var subjects = new List<SubjectModel>();
             var collections = new Dictionary<string, ValueModel>(System.StringComparer.Ordinal);
             var stringEnums = new Dictionary<string, EnumModel>(System.StringComparer.Ordinal);
+            var scalars = new Dictionary<string, ValueModel>(System.StringComparer.Ordinal);
             var failed = accepted.Count != registered.Count;
 
             var options = SerializationOptions.Read(host, known, diagnostics, ref failed);
 
             foreach (var registration in accepted)
             {
-                var members = BindMembers(registration.Type, byType, known, options, LocationInfo.From(host), diagnostics);
+                var members = BindMembers(registration.Type, byType, known, options, hostLocation, diagnostics);
                 if (members is null)
                 {
                     failed = true;
@@ -167,7 +172,7 @@ namespace JsonGoddess.Generator.Binding
                 }
 
                 var parameters = ConstructorBinder.Bind(
-                    registration.Type, members, known, LocationInfo.From(host), diagnostics, ref failed
+                    registration.Type, members, known, hostLocation, diagnostics, ref failed
                     );
 
                 if (parameters is null)
@@ -176,7 +181,7 @@ namespace JsonGoddess.Generator.Binding
                 }
 
                 if (!PolymorphismBinder.TryBind(
-                        registration.Type, byType, known, LocationInfo.From(host), diagnostics,
+                        registration.Type, byType, known, hostLocation, diagnostics,
                         out var derived, out var discriminatorName))
                 {
                     failed = true;
@@ -185,13 +190,13 @@ namespace JsonGoddess.Generator.Binding
 
                 foreach (var member in members)
                 {
-                    ValueBinder.CollectValues(member.Value, collections, stringEnums);
+                    ValueBinder.CollectValues(member.Value, collections, stringEnums, scalars);
                 }
 
                 subjects.Add(
                     new SubjectModel(
                         registration.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                        MethodSuffix(registration.Type),
+                        byType[registration.Type],
                         registration.IsRoot,
                         registration.Type.IsValueType,
                         members,
@@ -223,6 +228,9 @@ namespace JsonGoddess.Generator.Binding
             var enumList = new List<EnumModel>(stringEnums.Values);
             enumList.Sort((a, b) => System.StringComparer.Ordinal.Compare(a.MethodSuffix, b.MethodSuffix));
 
+            var scalarList = new List<ValueModel>(scalars.Values);
+            scalarList.Sort((a, b) => System.StringComparer.Ordinal.Compare(a.MethodSuffix, b.MethodSuffix));
+
             return new HostModel(
                 ns,
                 BuildHostDeclaration(host),
@@ -232,6 +240,7 @@ namespace JsonGoddess.Generator.Binding
                 subjects,
                 collectionList,
                 enumList,
+                scalarList,
                 options.DictionaryKeyNaming
                 );
         }
@@ -412,12 +421,10 @@ namespace JsonGoddess.Generator.Binding
 
         private static bool IsSubjectShapeSupported(
             INamedTypeSymbol subject,
-            INamedTypeSymbol host,
+            LocationInfo? location,
             List<DiagnosticInfo> diagnostics
             )
         {
-            var location = LocationInfo.From(host);
-
             string? refusal = null;
             if (subject.TypeKind is not (TypeKind.Class or TypeKind.Struct))
             {

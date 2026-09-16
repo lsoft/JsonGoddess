@@ -74,9 +74,11 @@ namespace JsonGoddess.PerformanceTests
 
             WideSerializer.DeserializeByLength(DefaultInjector.Instance, _utf8, out var byLength);
             WideSerializer.DeserializeByKey(DefaultInjector.Instance, _utf8, out var byKey);
+            WideSerializer.DeserializeByKeyCalls(DefaultInjector.Instance, _utf8, out var byKeyCalls);
+            WideSerializer.DeserializeByKeyInlinedCalls(DefaultInjector.Instance, _utf8, out var byKeyInlined);
             WideGenerated.Deserialize(DefaultInjector.Instance, _utf8, out var byGenerator);
 
-            foreach (var back in new[] { byLength, byKey, byGenerator, })
+            foreach (var back in new[] { byLength, byKey, byKeyCalls, byKeyInlined, byGenerator, })
             {
                 if (back is null || back.Field00 != _wide.Field00 || back.Field29 != _wide.Field29
                     || back.Field15 != _wide.Field15 || back.Field28 != _wide.Field28
@@ -173,6 +175,28 @@ namespace JsonGoddess.PerformanceTests
         public Wide? DeserializeJsonGoddessByKey()
         {
             WideSerializer.DeserializeByKey(DefaultInjector.Instance, _utf8, out var result);
+            return result;
+        }
+
+        /// <summary>
+        /// Пара к следующему методу: тот же <c>by key</c>, у которого скаляры
+        /// читаются вызовом. Разность этих двух строк - цена невстроенного
+        /// вызова на тридцати членах, и получается она внутри одного
+        /// round-robin, а не сравнением двух прогонов.
+        /// </summary>
+        [BenchmarkCategory("deserialize")]
+        [Benchmark(Description = "JsonGoddess (by key, scalar calls)")]
+        public Wide? DeserializeJsonGoddessByKeyCalls()
+        {
+            WideSerializer.DeserializeByKeyCalls(DefaultInjector.Instance, _utf8, out var result);
+            return result;
+        }
+
+        [BenchmarkCategory("deserialize")]
+        [Benchmark(Description = "JsonGoddess (by key, scalar calls inlined)")]
+        public Wide? DeserializeJsonGoddessByKeyInlinedCalls()
+        {
+            WideSerializer.DeserializeByKeyInlinedCalls(DefaultInjector.Instance, _utf8, out var result);
             return result;
         }
     }

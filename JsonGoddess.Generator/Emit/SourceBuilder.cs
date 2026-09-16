@@ -9,8 +9,26 @@ namespace JsonGoddess.Generator.Emit
     /// </summary>
     public sealed class SourceBuilder
     {
-        private readonly StringBuilder _builder = new StringBuilder();
+        //Отступы готовыми строками, а не циклом по уровням. Строк в файле
+        //десятки тысяч, уровней у каждой до девяти, и цикл давал по вызову
+        //Append на уровень; здесь он один на строку. Таблица растёт по
+        //требованию - глубже неё вложенности не бывает, но и запрещать её
+        //незачем.
+        private static readonly string[] _indents = BuildIndents(16);
+
+        private readonly StringBuilder _builder = new StringBuilder(1 << 16);
         private int _indent;
+
+        private static string[] BuildIndents(int levels)
+        {
+            var result = new string[levels];
+            for (var i = 0; i < levels; i++)
+            {
+                result[i] = new string(' ', i * 4);
+            }
+
+            return result;
+        }
 
         public void Indent() => _indent++;
 
@@ -23,11 +41,7 @@ namespace JsonGoddess.Generator.Emit
 
         public void Line(string text)
         {
-            for (var i = 0; i < _indent; i++)
-            {
-                _builder.Append("    ");
-            }
-
+            _builder.Append(_indent < _indents.Length ? _indents[_indent] : new string(' ', _indent * 4));
             _builder.Append(text);
             _builder.Append('\n');
         }

@@ -65,13 +65,20 @@ namespace JsonGoddess.Generator.Binding
                 }
             }
 
-            //у DateTimeOffset, TimeSpan и Guid нет SpecialType, поэтому они
-            //опознаются по полному имени
-            switch (type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+            //У DateTimeOffset, TimeSpan и Guid нет SpecialType, поэтому они
+            //опознаются по имени и namespace'у - но не по полному имени
+            //строкой: сюда доезжает каждый член, которого не разобрал
+            //SpecialType, то есть все субъекты, коллекции и enum'ы тоже, и
+            //ToDisplayString строил бы строку на каждого из них (§16.2 плана).
+            if (type.ContainingNamespace is { Name: "System", } ns
+                && ns.ContainingNamespace is { IsGlobalNamespace: true, })
             {
-                case "global::System.DateTimeOffset": kind = BuiltinKind.DateTimeOffset; return true;
-                case "global::System.TimeSpan": kind = BuiltinKind.TimeSpan; return true;
-                case "global::System.Guid": kind = BuiltinKind.Guid; return true;
+                switch (type.Name)
+                {
+                    case "DateTimeOffset": kind = BuiltinKind.DateTimeOffset; return true;
+                    case "TimeSpan": kind = BuiltinKind.TimeSpan; return true;
+                    case "Guid": kind = BuiltinKind.Guid; return true;
+                }
             }
 
             return false;
@@ -101,6 +108,17 @@ namespace JsonGoddess.Generator.Binding
                 default:
                     return LexemeKind.Number;
             }
+        }
+
+        /// <summary>
+        /// Суффикс имени читателя скаляра. Ключ здесь пара «вид плюс
+        /// nullability», и больше ничего: чтение <c>int</c> не зависит ни от
+        /// типа, в чей член оно приедет, ни от имени этого члена, - поэтому
+        /// один метод обслуживает все такие члены всех субъектов хоста.
+        /// </summary>
+        public static string MethodSuffix(BuiltinKind kind, bool isNullable)
+        {
+            return isNullable ? kind.ToString() + "_OrNull" : kind.ToString();
         }
 
         /// <summary>Имя типа, каким оно печатается в <c>out</c>-переменную читателя.</summary>

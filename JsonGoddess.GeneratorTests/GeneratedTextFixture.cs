@@ -270,22 +270,45 @@ namespace Second
         }
 
         /// <summary>
-        /// Запись коллекции печатается по месту, а не вызовом: длина
-        /// коллекции - единственное, чего этап компиляции не знает, и цена
-        /// этого незнания должна ограничиваться одной веткой на элемент.
+        /// Писатель коллекции - метод, и метод <b>один на тип</b>, ровно как у
+        /// читателя.
+        ///
+        /// Раньше он печатался по месту, и обоснование стояло прямое: цикл -
+        /// это одна ветка на элемент, выносить нечего. Оно оказалось неверным
+        /// по объёму, а не по скорости: два десятка строк копировались на
+        /// каждый член, и на графе из двухсот типов тело коллекции занимало
+        /// три четверти всего писателя (§16.2 плана).
+        ///
+        /// Цена в рантайме - один статический вызов на коллекцию, то есть
+        /// ровно столько же, сколько всегда платило чтение, и амортизируется
+        /// он циклом по элементам.
         /// </summary>
         [Fact]
-        public void Collections_are_written_in_place_with_one_branch_per_element()
+        public void One_collection_writer_per_type_not_per_member()
         {
             var text = GeneratorHarness.Run(Sources.Composite).SingleGeneratedFile;
             var writer = Section(text, "private static void Write_Demo_Basket(", "private static void Write_Demo_Line(");
 
-            Assert.DoesNotContain("WriteCollection_", writer, StringComparison.Ordinal);
+            //Lines и Backorder - один и тот же List<Line>, и зовут они один и
+            //тот же метод; Head коллекцией не является и вызова не получает
+            Assert.Equal(1, Occurrences(text, "private static void WriteCollection_ListOf_Demo_Line("));
+            Assert.Equal(2, Occurrences(writer, "WriteCollection_ListOf_Demo_Line(exhauster"));
 
-            //Lines, Backorder, Numbers плюс Matrix внешняя и внутренняя - пять
-            //циклов; Head коллекцией не является и цикла не получает
-            Assert.Equal(5, Occurrences(writer, "for (var i"));
-            Assert.Equal(5, Occurrences(writer, "> 0)"));
+            //в самом писателе объекта циклов не остаётся вовсе
+            Assert.Equal(0, Occurrences(writer, "for (var i"));
+
+            //вложенность разворачивается методами, а не циклом в цикле
+            var outer = Section(
+                text,
+                "private static void WriteCollection_ListOf_ListOf_Int32(",
+                "private static void "
+                );
+            Assert.Equal(1, Occurrences(outer, "for (var i"));
+            Assert.Contains("WriteCollection_ListOf_Int32(exhauster, items[i]);", outer, StringComparison.Ordinal);
+
+            //byte[] остаётся base64-строкой и писателя коллекции не получает
+            Assert.Contains("exhauster.AppendBase64(value.Payload);", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("WriteCollection_ArrayOf_Byte", text, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -523,7 +546,7 @@ namespace Demo
 
             Assert.Empty(withKeys.CompilationErrors);
             Assert.Contains(
-                "JsonNaming.Convert(pair0.Key, global::JsonGoddess.Internal.JsonNamingStyle.SnakeCaseLower)",
+                "JsonNaming.Convert(pair.Key, global::JsonGoddess.Internal.JsonNamingStyle.SnakeCaseLower)",
                 withKeys.SingleGeneratedFile,
                 StringComparison.Ordinal
                 );

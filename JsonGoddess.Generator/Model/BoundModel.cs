@@ -487,9 +487,23 @@ namespace JsonGoddess.Generator.Model
 
         /// <summary>
         /// Enum'ы, встретившиеся в строковом режиме. Числовой режим методов не
-        /// требует: он печатается по месту одной строкой.
+        /// требует: он читается читателем подлежащего типа и приводится к
+        /// enum'у по месту.
         /// </summary>
         public IReadOnlyList<EnumModel> StringEnums { get; }
+
+        /// <summary>
+        /// Различные скаляры, встретившиеся в членах, - пара «вид плюс
+        /// nullability».
+        ///
+        /// Чтение скаляра не зависит ни от имени члена, ни от типа, которому
+        /// он принадлежит, поэтому <c>int</c> всего хоста читается одним
+        /// методом. Печаталось это по месту и стоило три строки на член -
+        /// девять, если член nullable, - и на графе из двухсот типов
+        /// повторялось тысячами (§16.2 плана). Запись так не выносится: у неё
+        /// на скаляр приходится одна строка, и выносить нечего.
+        /// </summary>
+        public IReadOnlyList<ValueModel> Scalars { get; }
 
         /// <summary>
         /// Политика для ключей словарей. Имена членов преобразуются на
@@ -508,9 +522,11 @@ namespace JsonGoddess.Generator.Model
             IReadOnlyList<SubjectModel> subjects,
             IReadOnlyList<ValueModel> collections,
             IReadOnlyList<EnumModel> stringEnums,
+            IReadOnlyList<ValueModel> scalars,
             JsonNamingStyle dictionaryKeyNaming
             )
         {
+            Scalars = scalars;
             StringEnums = stringEnums;
             DictionaryKeyNaming = dictionaryKeyNaming;
             Namespace = ns;

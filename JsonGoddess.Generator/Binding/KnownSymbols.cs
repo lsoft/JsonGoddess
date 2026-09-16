@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
 
 namespace JsonGoddess.Generator.Binding
@@ -70,6 +71,31 @@ namespace JsonGoddess.Generator.Binding
             JsonPolymorphic = compilation.GetTypeByMetadataName(JsonPolymorphicAttributeName);
             JsonSourceGenerationOptions = compilation.GetTypeByMetadataName(JsonSourceGenerationOptionsAttributeName);
             Flags = compilation.GetTypeByMetadataName(FlagsAttributeName);
+        }
+
+        private readonly Dictionary<ISymbol, string> _fullNames =
+            new Dictionary<ISymbol, string>(SymbolEqualityComparer.Default);
+
+        /// <summary>
+        /// Полное имя типа - с кэшем.
+        ///
+        /// <c>ToDisplayString</c> строит строку обходом символа каждый раз, а
+        /// один и тот же тип приезжает сюда столько раз, сколько мест на него
+        /// сослалось: сам член, элемент списка, значение словаря. Кэш живёт
+        /// ровно столько же, сколько <see cref="KnownSymbols"/>, то есть один
+        /// вызов связывателя, - символы разных компиляций в нём не
+        /// встречаются.
+        /// </summary>
+        public string FullName(ITypeSymbol type)
+        {
+            if (_fullNames.TryGetValue(type, out var name))
+            {
+                return name;
+            }
+
+            name = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            _fullNames.Add(type, name);
+            return name;
         }
 
         public bool Has(ISymbol symbol, INamedTypeSymbol? attributeType)

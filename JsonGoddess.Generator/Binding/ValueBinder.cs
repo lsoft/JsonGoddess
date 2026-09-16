@@ -18,7 +18,6 @@ namespace JsonGoddess.Generator.Binding
     {
         private const string ListMetadataName = "List`1";
         private const string DictionaryMetadataName = "Dictionary`2";
-        private const string CollectionsNamespace = "System.Collections.Generic";
 
         /// <summary>
         /// Класс, зарегистрированный <c>[JsonSubject]</c>, опознаётся по карте,
@@ -86,7 +85,7 @@ namespace JsonGoddess.Generator.Binding
                 value = new ValueModel(
                     ValueForm.Subject,
                     default,
-                    type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    known.FullName(type),
                     subjectSuffix,
                     null,
                     type.IsReferenceType || isNullableValueType,
@@ -119,7 +118,7 @@ namespace JsonGoddess.Generator.Binding
                 value = new ValueModel(
                     ValueForm.Array,
                     default,
-                    type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    known.FullName(type),
                     "ArrayOf_" + arrayElement!.MethodSuffix,
                     arrayElement,
                     true
@@ -143,7 +142,7 @@ namespace JsonGoddess.Generator.Binding
                 value = new ValueModel(
                     ValueForm.Dictionary,
                     default,
-                    type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    known.FullName(type),
                     "MapOf_" + dictionaryValue!.MethodSuffix,
                     dictionaryValue,
                     true
@@ -161,7 +160,7 @@ namespace JsonGoddess.Generator.Binding
                 value = new ValueModel(
                     ValueForm.List,
                     default,
-                    type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    known.FullName(type),
                     "ListOf_" + listElement!.MethodSuffix,
                     listElement,
                     true
@@ -256,7 +255,7 @@ namespace JsonGoddess.Generator.Binding
             }
 
             model = new EnumModel(
-                type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                known.FullName(type),
                 type.ToDisplayString().Replace('.', '_'),
                 underlying,
                 members
@@ -355,13 +354,27 @@ namespace JsonGoddess.Generator.Binding
 
             var definition = candidate.OriginalDefinition;
             if (definition.MetadataName != metadataName
-                || definition.ContainingNamespace?.ToDisplayString() != CollectionsNamespace)
+                || !IsCollectionsGeneric(definition.ContainingNamespace))
             {
                 return false;
             }
 
             named = candidate;
             return true;
+        }
+
+        /// <summary>
+        /// <c>System.Collections.Generic</c> - по звеньям, а не строкой:
+        /// <c>ToDisplayString</c> собирал бы её заново на каждую коллекцию
+        /// каждого члена (§16.2 плана), а сравнить три коротких имени дешевле
+        /// в разы.
+        /// </summary>
+        private static bool IsCollectionsGeneric(INamespaceSymbol? ns)
+        {
+            return ns is { Name: "Generic", }
+                && ns.ContainingNamespace is { Name: "Collections", } collections
+                && collections.ContainingNamespace is { Name: "System", } system
+                && system.ContainingNamespace is { IsGlobalNamespace: true, };
         }
 
         /// <summary>
@@ -373,16 +386,32 @@ namespace JsonGoddess.Generator.Binding
         public static void CollectValues(
             ValueModel value,
             Dictionary<string, ValueModel> collections,
-            Dictionary<string, EnumModel> stringEnums
+            Dictionary<string, EnumModel> stringEnums,
+            Dictionary<string, ValueModel> scalars
             )
         {
             if (value.Form == ValueForm.Enum)
             {
-                if (value.IsStringEnum && !stringEnums.ContainsKey(value.MethodSuffix))
+                if (value.IsStringEnum)
                 {
-                    stringEnums.Add(value.MethodSuffix, value.Enum!);
+                    if (!stringEnums.ContainsKey(value.MethodSuffix))
+                    {
+                        stringEnums.Add(value.MethodSuffix, value.Enum!);
+                    }
+
+                    return;
                 }
 
+                //числовой enum читается читателем своего подлежащего типа, и
+                //nullability снимается снаружи: приведение к enum'у само по
+                //себе null не пропускает
+                AddScalar(scalars, value.Builtin, false);
+                return;
+            }
+
+            if (value.Form == ValueForm.Builtin)
+            {
+                AddScalar(scalars, value.Builtin, value.IsNullable);
                 return;
             }
 
@@ -396,7 +425,21 @@ namespace JsonGoddess.Generator.Binding
                 collections.Add(value.MethodSuffix, value);
             }
 
-            CollectValues(value.Element!, collections, stringEnums);
+            CollectValues(value.Element!, collections, stringEnums, scalars);
+        }
+
+        private static void AddScalar(Dictionary<string, ValueModel> scalars, BuiltinKind kind, bool isNullable)
+        {
+            var suffix = BuiltinTypes.MethodSuffix(kind, isNullable);
+            if (scalars.ContainsKey(suffix))
+            {
+                return;
+            }
+
+            scalars.Add(
+                suffix,
+                new ValueModel(ValueForm.Builtin, kind, BuiltinTypes.GetTypeName(kind), suffix, null, isNullable)
+                );
         }
     }
 }

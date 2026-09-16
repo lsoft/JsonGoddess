@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using JsonGoddess.Internal;
 using JsonGoddess.PerformanceTests.Model;
 
@@ -24,6 +25,21 @@ namespace JsonGoddess.PerformanceTests.Generated
     /// семи байт сравнения нет вовсе.</item>
     /// </list>
     /// Сериализация от формы не зависит и существует в одном экземпляре.
+    ///
+    /// Форма <c>ByKey</c> присутствует ещё в двух вариантах, и они отвечают на
+    /// отдельный вопрос - <b>сколько стоит читать скаляр вызовом, а не по
+    /// месту</b> (§16.2 плана). Эмиттер вынес чтение скаляра в метод, это
+    /// сняло четверть объёма порождаемого кода, и надо было понять, что оно
+    /// стоит на чтении:
+    /// <list type="bullet">
+    /// <item><c>ByKeyCalls</c> - каждый скаляр читается вызовом, встраивать
+    /// его никто не просит;</item>
+    /// <item><c>ByKeyInlinedCalls</c> - то же самое с
+    /// <c>[MethodImpl(AggressiveInlining)]</c> на читателях скаляров.</item>
+    /// </list>
+    /// Все три идут в одном round-robin, и это принципиально: разница здесь
+    /// порядка процента, а абсолютное время между двумя запусками уезжает на
+    /// все десять - именно на этом я и обжёгся, сравнивая два прогона.
     /// </summary>
     public static class WideSerializer
     {
@@ -620,6 +636,414 @@ namespace JsonGoddess.PerformanceTests.Generated
         }
 
         private static string? ReadString(
+            DefaultInjector injector,
+            scoped ReadOnlySpan<byte> json,
+            scoped ref int position,
+            scoped ref JsonParseContext context
+            )
+        {
+            if (JsonScan.TryReadNull(json, ref position))
+            {
+                return null;
+            }
+
+            var raw = JsonScan.ReadStringContent(json, ref position, out var escaped);
+            injector.ParseText(ref context, raw, escaped, out string value);
+            return value;
+        }
+
+        public static void DeserializeByKeyCalls(DefaultInjector injector, ReadOnlySpan<byte> json, out Wide? result)
+        {
+            var position = 0;
+            var context = new JsonParseContext(json);
+            result = ReadWideByKeyCalls(injector, json, ref position, ref context);
+        }
+
+        public static void DeserializeByKeyInlinedCalls(DefaultInjector injector, ReadOnlySpan<byte> json, out Wide? result)
+        {
+            var position = 0;
+            var context = new JsonParseContext(json);
+            result = ReadWideByKeyInlinedCalls(injector, json, ref position, ref context);
+        }
+
+        /// <summary>
+        /// <c>ByKey</c>, у которого каждый скаляр читается вызовом. Отличие от
+        /// <c>ReadWideByKey</c> ровно одно и ровно в этом - диспетчер, порядок
+        /// веток и всё прочее совпадают буквально.
+        /// </summary>
+        private static Wide? ReadWideByKeyCalls(
+            DefaultInjector injector,
+            scoped ReadOnlySpan<byte> json,
+            scoped ref int position,
+            scoped ref JsonParseContext context
+            )
+        {
+            if (JsonScan.TryReadNull(json, ref position))
+            {
+                return null;
+            }
+
+            JsonScan.Expect(json, ref position, JsonScan.OpenBrace);
+            var result = new Wide();
+
+            if (JsonScan.TryConsume(json, ref position, JsonScan.CloseBrace))
+            {
+                return result;
+            }
+
+            while (true)
+            {
+                var name = JsonScan.ReadStringContent(json, ref position, out _);
+                JsonScan.Expect(json, ref position, JsonScan.Colon);
+
+                switch (JsonNameKey.Compute(name))
+                {
+                    case 0x073030646C656946UL: //Field00
+                        result.Field00 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073031646C656946UL: //Field10
+                        result.Field10 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073032646C656946UL: //Field20
+                        result.Field20 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073130646C656946UL: //Field01
+                        result.Field01 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073131646C656946UL: //Field11
+                        result.Field11 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073132646C656946UL: //Field21
+                        result.Field21 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073230646C656946UL: //Field02
+                        result.Field02 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073231646C656946UL: //Field12
+                        result.Field12 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073232646C656946UL: //Field22
+                        result.Field22 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073330646C656946UL: //Field03
+                        result.Field03 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073331646C656946UL: //Field13
+                        result.Field13 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073332646C656946UL: //Field23
+                        result.Field23 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073430646C656946UL: //Field04
+                        result.Field04 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073431646C656946UL: //Field14
+                        result.Field14 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073432646C656946UL: //Field24
+                        result.Field24 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073530646C656946UL: //Field05
+                        result.Field05 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073531646C656946UL: //Field15
+                        result.Field15 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073532646C656946UL: //Field25
+                        result.Field25 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073630646C656946UL: //Field06
+                        result.Field06 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073631646C656946UL: //Field16
+                        result.Field16 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073632646C656946UL: //Field26
+                        result.Field26 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073730646C656946UL: //Field07
+                        result.Field07 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073731646C656946UL: //Field17
+                        result.Field17 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073732646C656946UL: //Field27
+                        result.Field27 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073830646C656946UL: //Field08
+                        result.Field08 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073831646C656946UL: //Field18
+                        result.Field18 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073832646C656946UL: //Field28
+                        result.Field28 = ReadInt32Plain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073930646C656946UL: //Field09
+                        result.Field09 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073931646C656946UL: //Field19
+                        result.Field19 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073932646C656946UL: //Field29
+                        result.Field29 = ReadStringPlain(injector, json, ref position, ref context);
+                        goto next;
+
+                }
+
+                JsonScan.SkipValue(json, ref position);
+
+            next:
+                if (!JsonScan.TryConsume(json, ref position, JsonScan.Comma))
+                {
+                    break;
+                }
+            }
+
+            JsonScan.Expect(json, ref position, JsonScan.CloseBrace);
+            return result;
+        }
+
+        /// <summary>
+        /// То же самое, но читателям скаляров разрешено встроиться. Пара к
+        /// <see cref="ReadWideByKeyCalls"/>: обе формы отличаются только этим,
+        /// и разность их времён - цена невстроенного вызова.
+        /// </summary>
+        private static Wide? ReadWideByKeyInlinedCalls(
+            DefaultInjector injector,
+            scoped ReadOnlySpan<byte> json,
+            scoped ref int position,
+            scoped ref JsonParseContext context
+            )
+        {
+            if (JsonScan.TryReadNull(json, ref position))
+            {
+                return null;
+            }
+
+            JsonScan.Expect(json, ref position, JsonScan.OpenBrace);
+            var result = new Wide();
+
+            if (JsonScan.TryConsume(json, ref position, JsonScan.CloseBrace))
+            {
+                return result;
+            }
+
+            while (true)
+            {
+                var name = JsonScan.ReadStringContent(json, ref position, out _);
+                JsonScan.Expect(json, ref position, JsonScan.Colon);
+
+                switch (JsonNameKey.Compute(name))
+                {
+                    case 0x073030646C656946UL: //Field00
+                        result.Field00 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073031646C656946UL: //Field10
+                        result.Field10 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073032646C656946UL: //Field20
+                        result.Field20 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073130646C656946UL: //Field01
+                        result.Field01 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073131646C656946UL: //Field11
+                        result.Field11 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073132646C656946UL: //Field21
+                        result.Field21 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073230646C656946UL: //Field02
+                        result.Field02 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073231646C656946UL: //Field12
+                        result.Field12 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073232646C656946UL: //Field22
+                        result.Field22 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073330646C656946UL: //Field03
+                        result.Field03 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073331646C656946UL: //Field13
+                        result.Field13 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073332646C656946UL: //Field23
+                        result.Field23 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073430646C656946UL: //Field04
+                        result.Field04 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073431646C656946UL: //Field14
+                        result.Field14 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073432646C656946UL: //Field24
+                        result.Field24 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073530646C656946UL: //Field05
+                        result.Field05 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073531646C656946UL: //Field15
+                        result.Field15 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073532646C656946UL: //Field25
+                        result.Field25 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073630646C656946UL: //Field06
+                        result.Field06 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073631646C656946UL: //Field16
+                        result.Field16 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073632646C656946UL: //Field26
+                        result.Field26 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073730646C656946UL: //Field07
+                        result.Field07 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073731646C656946UL: //Field17
+                        result.Field17 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073732646C656946UL: //Field27
+                        result.Field27 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073830646C656946UL: //Field08
+                        result.Field08 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073831646C656946UL: //Field18
+                        result.Field18 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073832646C656946UL: //Field28
+                        result.Field28 = ReadInt32Inlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073930646C656946UL: //Field09
+                        result.Field09 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073931646C656946UL: //Field19
+                        result.Field19 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                    case 0x073932646C656946UL: //Field29
+                        result.Field29 = ReadStringInlined(injector, json, ref position, ref context);
+                        goto next;
+
+                }
+
+                JsonScan.SkipValue(json, ref position);
+
+            next:
+                if (!JsonScan.TryConsume(json, ref position, JsonScan.Comma))
+                {
+                    break;
+                }
+            }
+
+            JsonScan.Expect(json, ref position, JsonScan.CloseBrace);
+            return result;
+        }
+
+        private static int ReadInt32Plain(
+            DefaultInjector injector,
+            scoped ReadOnlySpan<byte> json,
+            scoped ref int position,
+            scoped ref JsonParseContext context
+            )
+        {
+            var raw = JsonScan.ReadNumberRaw(json, ref position);
+            injector.Parse(ref context, raw, out int value);
+            return value;
+        }
+
+        private static string? ReadStringPlain(
+            DefaultInjector injector,
+            scoped ReadOnlySpan<byte> json,
+            scoped ref int position,
+            scoped ref JsonParseContext context
+            )
+        {
+            if (JsonScan.TryReadNull(json, ref position))
+            {
+                return null;
+            }
+
+            var raw = JsonScan.ReadStringContent(json, ref position, out var escaped);
+            injector.ParseText(ref context, raw, escaped, out string value);
+            return value;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static int ReadInt32Inlined(
+            DefaultInjector injector,
+            scoped ReadOnlySpan<byte> json,
+            scoped ref int position,
+            scoped ref JsonParseContext context
+            )
+        {
+            var raw = JsonScan.ReadNumberRaw(json, ref position);
+            injector.Parse(ref context, raw, out int value);
+            return value;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static string? ReadStringInlined(
             DefaultInjector injector,
             scoped ReadOnlySpan<byte> json,
             scoped ref int position,

@@ -16,7 +16,15 @@ namespace JsonGoddess.Generator.Emit
     /// </summary>
     public static class ValueSourceProducer
     {
-        public const string Scan = "global::JsonGoddess.Internal.JsonScan";
+        /// <summary>Полное имя - оно печатается ровно один раз, в псевдоним.</summary>
+        public const string ScanFullName = "global::JsonGoddess.Internal.JsonScan";
+
+        /// <summary>Псевдоним, которым сканер зовётся во всём порождённом коде.</summary>
+        public const string Scan = "__Scan";
+
+        public const string MemoryExtensionsFullName = "global::System.MemoryExtensions";
+
+        public const string Mem = "__Mem";
         public const string Array = "global::System.Array";
         public const string Naming = "global::JsonGoddess.Internal.JsonNaming";
         public const string NamingStyle = "global::JsonGoddess.Internal.JsonNamingStyle";
@@ -42,12 +50,15 @@ namespace JsonGoddess.Generator.Emit
         /// отличие builtin-типов сводится к выбору перегрузки - и <c>null</c>
         /// он тоже пишет сам, откуда отсутствие проверок на скалярах.
         ///
-        /// Коллекция печатается по месту, а не вызовом: цикл по элементам -
-        /// это одна строка разделителя плюс тело, и выносить его в метод
-        /// значило бы добавить вызов на каждую коллекцию ради экономии,
-        /// которой нет. Чтение устроено наоборот, и почему - сказано там же.
+        /// Коллекция, как и на чтении, печатается <b>вызовом</b>: тело цикла
+        /// одно на все места, где встретился один и тот же тип коллекции, и
+        /// печатать его по месту значило бы копировать два десятка строк на
+        /// каждый член. Раньше здесь стояло обратное решение с обоснованием
+        /// «экономии нет»; экономия померена (§16.2 плана) и оказалась
+        /// заметной, а цена - один статический вызов на коллекцию, то есть
+        /// ровно столько же, сколько платит чтение.
         /// </summary>
-        public static void WriteValue(SourceBuilder builder, ValueModel value, string accessor, int depth, JsonNamingStyle keyNaming)
+        public static void WriteValue(SourceBuilder builder, ValueModel value, string accessor, JsonNamingStyle keyNaming)
         {
             switch (value.Form)
             {
@@ -72,7 +83,6 @@ namespace JsonGoddess.Generator.Emit
                         WriteNullable(
                             builder,
                             accessor,
-                            depth,
                             local => "Write_" + value.MethodSuffix + "(exhauster, " + local + ".Value);"
                             );
                         return;
@@ -84,13 +94,13 @@ namespace JsonGoddess.Generator.Emit
 
                 case ValueForm.Enum:
                 {
-                    WriteEnum(builder, value, accessor, depth);
+                    WriteEnum(builder, value, accessor);
                     return;
                 }
 
                 default:
                 {
-                    WriteCollection(builder, value, accessor, depth, keyNaming);
+                    builder.Line("WriteCollection_" + value.MethodSuffix + "(exhauster, " + accessor + ");");
                     return;
                 }
             }
@@ -101,7 +111,7 @@ namespace JsonGoddess.Generator.Emit
         /// та же перегрузка <c>Append</c>, что у обычного числа: значение вне
         /// набора при этом проезжает как есть - ровно так же ведёт себя эталон.
         /// </summary>
-        private static void WriteEnum(SourceBuilder builder, ValueModel value, string accessor, int depth)
+        private static void WriteEnum(SourceBuilder builder, ValueModel value, string accessor)
         {
             if (!value.IsStringEnum)
             {
@@ -119,7 +129,6 @@ namespace JsonGoddess.Generator.Emit
             WriteNullable(
                 builder,
                 accessor,
-                depth,
                 local => "WriteEnum_" + value.MethodSuffix + "(exhauster, " + local + ".Value);"
                 );
         }
@@ -135,11 +144,10 @@ namespace JsonGoddess.Generator.Emit
         private static void WriteNullable(
             SourceBuilder builder,
             string accessor,
-            int depth,
             System.Func<string, string> writeValue
             )
         {
-            var local = "nullable" + depth;
+            const string local = "nullable";
 
             builder.OpenBlock();
             builder.Line("var " + local + " = " + accessor + ";");
@@ -155,25 +163,22 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
         }
 
-        private static void WriteCollection(SourceBuilder builder, ValueModel value, string accessor, int depth, JsonNamingStyle keyNaming)
+        /// <summary>
+        /// Тело писателя коллекции. Параметр у метода один - <c>items</c>, и
+        /// номеров в именах локальных поэтому больше нет: вложенная коллекция
+        /// уезжает в свой собственный метод, а не разворачивается в цикл
+        /// внутри цикла.
+        /// </summary>
+        public static void WriteCollectionBody(SourceBuilder builder, ValueModel value, JsonNamingStyle keyNaming)
         {
             var isMap = value.Form == ValueForm.Dictionary;
-            var items = "items" + depth;
-            var index = "i" + depth;
-            var pair = "pair" + depth;
 
-            //собственный блок: у двух коллекций в одном объекте локальные имена
-            //совпали бы, а нумеровать их по номеру члена значило бы поставить
-            //текст порождаемого кода в зависимость от порядка членов сильнее,
-            //чем он и так от него зависит
-            builder.OpenBlock();
-            builder.Line("var " + items + " = " + accessor + ";");
-
-            builder.OpenBlock("if (" + items + " is null)");
+            builder.OpenBlock("if (items is null)");
             builder.Line("exhauster.AppendNull();");
+            builder.Line("return;");
             builder.CloseBlock();
+            builder.Line();
 
-            builder.OpenBlock("else");
             builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(isMap ? "{" : "[") + ");");
 
             if (isMap)
@@ -181,45 +186,42 @@ namespace JsonGoddess.Generator.Emit
                 //foreach по конкретному Dictionary<,> берёт структурный
                 //перечислитель и ничего не выделяет; по позиции словарь не
                 //индексируется, поэтому счётчик ведётся руками
-                builder.Line("var " + index + " = 0;");
-                builder.OpenBlock("foreach (var " + pair + " in " + items + ")");
+                builder.Line("var i = 0;");
+                builder.OpenBlock("foreach (var pair in items)");
             }
             else
             {
                 builder.OpenBlock(
-                    "for (var " + index + " = 0; " + index + " < " + items
-                    + (value.Form == ValueForm.Array ? ".Length" : ".Count") + "; " + index + "++)"
+                    "for (var i = 0; i < items"
+                    + (value.Form == ValueForm.Array ? ".Length" : ".Count") + "; i++)"
                     );
             }
 
-            builder.OpenBlock("if (" + index + " > 0)");
+            builder.OpenBlock("if (i > 0)");
             builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(",") + ");");
             builder.CloseBlock();
             builder.Line();
 
             if (isMap)
             {
-                builder.Line(index + "++;");
+                builder.Line("i++;");
 
                 //ключ словаря - не константа этапа компиляции, и экранировать
                 //его приходится по-настоящему: System.Text.Json пишет ключ
                 //"a\"b" экранированным, и совпасть с ним иначе нельзя
-                builder.Line("exhauster.Append(" + Key(pair + ".Key", keyNaming) + ");");
+                builder.Line("exhauster.Append(" + Key("pair.Key", keyNaming) + ");");
                 builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(":") + ");");
-                WriteValue(builder, value.Element!, pair + ".Value", depth + 1, keyNaming);
+                WriteValue(builder, value.Element!, "pair.Value", keyNaming);
             }
             else
             {
-                WriteValue(builder, value.Element!, items + "[" + index + "]", depth + 1, keyNaming);
+                WriteValue(builder, value.Element!, "items[i]", keyNaming);
             }
 
             builder.CloseBlock();
             builder.Line();
 
             builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(isMap ? "}" : "]") + ");");
-            builder.CloseBlock();
-
-            builder.CloseBlock();
         }
 
         /// <summary>
@@ -227,10 +229,11 @@ namespace JsonGoddess.Generator.Emit
         /// доезжает: решение «положить null или отказать» принадлежит типу
         /// члена, а не лексике, и потому принимается здесь.
         ///
-        /// Составные значения читаются вызовом, а не по месту: у субъекта тело
-        /// читателя общее для всех мест, где он встретился, а у коллекции
-        /// вложенность иначе развернулась бы в цикл внутри цикла прямо в ветке
-        /// диспетчера - там, где и без того тесно.
+        /// Читается вызовом <b>всё</b>, вплоть до скаляра: тело читателя не
+        /// зависит ни от имени члена, ни от типа, которому член принадлежит, и
+        /// потому у каждого значения оно одно на весь хост. В ветке
+        /// диспетчера остаётся одна строка - та, в которой видно, что куда
+        /// присваивается.
         /// </summary>
         public static void ReadValue(SourceBuilder builder, ValueModel value, string target)
         {
@@ -272,46 +275,79 @@ namespace JsonGoddess.Generator.Emit
                 }
             }
 
-            if (value.IsNullable)
+            if (value.Form == ValueForm.Enum)
             {
+                ReadEnum(builder, value, target);
+                return;
+            }
+
+            builder.Line(
+                target + " = ReadScalar_" + BuiltinTypes.MethodSuffix(value.Builtin, value.IsNullable)
+                + "(injector, json, ref position, ref context);"
+                );
+        }
+
+        /// <summary>
+        /// Enum. Строковая форма читается своим методом - набор имён у enum'а
+        /// свой; числовая идёт читателем подлежащего типа и приводится здесь,
+        /// потому что приведение к типу члена - единственное, чем она от него
+        /// отличается.
+        /// </summary>
+        private static void ReadEnum(SourceBuilder builder, ValueModel value, string target)
+        {
+            if (value.IsStringEnum)
+            {
+                var read = target + " = ReadEnum_" + value.MethodSuffix
+                    + "(injector, json, ref position, ref context);";
+
+                if (!value.IsNullable)
+                {
+                    builder.Line(read);
+                    return;
+                }
+
                 builder.OpenBlock("if (" + Scan + ".TryReadNull(json, ref position))");
                 builder.Line(target + " = null;");
                 builder.CloseBlock();
                 builder.OpenBlock("else");
-                ReadScalar(builder, value, target);
+                builder.Line(read);
                 builder.CloseBlock();
                 return;
             }
 
-            ReadScalar(builder, value, target);
-        }
+            var number = target + " = (" + value.TypeName + ")ReadScalar_"
+                + BuiltinTypes.MethodSuffix(value.Builtin, false)
+                + "(injector, json, ref position, ref context);";
 
-        private static void ReadScalar(SourceBuilder builder, ValueModel value, string target)
-        {
-            if (value.Form != ValueForm.Enum)
+            if (!value.IsNullable)
             {
-                ReadLexeme(builder, value, target);
+                builder.Line(number);
                 return;
             }
 
-            if (value.IsStringEnum)
-            {
-                builder.Line(
-                    target + " = ReadEnum_" + value.MethodSuffix + "(injector, json, ref position, ref context);"
-                    );
-                return;
-            }
-
-            builder.Line("var raw = " + Scan + ".ReadNumberRaw(json, ref position);");
-            builder.Line(
-                "injector.Parse(ref context, raw, out " + BuiltinTypes.GetTypeName(value.Builtin) + " parsed);"
-                );
-            builder.Line(target + " = (" + value.TypeName + ")parsed;");
+            builder.OpenBlock("if (" + Scan + ".TryReadNull(json, ref position))");
+            builder.Line(target + " = null;");
+            builder.CloseBlock();
+            builder.OpenBlock("else");
+            builder.Line(number);
+            builder.CloseBlock();
         }
 
-        private static void ReadLexeme(SourceBuilder builder, ValueModel value, string target)
+        /// <summary>
+        /// Тело читателя скаляра: лексема плюс разбор. Возвращает значение, а
+        /// не пишет в цель, - цель у него на каждом месте своя, а тело одно.
+        /// </summary>
+        public static void ReadScalarBody(SourceBuilder builder, ValueModel value)
         {
             var typeName = BuiltinTypes.GetTypeName(value.Builtin);
+
+            if (value.IsNullable)
+            {
+                builder.OpenBlock("if (" + Scan + ".TryReadNull(json, ref position))");
+                builder.Line("return null;");
+                builder.CloseBlock();
+                builder.Line();
+            }
 
             switch (BuiltinTypes.GetLexeme(value.Builtin))
             {
@@ -337,7 +373,7 @@ namespace JsonGoddess.Generator.Emit
                 }
             }
 
-            builder.Line(target + " = parsed;");
+            builder.Line("return parsed;");
         }
     }
 }

@@ -18,12 +18,31 @@ namespace JsonGoddess.Generator.Emit
     public static class ClassSourceProducer
     {
         private const string Scan = ValueSourceProducer.Scan;
+        private const string Mem = ValueSourceProducer.Mem;
         private const string TokenKind = "global::JsonGoddess.Internal.JsonTokenKind";
         private const string AsciiName = "global::JsonGoddess.Internal.JsonAsciiName";
         private const string Context = "global::JsonGoddess.JsonParseContext";
         private const string Span = "global::System.ReadOnlySpan<byte>";
         private const string EqualityComparer = "global::System.Collections.Generic.EqualityComparer";
         private const string DocumentException = "global::JsonGoddess.JsonDocumentException";
+
+        /// <summary>
+        /// Просьба к JIT'у вставить тело по месту. Ставится только на читатель
+        /// скаляра, и стоит она 810 байт на графе из двухсот типов.
+        ///
+        /// Обоснование у неё узкое, и назвать его надо точно (§16.2 плана). В
+        /// <b>рукописном</b> читателе WIDE вызов читателя скаляра не стоит
+        /// ничего и без атрибута: три формы - скаляр по месту, скаляр вызовом,
+        /// скаляр вызовом с атрибутом - в одном round-robin различаются на
+        /// проценты при разбросе того же порядка, то есть JIT там встраивает
+        /// сам. В <b>порождённом</b> читателе метод больше - гибридный
+        /// диспетчер плюс путь разэкранирования, - и отставание от лучшей
+        /// рукописной формы, померенное внутри каждого прогона, выходит 0.6%
+        /// (REGULAR) и 2.4% (WIDE) с атрибутом против 2.2% и 6.4% без него.
+        /// </summary>
+        private const string Inline =
+            "[global::System.Runtime.CompilerServices.MethodImpl("
+            + "global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]";
 
         public static string Produce(HostModel host)
         {
@@ -34,10 +53,16 @@ namespace JsonGoddess.Generator.Emit
             builder.Line("#nullable enable");
             builder.Line();
 
-            var hasNamespace = !string.IsNullOrEmpty(host.Namespace);
-            if (hasNamespace)
+            EmitAliases(builder);
+
+            //namespace файловой области, а не блоком: она снимает один уровень
+            //отступа со всего файла, а на графе из двухсот типов отступы - это
+            //треть его объёма (§16.2 плана). C# 10 для неё достаточно, а у нас
+            //и без того требуется одиннадцатый - из-за u8-литералов.
+            if (!string.IsNullOrEmpty(host.Namespace))
             {
-                builder.OpenBlock("namespace " + host.Namespace);
+                builder.Line("namespace " + host.Namespace + ";");
+                builder.Line();
             }
 
             builder.OpenBlock(host.TypeName);
@@ -62,6 +87,11 @@ namespace JsonGoddess.Generator.Emit
                             "Write_" + subject.MethodSuffix, null
                             );
                     }
+                }
+
+                foreach (var collection in host.Collections)
+                {
+                    EmitCollectionWriter(builder, collection, exhauster, host.DictionaryKeyNaming);
                 }
 
                 foreach (var enumModel in host.StringEnums)
@@ -96,6 +126,11 @@ namespace JsonGoddess.Generator.Emit
                     }
                 }
 
+                foreach (var scalar in host.Scalars)
+                {
+                    EmitScalarReader(builder, scalar, injector);
+                }
+
                 foreach (var collection in host.Collections)
                 {
                     EmitCollectionReader(builder, collection, injector);
@@ -109,12 +144,31 @@ namespace JsonGoddess.Generator.Emit
 
             builder.CloseBlock();
 
-            if (hasNamespace)
-            {
-                builder.CloseBlock();
-            }
-
             return builder.ToString();
+        }
+
+        /// <summary>
+        /// Псевдонимы вместо полных имён.
+        ///
+        /// <c>global::JsonGoddess.Internal.JsonScan</c> встречается в
+        /// порождённом коде чаще всего остального вместе взятого, и на графе
+        /// из двухсот типов одно это имя занимало 164 килобайта из 1.9
+        /// мегабайта (§16.2 плана). Псевдоним - то же самое связывание, но
+        /// один раз.
+        /// </summary>
+        /// <remarks>
+        /// Имена с двумя подчёркиваниями - не кокетство. Псевдоним уровня
+        /// файла проигрывает типу, объявленному в том же namespace, что и
+        /// хост: назови мы его <c>Scan</c>, чужой <c>Scan</c> рядом с хостом
+        /// молча перехватил бы связывание. С <c>__</c> такого типа не бывает,
+        /// а если он всё же найдётся, это будет ошибка компиляции, а не другое
+        /// поведение.
+        /// </remarks>
+        private static void EmitAliases(SourceBuilder builder)
+        {
+            builder.Line("using " + Scan + " = " + ValueSourceProducer.ScanFullName + ";");
+            builder.Line("using " + Mem + " = " + ValueSourceProducer.MemoryExtensionsFullName + ";");
+            builder.Line();
         }
 
         private static void EmitSerializeEntry(SourceBuilder builder, SubjectModel subject, string exhauster)
@@ -345,7 +399,7 @@ namespace JsonGoddess.Generator.Emit
                     }
 
                     builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(literal) + ");");
-                    ValueSourceProducer.WriteValue(builder, member.Value, "value." + member.MemberName, 0, keyNaming);
+                    ValueSourceProducer.WriteValue(builder, member.Value, "value." + member.MemberName, keyNaming);
 
                     pendingOpen = false;
                     commaIsCertain = true;
@@ -390,7 +444,7 @@ namespace JsonGoddess.Generator.Emit
                 }
 
                 builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(conditionalLiteral) + ");");
-                ValueSourceProducer.WriteValue(builder, member.Value, candidate, 0, keyNaming);
+                ValueSourceProducer.WriteValue(builder, member.Value, candidate, keyNaming);
 
                 builder.CloseBlock();
                 builder.CloseBlock();
@@ -461,7 +515,7 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
             builder.Line();
             builder.Line(
-                "hasDiscriminator = global::System.MemoryExtensions.SequenceEqual(firstName, "
+                "hasDiscriminator = " + Mem + ".SequenceEqual(firstName, "
                 + SourceBuilder.Utf8Literal(subject.DiscriminatorName) + ");"
                 );
             builder.CloseBlock();
@@ -486,7 +540,7 @@ namespace JsonGoddess.Generator.Emit
                 }
 
                 builder.OpenBlock(
-                    "if (global::System.MemoryExtensions.SequenceEqual(discriminator, "
+                    "if (" + Mem + ".SequenceEqual(discriminator, "
                     + SourceBuilder.Utf8Literal(derived.DiscriminatorLiteral) + "))"
                     );
                 builder.Line(
@@ -613,7 +667,7 @@ namespace JsonGoddess.Generator.Emit
                 if (discriminatorGuard is not null)
                 {
                     builder.OpenBlock(
-                        "if (global::System.MemoryExtensions.SequenceEqual(name, "
+                        "if (" + Mem + ".SequenceEqual(name, "
                         + SourceBuilder.Utf8Literal(discriminatorGuard) + "))"
                         );
                     builder.Line(
@@ -835,7 +889,7 @@ namespace JsonGoddess.Generator.Emit
                 foreach (var member in bucket)
                 {
                     var comparison = member.MatchExactly
-                        ? "global::System.MemoryExtensions.SequenceEqual(raw, "
+                        ? Mem + ".SequenceEqual(raw, "
                             + SourceBuilder.Utf8Literal(member.JsonName) + ")"
                         : AsciiName + ".EqualsIgnoreCase(raw, " + SourceBuilder.Utf8Literal(member.JsonName) + ")";
 
@@ -864,6 +918,68 @@ namespace JsonGoddess.Generator.Emit
             builder.Line("var rawNumber = " + Scan + ".ReadNumberRaw(json, ref position);");
             builder.Line("injector.Parse(ref context, rawNumber, out " + underlying + " number);");
             builder.Line("return (" + enumModel.FullName + ")number;");
+
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Читатель скаляра - метод на пару «вид плюс nullability», общий на
+        /// весь хост.
+        ///
+        /// Печаталось это по месту, и на член приходилось три строки, а на
+        /// nullable-член - девять: проверка на null, обе ветки и две локальные.
+        /// Умноженное на число членов всех субъектов, это и оказалось самой
+        /// крупной повторяющейся частью читателя (§16.2 плана). Сигнатура та
+        /// же, что у читателя коллекции и субъекта, - к ветке диспетчера
+        /// сводится одно присваивание.
+        /// </summary>
+        private static void EmitScalarReader(SourceBuilder builder, ValueModel scalar, string injector)
+        {
+            builder.Line(Inline);
+            builder.Line(
+                "private static " + scalar.Declaration + " ReadScalar_" + scalar.MethodSuffix + "("
+                );
+            builder.Indent();
+            builder.Line(injector + " injector,");
+            builder.Line("scoped " + Span + " json,");
+            builder.Line("scoped ref int position,");
+            builder.Line("scoped ref " + Context + " context");
+            builder.Line(")");
+            builder.Unindent();
+            builder.OpenBlock();
+
+            ValueSourceProducer.ReadScalarBody(builder, scalar);
+
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Писатель коллекции - метод, а не код по месту.
+        ///
+        /// Раньше цикл печатался в каждом члене, и обоснование стояло прямое:
+        /// «выносить его в метод значило бы добавить вызов ради экономии,
+        /// которой нет». Экономия померена (§16.2 плана): на графе из двухсот
+        /// типов тело коллекции занимало три четверти всего писателя, потому
+        /// что один и тот же <c>Dictionary&lt;string,int&gt;</c> печатался
+        /// двести раз подряд. Список коллекций уже собран - его печатает
+        /// читатель, - так что метод берётся из того же списка, и обе стороны
+        /// стали симметричны.
+        /// </summary>
+        private static void EmitCollectionWriter(
+            SourceBuilder builder,
+            ValueModel collection,
+            string exhauster,
+            JsonNamingStyle keyNaming
+            )
+        {
+            builder.OpenBlock(
+                "private static void WriteCollection_" + collection.MethodSuffix + "("
+                + exhauster + " exhauster, " + collection.TypeName + "? items)"
+                );
+
+            ValueSourceProducer.WriteCollectionBody(builder, collection, keyNaming);
 
             builder.CloseBlock();
             builder.Line();

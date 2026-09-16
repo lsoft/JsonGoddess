@@ -10,15 +10,16 @@ namespace JsonGoddess.Generator.Emit
     /// Диспетчер имён свойств - главная точка выигрыша на чтении (§8.2 плана).
     ///
     /// Форм две, и у каждой своя измеренная область (A/B внутри одного прогона,
-    /// net10, интервалы не перекрываются ни в одну сторону):
+    /// net10, процесс прибит к P-ядрам, интервалы не перекрываются ни в одну
+    /// сторону):
     /// <list type="bullet">
-    /// <item>REGULAR, 7 членов с разными длинами: по длине 613.5 ns,
-    /// по ключу 688.3 ns - ключ на 12% хуже;</item>
-    /// <item>WIDE, 30 членов с именами по 7 байт: по длине 846.5 ns,
-    /// по ключу 642.9 ns - ключ на 32% лучше.</item>
+    /// <item>REGULAR, 7 членов с разными длинами: по длине 615.6 ns,
+    /// по ключу 705.8 ns - ключ на 15% хуже;</item>
+    /// <item>WIDE, 30 членов с именами по 7 байт: по длине 793.0 ns,
+    /// по ключу 617.4 ns - ключ на 28% лучше.</item>
     /// </list>
-    /// (Числа последнего прогона, §12 плана; прежние - 13.5% и 28% - получены
-    /// раньше на той же машине и воспроизвелись.)
+    /// (Числа последнего прогона, §12 плана; прежние - 12-13.5% и 28-32% -
+    /// получены раньше на той же машине и воспроизвелись.)
     /// Механизм обеих сторон один: <c>switch</c> по длине попадает в член сразу,
     /// когда длины разводят членов по корзинам, и вырождается в линейную цепочку
     /// <c>SequenceEqual</c>, когда все имена в одной корзине. Ключ от разброса
@@ -32,18 +33,19 @@ namespace JsonGoddess.Generator.Emit
     /// <b>Гибрид измерен</b> (§12.2 плана), и обе точки сошлись: он выбирает
     /// ту форму, которая на этой форме документа и выигрывает.
     /// <list type="bullet">
-    /// <item>REGULAR, 7 имён разной длины: по длине 613.5 нс, по ключу 688.3 -
-    /// длина лучше на 12%; порождённый код дал 619.2, то есть выбрал длину;</item>
-    /// <item>WIDE, 30 имён одной длины: по длине 846.5, по ключу 642.9 - ключ
-    /// лучше на 32%; порождённый код дал 649.0, то есть выбрал ключ.</item>
+    /// <item>REGULAR, 7 имён разной длины: по длине 615.6 нс, по ключу 705.8 -
+    /// длина лучше на 15%; порождённый код дал 619.1, то есть выбрал длину;</item>
+    /// <item>WIDE, 30 имён одной длины: по длине 793.0, по ключу 617.4 - ключ
+    /// лучше на 28%; порождённый код дал 619.9, то есть выбрал ключ.</item>
     /// </list>
     /// Сам <b>порог</b> по-прежнему не измерен: известно, что при 2 членах в
     /// корзине выигрывает цепочка, а при 30 - ключ, и четвёрка выбрана между
-    /// ними. Цена ошибки в нём ограничена сверху измеренной вилкой 12%/32%.
+    /// ними. Цена ошибки в нём ограничена сверху измеренной вилкой 15%/28%.
     /// </summary>
     public static class NameDispatcher
     {
         public const string Scan = ValueSourceProducer.Scan;
+        public const string Mem = ValueSourceProducer.Mem;
         public const string NameKey = "global::JsonGoddess.Internal.JsonNameKey";
 
         /// <summary>
@@ -99,7 +101,7 @@ namespace JsonGoddess.Generator.Emit
         {
             foreach (var member in members)
             {
-                builder.OpenBlock("if (global::System.MemoryExtensions.SequenceEqual(name, " + SourceBuilder.Utf8Literal(member.JsonName) + "))");
+                builder.OpenBlock("if (" + Mem + ".SequenceEqual(name, " + SourceBuilder.Utf8Literal(member.JsonName) + "))");
                 emitBody(member);
                 builder.Line("goto next;");
                 builder.CloseBlock();
@@ -143,7 +145,7 @@ namespace JsonGoddess.Generator.Emit
                 {
                     foreach (var member in items)
                     {
-                        builder.OpenBlock("if (global::System.MemoryExtensions.SequenceEqual(name, " + SourceBuilder.Utf8Literal(member.JsonName) + "))");
+                        builder.OpenBlock("if (" + Mem + ".SequenceEqual(name, " + SourceBuilder.Utf8Literal(member.JsonName) + "))");
                         emitBody(member);
                         builder.Line("goto next;");
                         builder.CloseBlock();
