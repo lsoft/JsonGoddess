@@ -270,6 +270,36 @@ namespace Demo
         }
 
         /// <summary>
+        /// Два атрибута, которые §6.1 перечислял как читаемые, а генератор не
+        /// знал о них вовсе - найдено при сборке
+        /// <c>docs/stj-divergences.md</c>. Молчать здесь было нельзя:
+        /// <c>[JsonNumberHandling(WriteAsString)]</c> у эталона даёт
+        /// <c>{"Amount":"5"}</c>, а у нас давало <c>{"Amount":5}</c>, то есть
+        /// расходился сам документ; <c>[JsonRequired]</c> мягче - эталон
+        /// бросает на отсутствующем имени, мы молча оставляли умолчание.
+        /// Проверено прогоном эталона, оба случая.
+        ///
+        /// <c>[JsonRequired]</c> - не то же самое, что ключевое слово
+        /// <c>required</c>: то ловится по <c>property.IsRequired</c> и своим
+        /// отказом, а атрибут до этой правки не ловился ничем.
+        /// </summary>
+        [Theory]
+        [InlineData("        [JsonNumberHandling(JsonNumberHandling.WriteAsString)] public int Amount { get; set; }", "JsonNumberHandling")]
+        [InlineData("        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)] public int Amount { get; set; }", "JsonNumberHandling")]
+        [InlineData("        [JsonRequired] public int Amount { get; set; }", "JsonRequired")]
+        public void Attribute_we_do_not_reproduce_is_refused_instead_of_ignored(string member, string named)
+        {
+            var run = GeneratorHarness.Run(Sources.Host(member));
+
+            Assert.Contains("JGD022", run.DiagnosticIds);
+            Assert.Contains(
+                named,
+                string.Join("\n", run.GeneratorDiagnostics.Select(d => d.GetMessage())),
+                System.StringComparison.Ordinal
+                );
+        }
+
+        /// <summary>
         /// Настройки читаются из <c>[JsonSourceGenerationOptions]</c> - того же
         /// атрибута, которым настраивается source-генератор эталона. Цена
         /// решения взять чужой атрибут, а не завести свой, - обязательство
@@ -1121,6 +1151,26 @@ namespace Demo
 ");
 
             Assert.Contains("JGD024", run.DiagnosticIds);
+        }
+
+        /// <summary>
+        /// <c>MaxDepth</c> считает вложенность так же, как эталон - корень
+        /// уже глубина 1 (проверено пробой), - поэтому предел меньше единицы
+        /// не пропустил бы ни одного документа вовсе. Это сломанная
+        /// настройка, а не «очень строгий страж», и отказ на компиляции
+        /// говорит об этом раньше, чем документ.
+        /// </summary>
+        [Fact]
+        public void Max_depth_below_one_is_refused()
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(
+                    "        public int Id { get; set; }",
+                    "[JsonGuard(JsonGuard.MaxDepth, MaxDepth = 0)]"
+                    )
+                );
+
+            Assert.Contains("JGD029", run.DiagnosticIds);
         }
     }
 }

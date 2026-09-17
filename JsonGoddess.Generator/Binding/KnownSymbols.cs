@@ -15,6 +15,7 @@ namespace JsonGoddess.Generator.Binding
         public const string SubjectAttribute = "JsonGoddess.JsonSubjectAttribute";
         public const string ExhausterAttribute = "JsonGoddess.JsonExhausterAttribute";
         public const string InjectorAttribute = "JsonGoddess.JsonInjectorAttribute";
+        public const string GuardAttribute = "JsonGoddess.JsonGuardAttribute";
         public const string ExhausterBaseName = "JsonGoddess.ExhausterBase";
         public const string InjectorBaseName = "JsonGoddess.InjectorBase";
 
@@ -29,12 +30,15 @@ namespace JsonGoddess.Generator.Binding
         private const string JsonConstructorAttributeName = "System.Text.Json.Serialization.JsonConstructorAttribute";
         private const string JsonDerivedTypeAttributeName = "System.Text.Json.Serialization.JsonDerivedTypeAttribute";
         private const string JsonPolymorphicAttributeName = "System.Text.Json.Serialization.JsonPolymorphicAttribute";
+        private const string JsonNumberHandlingAttributeName = "System.Text.Json.Serialization.JsonNumberHandlingAttribute";
+        private const string JsonRequiredAttributeName = "System.Text.Json.Serialization.JsonRequiredAttribute";
         private const string JsonSourceGenerationOptionsAttributeName = "System.Text.Json.Serialization.JsonSourceGenerationOptionsAttribute";
         private const string FlagsAttributeName = "System.FlagsAttribute";
 
         public readonly INamedTypeSymbol? Subject;
         public readonly INamedTypeSymbol? Exhauster;
         public readonly INamedTypeSymbol? Injector;
+        public readonly INamedTypeSymbol? Guard;
         public readonly INamedTypeSymbol? ExhausterBase;
         public readonly INamedTypeSymbol? InjectorBase;
         public readonly INamedTypeSymbol? JsonIgnore;
@@ -48,6 +52,8 @@ namespace JsonGoddess.Generator.Binding
         public readonly INamedTypeSymbol? JsonConstructor;
         public readonly INamedTypeSymbol? JsonDerivedType;
         public readonly INamedTypeSymbol? JsonPolymorphic;
+        public readonly INamedTypeSymbol? JsonNumberHandling;
+        public readonly INamedTypeSymbol? JsonRequired;
         public readonly INamedTypeSymbol? JsonSourceGenerationOptions;
         public readonly INamedTypeSymbol? Flags;
 
@@ -56,6 +62,7 @@ namespace JsonGoddess.Generator.Binding
             Subject = compilation.GetTypeByMetadataName(SubjectAttribute);
             Exhauster = compilation.GetTypeByMetadataName(ExhausterAttribute);
             Injector = compilation.GetTypeByMetadataName(InjectorAttribute);
+            Guard = compilation.GetTypeByMetadataName(GuardAttribute);
             ExhausterBase = compilation.GetTypeByMetadataName(ExhausterBaseName);
             InjectorBase = compilation.GetTypeByMetadataName(InjectorBaseName);
             JsonIgnore = compilation.GetTypeByMetadataName(JsonIgnoreAttributeName);
@@ -69,6 +76,8 @@ namespace JsonGoddess.Generator.Binding
             JsonConstructor = compilation.GetTypeByMetadataName(JsonConstructorAttributeName);
             JsonDerivedType = compilation.GetTypeByMetadataName(JsonDerivedTypeAttributeName);
             JsonPolymorphic = compilation.GetTypeByMetadataName(JsonPolymorphicAttributeName);
+            JsonNumberHandling = compilation.GetTypeByMetadataName(JsonNumberHandlingAttributeName);
+            JsonRequired = compilation.GetTypeByMetadataName(JsonRequiredAttributeName);
             JsonSourceGenerationOptions = compilation.GetTypeByMetadataName(JsonSourceGenerationOptionsAttributeName);
             Flags = compilation.GetTypeByMetadataName(FlagsAttributeName);
         }

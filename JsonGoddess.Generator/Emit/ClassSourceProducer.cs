@@ -106,12 +106,13 @@ namespace JsonGoddess.Generator.Emit
                 {
                     if (subject.IsRoot)
                     {
-                        EmitDeserializeEntry(builder, subject, injector);
+                        EmitDeserializeEntry(builder, subject, injector, host.Guards);
                     }
 
                     EmitReader(
                         builder, subject, injector, null,
-                        subject.IsPolymorphic ? subject.DiscriminatorName : null
+                        subject.IsPolymorphic ? subject.DiscriminatorName : null,
+                        host.Guards, host.MaxDepth
                         );
 
                     foreach (var derived in subject.Derived)
@@ -121,24 +122,25 @@ namespace JsonGoddess.Generator.Emit
                             host.Subjects.First(s => s.FullName == derived.FullName),
                             injector,
                             PairReaderName(subject, derived),
-                            subject.DiscriminatorName
+                            subject.DiscriminatorName,
+                            host.Guards, host.MaxDepth
                             );
                     }
                 }
 
                 foreach (var scalar in host.Scalars)
                 {
-                    EmitScalarReader(builder, scalar, injector);
+                    EmitScalarReader(builder, scalar, injector, host.Guards);
                 }
 
                 foreach (var collection in host.Collections)
                 {
-                    EmitCollectionReader(builder, collection, injector);
+                    EmitCollectionReader(builder, collection, injector, host.Guards, host.MaxDepth);
                 }
 
                 foreach (var enumModel in host.StringEnums)
                 {
-                    EmitEnumReader(builder, enumModel, injector);
+                    EmitEnumReader(builder, enumModel, injector, host.Guards);
                 }
             }
 
@@ -181,7 +183,7 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
         }
 
-        private static void EmitDeserializeEntry(SourceBuilder builder, SubjectModel subject, string injector)
+        private static void EmitDeserializeEntry(SourceBuilder builder, SubjectModel subject, string injector, JsonGuard guards)
         {
             builder.OpenBlock(
                 "public static void Deserialize(" + injector + " injector, " + Span + " json, out "
@@ -195,6 +197,24 @@ namespace JsonGoddess.Generator.Emit
             //экранированное имя, но вернуть арендованное надо в любом случае
             builder.OpenBlock("try");
             builder.Line("result = Read_" + subject.MethodSuffix + "(injector, json, ref position, ref context);");
+
+            //JsonGuard.TrailingContent: пробой подтверждено (System.Text.Json
+            //9.0.0) - у эталона это встроенное и безусловное поведение
+            //string/ReadOnlySpan<byte>-перегрузок, способа его выключить у
+            //самого эталона нет. У нас по умолчанию хвост документа не
+            //проверяется вовсе, и это остаётся так, пока хост не попросил
+            //иначе, - ветка ниже печатается только под флагом.
+            if ((guards & JsonGuard.TrailingContent) != 0)
+            {
+                builder.Line(Scan + ".SkipWhitespace(json, ref position);");
+                builder.OpenBlock("if (position != json.Length)");
+                builder.Line(
+                    "throw new " + DocumentException
+                    + "(\"Unexpected trailing content after the top-level value.\", position);"
+                    );
+                builder.CloseBlock();
+            }
+
             builder.CloseBlock();
             builder.OpenBlock("finally");
             builder.Line("context.Release();");
@@ -515,16 +535,19 @@ namespace JsonGoddess.Generator.Emit
         /// двух: <c>"dog"</c> и <c>7</c> различаются как байты и без разбора
         /// лексемы.
         /// </summary>
-        private static void EmitDiscriminatorDispatch(SourceBuilder builder, SubjectModel subject)
+        private static void EmitDiscriminatorDispatch(SourceBuilder builder, SubjectModel subject, JsonGuard guards)
         {
             builder.Line("var discriminatorStart = position;");
             builder.Line("var hasDiscriminator = false;");
             builder.Line();
 
             builder.OpenBlock("if (" + Scan + ".Peek(json, ref position) == " + TokenKind + ".String)");
-            builder.Line("var firstName = " + Scan + ".ReadStringContent(json, ref position, out var firstEscaped);");
+            builder.Line("var firstName = " + ValueSourceProducer.StringReadCall(guards) + "(json, ref position, out var firstEscaped);");
             builder.OpenBlock("if (firstEscaped)");
-            builder.Line("firstName = context.UnescapeName(firstName);");
+            builder.Line(
+                "firstName = context.UnescapeName(firstName"
+                + ((guards & JsonGuard.InvalidUtf8) != 0 ? ", true" : string.Empty) + ");"
+                );
             builder.CloseBlock();
             builder.Line();
             builder.Line(
@@ -593,7 +616,9 @@ namespace JsonGoddess.Generator.Emit
             SubjectModel subject,
             string injector,
             string? bodyName,
-            string? discriminatorGuard = null
+            string? discriminatorGuard,
+            JsonGuard guards,
+            int maxDepth
             )
         {
             var members = subject.Members.Where(m => m.CanRead).ToList();
@@ -631,15 +656,25 @@ namespace JsonGoddess.Generator.Emit
             //параметров, а класть - только в саму коллекцию.
             if (subject.CollectionShape is not null)
             {
-                EmitCollectionSubjectReaderBody(builder, subject);
+                EmitCollectionSubjectReaderBody(builder, subject, guards, maxDepth);
                 builder.CloseBlock();
                 builder.Line();
                 return;
             }
 
+            //JsonGuard.MaxDepth: счётчик - общий на весь документ
+            //(context.Depth), поэтому увеличивается только на "своём" входе в
+            //объект, то есть не у body-читателя полиморфной пары - тот вызван
+            //уже внутри объекта, который увеличил счётчик сам. try/finally
+            //оборачивает всё, что дальше в методе, ровно потому, что выходов
+            //из него несколько (пустой объект, конец цикла), а декремент
+            //обязан отработать на любом из них - и на исключении тоже.
+            var guardsDepth = (guards & JsonGuard.MaxDepth) != 0;
+
             if (!body)
             {
                 builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".OpenBrace);");
+                EmitDepthCheckAndOpenTry(builder, guardsDepth, maxDepth);
             }
 
             var deferred = subject.NeedsDeferredConstruction;
@@ -654,9 +689,27 @@ namespace JsonGoddess.Generator.Emit
                 builder.Line();
             }
 
+            //JsonGuard.DuplicateProperties: флаг "видели" заводится на каждый
+            //читаемый член отдельно от has_X отложенной формы (§9.8) -
+            //последний означает совсем другое (member вообще был присвоен) и
+            //не заводится для членов-параметров конструктора вовсе, а страж
+            //обязан ловить повтор и на них тоже.
+            if ((guards & JsonGuard.DuplicateProperties) != 0)
+            {
+                foreach (var member in members)
+                {
+                    builder.Line("var " + DupSeen(member) + " = false;");
+                }
+
+                if (members.Count > 0)
+                {
+                    builder.Line();
+                }
+            }
+
             if (subject.IsPolymorphic && !body)
             {
-                EmitDiscriminatorDispatch(builder, subject);
+                EmitDiscriminatorDispatch(builder, subject, guards);
             }
 
             builder.OpenBlock(
@@ -676,7 +729,10 @@ namespace JsonGoddess.Generator.Emit
 
             builder.OpenBlock("while (true)");
 
-            builder.Line("var name = " + Scan + ".ReadStringContent(json, ref position, out var nameEscaped);");
+            builder.Line(
+                "var name = " + ValueSourceProducer.StringReadCall(guards)
+                + "(json, ref position, out var nameEscaped);"
+                );
             builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".Colon);");
             builder.Line();
 
@@ -709,6 +765,23 @@ namespace JsonGoddess.Generator.Emit
                     members,
                     member =>
                     {
+                        //JsonGuard.DuplicateProperties: пробой подтверждено -
+                        //эталон отказывает только на повторе СОПОСТАВЛЕННОГО
+                        //члена (AllowDuplicateProperties=false), а повтор
+                        //незнакомого имени пропускает не глядя; поэтому
+                        //проверка стоит здесь, а не на пути неизвестного
+                        //свойства.
+                        if ((guards & JsonGuard.DuplicateProperties) != 0)
+                        {
+                            builder.OpenBlock("if (" + DupSeen(member) + ")");
+                            builder.Line(
+                                "throw new " + DocumentException + "(\"Duplicate property '"
+                                + member.JsonName + "'.\", position);"
+                                );
+                            builder.CloseBlock();
+                            builder.Line(DupSeen(member) + " = true;");
+                        }
+
                         ValueSourceProducer.ReadValue(builder, member.Value, Target(member, deferred));
 
                         if (deferred && !member.IsConstructorParameter)
@@ -730,13 +803,38 @@ namespace JsonGoddess.Generator.Emit
                 //который почти не встречается.
                 builder.OpenBlock("if (nameEscaped)");
                 builder.Line("nameEscaped = false;");
-                builder.Line("name = context.UnescapeName(name);");
+                builder.Line(
+                    "name = context.UnescapeName(name"
+                    + ((guards & JsonGuard.InvalidUtf8) != 0 ? ", true" : string.Empty) + ");"
+                    );
                 builder.Line("goto dispatch;");
                 builder.CloseBlock();
                 builder.Line();
             }
 
-            builder.Line(Scan + ".SkipValue(json, ref position);");
+            //Свойство не нашло члена. JsonGuard.UnknownProperties - отказ
+            //(аналог JsonUnmappedMemberHandling.Disallow); иначе, если хост
+            //включил MaxDepth, поддерево пропускается с тем же счётчиком
+            //глубины, что и известные типы (пробой подтверждено: у эталона
+            //предел общий на оба случая) - а без обоих флагов ничего не
+            //меняется вовсе.
+            if ((guards & JsonGuard.UnknownProperties) != 0)
+            {
+                builder.Line(
+                    "throw new " + DocumentException
+                    + "(\"Unknown property '\" + global::System.Text.Encoding.UTF8.GetString(name.ToArray())"
+                    + " + \"'.\", position);"
+                    );
+            }
+            else if (guardsDepth)
+            {
+                builder.Line(Scan + ".SkipValueGuarded(json, ref position, ref context.Depth, " + maxDepth + ");");
+            }
+            else
+            {
+                builder.Line(Scan + ".SkipValue(json, ref position);");
+            }
+
             builder.Line();
 
             builder.Unindent();
@@ -766,9 +864,19 @@ namespace JsonGoddess.Generator.Emit
 
             builder.Line("return result;");
 
+            //Закрывает try, открытый вместе со счётчиком глубины сразу после
+            //Expect(OpenBrace) выше: любой из выходов метода (пустой объект,
+            //конец цикла, исключение стража) обязан вернуть глубину, и
+            //try/finally - единственный способ не перечислять каждый выход
+            //по отдельности. У body-читателя (полиморфная пара) try не
+            //открывался - счётчик увеличил вызвавший, а не он сам.
+            EmitDepthCheckCloseTry(builder, !body && guardsDepth);
+
             builder.CloseBlock();
             builder.Line();
         }
+
+        private static string DupSeen(MemberModel member) => "dup_" + member.MemberName;
 
         /// <summary>
         /// Локальные отложенной формы: по одной на каждый читаемый член, плюс
@@ -877,7 +985,7 @@ namespace JsonGoddess.Generator.Emit
         /// имя из <c>[JsonStringEnumMemberName]</c> эталон принимает лишь в
         /// точности, и это проверено прогоном, а не выведено из его исходников.
         /// </summary>
-        private static void EmitEnumReader(SourceBuilder builder, EnumModel enumModel, string injector)
+        private static void EmitEnumReader(SourceBuilder builder, EnumModel enumModel, string injector, JsonGuard guards)
         {
             var underlying = BuiltinTypes.GetTypeName(enumModel.Underlying);
 
@@ -895,9 +1003,11 @@ namespace JsonGoddess.Generator.Emit
                 "if (" + Scan + ".Peek(json, ref position) == " + TokenKind + ".String)"
                 );
 
-            builder.Line("var raw = " + Scan + ".ReadStringContent(json, ref position, out var rawEscaped);");
+            builder.Line("var raw = " + ValueSourceProducer.StringReadCall(guards) + "(json, ref position, out var rawEscaped);");
             builder.OpenBlock("if (rawEscaped)");
-            builder.Line("raw = context.UnescapeValue(raw);");
+            builder.Line(
+                "raw = context.UnescapeValue(raw" + ((guards & JsonGuard.InvalidUtf8) != 0 ? ", true" : string.Empty) + ");"
+                );
             builder.CloseBlock();
             builder.Line();
 
@@ -941,7 +1051,7 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
             builder.Line();
 
-            builder.Line("var rawNumber = " + Scan + ".ReadNumberRaw(json, ref position);");
+            builder.Line("var rawNumber = " + ValueSourceProducer.NumberReadCall(guards) + "(json, ref position);");
             builder.Line("injector.Parse(ref context, rawNumber, out " + underlying + " number);");
             builder.Line("return (" + enumModel.FullName + ")number;");
 
@@ -960,7 +1070,7 @@ namespace JsonGoddess.Generator.Emit
         /// же, что у читателя коллекции и субъекта, - к ветке диспетчера
         /// сводится одно присваивание.
         /// </summary>
-        private static void EmitScalarReader(SourceBuilder builder, ValueModel scalar, string injector)
+        private static void EmitScalarReader(SourceBuilder builder, ValueModel scalar, string injector, JsonGuard guards)
         {
             builder.Line(Inline);
             builder.Line(
@@ -975,7 +1085,7 @@ namespace JsonGoddess.Generator.Emit
             builder.Unindent();
             builder.OpenBlock();
 
-            ValueSourceProducer.ReadScalarBody(builder, scalar);
+            ValueSourceProducer.ReadScalarBody(builder, scalar, guards);
 
             builder.CloseBlock();
             builder.Line();
@@ -1062,15 +1172,22 @@ namespace JsonGoddess.Generator.Emit
         /// метода на самом себе), и приведение работает в обоих случаях
         /// одинаково, тогда как прямой вызов - только в одном.
         /// </summary>
-        private static void EmitCollectionSubjectReaderBody(SourceBuilder builder, SubjectModel subject)
+        private static void EmitCollectionSubjectReaderBody(
+            SourceBuilder builder,
+            SubjectModel subject,
+            JsonGuard guards,
+            int maxDepth
+            )
         {
             var shape = subject.CollectionShape!;
             var element = shape.Element;
+            var guardsDepth = (guards & JsonGuard.MaxDepth) != 0;
 
             var open = Scan + (shape.IsDictionary ? ".OpenBrace" : ".OpenBracket");
             var close = Scan + (shape.IsDictionary ? ".CloseBrace" : ".CloseBracket");
 
             builder.Line(Scan + ".Expect(json, ref position, " + open + ");");
+            EmitDepthCheckAndOpenTry(builder, guardsDepth, maxDepth);
             builder.Line();
 
             builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + close + "))");
@@ -1086,7 +1203,16 @@ namespace JsonGoddess.Generator.Emit
             {
                 //ключ приходится материализовать строкой - положить спан в
                 //чужую реализацию IDictionary<string,V> нечем
-                builder.Line("var rawKey = " + Scan + ".ReadStringContent(json, ref position, out var keyEscaped);");
+                builder.Line(
+                    "var rawKey = " + ValueSourceProducer.StringReadCall(guards)
+                    + "(json, ref position, out var keyEscaped);"
+                    );
+
+                if ((guards & JsonGuard.InvalidUtf8) != 0)
+                {
+                    builder.Line(ValueSourceProducer.StringDecoder + ".EnsureValidUtf8(rawKey, keyEscaped);");
+                }
+
                 builder.Line("injector.ParseText(ref context, rawKey, keyEscaped, out string key);");
                 builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".Colon);");
                 builder.Line();
@@ -1113,13 +1239,58 @@ namespace JsonGoddess.Generator.Emit
 
             builder.Line(Scan + ".Expect(json, ref position, " + close + ");");
             builder.Line("return result;");
+            EmitDepthCheckCloseTry(builder, guardsDepth);
         }
 
-        private static void EmitCollectionReader(SourceBuilder builder, ValueModel collection, string injector)
+        /// <summary>
+        /// Общая половина <c>JsonGuard.MaxDepth</c> для читателей коллекций:
+        /// увеличить счётчик сразу после открывающей скобки, отказать, если
+        /// он превысил предел, и открыть <c>try</c> на всё, что дальше -
+        /// возвратов из читателя коллекции несколько (пустая коллекция, конец
+        /// цикла), и декремент обязан отработать на любом из них.
+        /// </summary>
+        private static void EmitDepthCheckAndOpenTry(SourceBuilder builder, bool guardsDepth, int maxDepth)
+        {
+            if (!guardsDepth)
+            {
+                return;
+            }
+
+            builder.Line("context.Depth++;");
+            builder.OpenBlock("if (context.Depth > " + maxDepth + ")");
+            builder.Line(
+                "throw new " + DocumentException + "(\"The maximum configured depth of " + maxDepth
+                + " has been exceeded.\", position);"
+                );
+            builder.CloseBlock();
+            builder.OpenBlock("try");
+        }
+
+        private static void EmitDepthCheckCloseTry(SourceBuilder builder, bool guardsDepth)
+        {
+            if (!guardsDepth)
+            {
+                return;
+            }
+
+            builder.CloseBlock();
+            builder.OpenBlock("finally");
+            builder.Line("context.Depth--;");
+            builder.CloseBlock();
+        }
+
+        private static void EmitCollectionReader(
+            SourceBuilder builder,
+            ValueModel collection,
+            string injector,
+            JsonGuard guards,
+            int maxDepth
+            )
         {
             var isArray = collection.Form == ValueForm.Array;
             var isMap = collection.Form == ValueForm.Dictionary;
             var element = collection.Element!;
+            var guardsDepth = (guards & JsonGuard.MaxDepth) != 0;
 
             var open = Scan + (isMap ? ".OpenBrace" : ".OpenBracket");
             var close = Scan + (isMap ? ".CloseBrace" : ".CloseBracket");
@@ -1142,6 +1313,7 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
 
             builder.Line(Scan + ".Expect(json, ref position, " + open + ");");
+            EmitDepthCheckAndOpenTry(builder, guardsDepth, maxDepth);
             builder.Line();
 
             builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + close + "))");
@@ -1178,7 +1350,16 @@ namespace JsonGoddess.Generator.Emit
                 //ключ словаря приходится материализовать строкой: с именем
                 //члена его не сравнить - членов тут нет, - и положить в словарь
                 //спан нельзя
-                builder.Line("var rawKey = " + Scan + ".ReadStringContent(json, ref position, out var keyEscaped);");
+                builder.Line(
+                    "var rawKey = " + ValueSourceProducer.StringReadCall(guards)
+                    + "(json, ref position, out var keyEscaped);"
+                    );
+
+                if ((guards & JsonGuard.InvalidUtf8) != 0)
+                {
+                    builder.Line(ValueSourceProducer.StringDecoder + ".EnsureValidUtf8(rawKey, keyEscaped);");
+                }
+
                 builder.Line("injector.ParseText(ref context, rawKey, keyEscaped, out string key);");
                 builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".Colon);");
                 builder.Line();
@@ -1227,6 +1408,7 @@ namespace JsonGoddess.Generator.Emit
             }
 
             builder.Line("return result;");
+            EmitDepthCheckCloseTry(builder, guardsDepth);
 
             builder.CloseBlock();
             builder.Line();

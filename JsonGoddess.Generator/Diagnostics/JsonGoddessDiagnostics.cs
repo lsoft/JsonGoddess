@@ -25,6 +25,7 @@ namespace JsonGoddess.Generator.Diagnostics
         public const string LanguageVersionIsTooLowId = "JGD026";
         public const string JsonNameRequiresEscapingId = "JGD027";
         public const string SerializationOptionIsNotSupportedId = "JGD028";
+        public const string InvalidMaxDepthId = "JGD029";
 
         public static readonly DiagnosticDescriptor SinkIsNotSealed = new DiagnosticDescriptor(
             SinkIsNotSealedId,
@@ -141,6 +142,18 @@ namespace JsonGoddess.Generator.Diagnostics
                 + "настройку, увидел бы зелёную сборку и получил бы документ, которого не просил."
             );
 
+        public static readonly DiagnosticDescriptor InvalidMaxDepth = new DiagnosticDescriptor(
+            InvalidMaxDepthId,
+            "Invalid JsonGuard.MaxDepth value",
+            "JsonGuardAttribute.MaxDepth is {0} on '{1}', but the limit must be at least 1",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            description:
+                "MaxDepth считает вложенность как эталон (System.Text.Json): корень уже глубина 1, "
+                + "поэтому предел меньше единицы не может принять ни один документ вовсе."
+            );
+
         private static readonly Dictionary<string, DiagnosticDescriptor> _all =
             new Dictionary<string, DiagnosticDescriptor>
             {
@@ -154,6 +167,7 @@ namespace JsonGoddess.Generator.Diagnostics
                 { LanguageVersionIsTooLowId, LanguageVersionIsTooLow },
                 { JsonNameRequiresEscapingId, JsonNameRequiresEscaping },
                 { SerializationOptionIsNotSupportedId, SerializationOptionIsNotSupported },
+                { InvalidMaxDepthId, InvalidMaxDepth },
             };
 
         public static DiagnosticDescriptor Get(string id) => _all[id];

@@ -15,3 +15,4 @@ JGD025 | JsonGoddess | Error | Host type shape is not supported (nested, generic
 JGD026 | JsonGoddess | Error | Project language version is below C# 11
 JGD027 | JsonGoddess | Error | JSON property name requires escaping
 JGD028 | JsonGoddess | Error | Option on [JsonSourceGenerationOptions] is not supported
+JGD029 | JsonGoddess | Error | [JsonGuard] MaxDepth value is less than 1

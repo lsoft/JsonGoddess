@@ -1,8 +1,34 @@
+using System;
 using System.Collections.Generic;
 using JsonGoddess.Generator.Shared;
 
 namespace JsonGoddess.Generator.Model
 {
+    /// <summary>
+    /// Зеркало <c>JsonGoddess.JsonGuard</c> (§6.3 плана) на стороне генератора.
+    ///
+    /// Своя копия, а не ссылка на рантайм-тип, - по той же причине, по которой
+    /// <c>KnownSymbols</c> заводит числовые константы для
+    /// <c>JsonIgnoreCondition</c>: генератор читает аргумент атрибута из
+    /// метаданных чужой компиляции числом (<c>TypedConstant.Value is int</c>),
+    /// и тащить в компилятор ссылку на сборку потребителя ради одного
+    /// перечисления - плохая сделка. Битовая раскладка обязана совпасть с
+    /// <c>JsonGoddess.JsonGuard</c> один в один - это и есть контракт между
+    /// двумя копиями.
+    /// </summary>
+    [Flags]
+    public enum JsonGuard
+    {
+        None = 0,
+        DuplicateProperties = 1 << 0,
+        TrailingContent = 1 << 1,
+        ControlCharsInStrings = 1 << 2,
+        StrictNumbers = 1 << 3,
+        InvalidUtf8 = 1 << 4,
+        MaxDepth = 1 << 5,
+        UnknownProperties = 1 << 6,
+    }
+
     /// <summary>
     /// Builtin-типы, которые генератор умеет. Набор равен не списку из §7.1
     /// плана, а тому, что <b>есть у sink'ов</b>: <c>IExhauster</c> и
@@ -613,6 +639,22 @@ namespace JsonGoddess.Generator.Model
         /// </summary>
         public JsonNamingStyle DictionaryKeyNaming { get; }
 
+        /// <summary>
+        /// Стражи, включённые <c>[JsonGuard]</c> на хосте (§6.3 плана).
+        /// <c>JsonGuard.None</c> - хост не упомянул атрибут вовсе, и это
+        /// главный инвариант всей конструкции: текст порождаемого кода тогда
+        /// обязан остаться ровно таким же, как до JsonGuard, - ни одна ветка
+        /// эмиттера не смотрит на <see cref="Guards"/>, если он <c>None</c>.
+        /// </summary>
+        public JsonGuard Guards { get; }
+
+        /// <summary>
+        /// Предел вложенности для <see cref="JsonGuard.MaxDepth"/>. Значим,
+        /// только если бит установлен; 64 - умолчание на случай, если его нет
+        /// (тот же смысл, что у <c>JsonGuardAttribute.MaxDepth</c> в рантайме).
+        /// </summary>
+        public int MaxDepth { get; }
+
         public HostModel(
             string? ns,
             string typeName,
@@ -623,7 +665,9 @@ namespace JsonGoddess.Generator.Model
             IReadOnlyList<ValueModel> collections,
             IReadOnlyList<EnumModel> stringEnums,
             IReadOnlyList<ValueModel> scalars,
-            JsonNamingStyle dictionaryKeyNaming
+            JsonNamingStyle dictionaryKeyNaming,
+            JsonGuard guards = JsonGuard.None,
+            int maxDepth = 64
             )
         {
             Scalars = scalars;
@@ -636,6 +680,8 @@ namespace JsonGoddess.Generator.Model
             InjectorTypes = injectorTypes;
             Subjects = subjects;
             Collections = collections;
+            Guards = guards;
+            MaxDepth = maxDepth;
         }
     }
 }

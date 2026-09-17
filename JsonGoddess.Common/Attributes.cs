@@ -91,4 +91,46 @@ namespace JsonGoddess
             InvocationStatement = invocationStatement ?? throw new ArgumentNullException(nameof(invocationStatement));
         }
     }
+
+    /// <summary>
+    /// Включает строгие проверки чтения на хосте (§6.3 плана). По умолчанию
+    /// читатель принимает всё, что смог разобрать - берёт первое подходящее
+    /// толкование битого документа и продолжает; этот атрибут просит вместо
+    /// этого отказ, там, где RFC 8259 или сам эталон (<c>System.Text.Json</c>
+    /// с опциями по умолчанию) отказали бы тоже.
+    ///
+    /// Выключенный (не упомянутый) страж не стоит ни одной ветки в
+    /// порождённом коде - это не обещание, а утверждение, проверенное тестом
+    /// на текст (<c>JsonGoddess.GeneratorTests</c>). Атрибут ставится рядом с
+    /// <see cref="JsonSubjectAttribute"/>, на хосте, и действует на все его
+    /// субъекты разом - ровно как включение <c>JsonSerializerOptions</c> у
+    /// эталона действует на весь граф типов одного сериализатора.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+    public sealed class JsonGuardAttribute : Attribute
+    {
+        public JsonGuard Guards
+        {
+            get;
+        }
+
+        /// <summary>
+        /// Предел вложенности для <see cref="JsonGuard.MaxDepth"/>. 64 -
+        /// умолчание самого эталона (<c>JsonReaderOptions.MaxDepth</c> и
+        /// <c>JsonSerializerOptions.MaxDepth</c> при значении 0 разворачиваются
+        /// в те же 64, проверено пробой). Значим, только если в
+        /// <see cref="Guards"/> установлен бит <see cref="JsonGuard.MaxDepth"/>;
+        /// без него счётчик глубины не появляется в коде вовсе.
+        /// </summary>
+        public int MaxDepth
+        {
+            get;
+            set;
+        } = 64;
+
+        public JsonGuardAttribute(JsonGuard guards)
+        {
+            Guards = guards;
+        }
+    }
 }

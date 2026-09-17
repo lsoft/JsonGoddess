@@ -22,13 +22,26 @@ namespace JsonGoddess.Internal
         private const byte Backslash = (byte)'\\';
 
         /// <summary>
-        /// U+FFFD. Непарный суррогат в имени - не повод отказать документу:
-        /// такое имя просто не совпадёт ни с одним членом и уедет в пропуск.
-        /// Отказывать за него будет страж <c>InvalidUtf8</c>, когда появится.
+        /// U+FFFD. Непарный суррогат в имени - не повод отказать документу
+        /// <b>по умолчанию</b>: такое имя просто не совпадёт ни с одним членом
+        /// и уедет в пропуск. Отказывает за него <c>strict: true</c> -
+        /// <c>JsonGuard.InvalidUtf8</c> (§9.1 плана называл это место заранее).
         /// </summary>
         private const int ReplacementCharacter = 0xFFFD;
 
         public static int Decode(scoped ReadOnlySpan<byte> raw, scoped Span<byte> destination)
+        {
+            return Decode(raw, destination, false);
+        }
+
+        /// <param name="strict">
+        /// <c>JsonGuard.InvalidUtf8</c>: непарный суррогат в <c>\uXXXX</c> -
+        /// отказ вместо подстановки U+FFFD. Раскодирование самих байт всегда
+        /// корректно по построению - результат печатается по таблице,
+        /// произвольного входа здесь нет, - поэтому строгости требует только
+        /// суррогатная пара.
+        /// </param>
+        public static int Decode(scoped ReadOnlySpan<byte> raw, scoped Span<byte> destination, bool strict)
         {
             if (destination.Length < raw.Length)
             {
@@ -77,7 +90,7 @@ namespace JsonGoddess.Internal
                     case (byte)'t': destination[written++] = 0x09; break;
 
                     case (byte)'u':
-                        written += WriteCodePoint(raw, ref i, destination.Slice(written));
+                        written += WriteCodePoint(raw, ref i, destination.Slice(written), strict);
                         break;
 
                     default:
@@ -88,13 +101,18 @@ namespace JsonGoddess.Internal
             return written;
         }
 
-        private static int WriteCodePoint(scoped ReadOnlySpan<byte> raw, ref int i, scoped Span<byte> destination)
+        private static int WriteCodePoint(scoped ReadOnlySpan<byte> raw, ref int i, scoped Span<byte> destination, bool strict)
         {
             var code = ReadHex4(raw, ref i);
 
             if (code >= 0xDC00 && code <= 0xDFFF)
             {
                 //младший суррогат без старшего перед ним
+                if (strict)
+                {
+                    throw new JsonDocumentException("Unpaired low surrogate in a property name.");
+                }
+
                 return WriteUtf8(ReplacementCharacter, destination);
             }
 
@@ -117,6 +135,11 @@ namespace JsonGoddess.Internal
                 }
 
                 i = restore;
+            }
+
+            if (strict)
+            {
+                throw new JsonDocumentException("Unpaired high surrogate in a property name.");
             }
 
             return WriteUtf8(ReplacementCharacter, destination);

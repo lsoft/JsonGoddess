@@ -74,6 +74,94 @@ namespace JsonGoddess.Internal
         }
 
         /// <summary>
+        /// <c>JsonGuard.InvalidUtf8</c>: то же, что <see cref="Decode(ReadOnlySpan{byte}, bool)"/>,
+        /// но битая UTF-8-последовательность и непарный суррогат из
+        /// <c>\uXXXX</c> - отказ, а не молчаливая подстановка U+FFFD.
+        ///
+        /// Пробой подтверждено (System.Text.Json 9.0.0): именно так ведёт себя
+        /// эталон при материализации строки, и способа получить от него
+        /// прежнее (снисходительное) поведение нет - опции на это не влияют.
+        /// Печатается вместо <see cref="Decode(ReadOnlySpan{byte}, bool)"/>
+        /// только на хосте, включившем страж: по умолчанию транскодирование
+        /// остаётся тем же самым лёгким <see cref="System.Text.Encoding.UTF8"/>,
+        /// каким было всегда.
+        /// </summary>
+        public static string DecodeStrict(ReadOnlySpan<byte> raw, bool hasEscape)
+        {
+            if (raw.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            if (!hasEscape)
+            {
+                return Utf8ToStringStrict(raw);
+            }
+
+            var maxChars = raw.Length;
+
+            char[]? rented = null;
+            try
+            {
+                Span<char> buffer = maxChars <= StackThreshold
+                    ? stackalloc char[StackThreshold]
+                    : (rented = ArrayPool<char>.Shared.Rent(maxChars));
+
+                var decoded = TranscodeStrict(raw, buffer);
+
+                //суррогатная пара из 😀 складывается сама (оба char
+                //уже стоят рядом в буфере) - строгости требует только НЕПАРНЫЙ
+                //суррогат, а его Unescape сегодня пишет как есть, ничего не
+                //проверяя; отдельный проход по итогу ловит его независимо от
+                //того, из escape'а он или (что для валидного UTF-8 невозможно)
+                //как-то ещё
+                var written = Unescape(buffer.Slice(0, decoded));
+                ValidateNoUnpairedSurrogates(buffer.Slice(0, written));
+                return SpanToString(buffer.Slice(0, written));
+            }
+            finally
+            {
+                if (rented is not null)
+                {
+                    ArrayPool<char>.Shared.Return(rented);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Только проверка - используется там, где саму декодированную строку
+        /// строит не этот код, а sink (<c>injector.ParseText</c>), и его
+        /// контракт трогать не хочется: guard обязан отказать <b>до</b> того,
+        /// как содержимое ушло в пользовательский инжектор, а не полагаться на
+        /// то, что тот сам проверит валидность UTF-8.
+        /// </summary>
+        public static void EnsureValidUtf8(ReadOnlySpan<byte> raw, bool hasEscape)
+        {
+            DecodeStrict(raw, hasEscape);
+        }
+
+        private static void ValidateNoUnpairedSurrogates(ReadOnlySpan<char> text)
+        {
+            for (var i = 0; i < text.Length; i++)
+            {
+                var c = text[i];
+                if (char.IsHighSurrogate(c))
+                {
+                    if (i + 1 >= text.Length || !char.IsLowSurrogate(text[i + 1]))
+                    {
+                        throw new JsonDocumentException("Unpaired UTF-16 surrogate in a JSON string.");
+                    }
+
+                    i++;
+                }
+                else if (char.IsLowSurrogate(c))
+                {
+                    throw new JsonDocumentException("Unpaired UTF-16 surrogate in a JSON string.");
+                }
+            }
+        }
+
+        /// <summary>
         /// Разворачивает escape-последовательности на месте: выход не длиннее
         /// входа, поэтому второй буфер не нужен.
         ///
@@ -190,10 +278,33 @@ namespace JsonGoddess.Internal
             throw new JsonDocumentException("'" + c + "' is not a hexadecimal digit.");
         }
 
+        /// <summary>
+        /// Кодировщик, бросающий на невалидной UTF-8-последовательности, -
+        /// <see cref="System.Text.Encoding.UTF8"/> сконструирован с
+        /// <c>throwOnInvalidBytes: true</c> вместо штатного молчаливого
+        /// U+FFFD-фолбэка. Один статический экземпляр на весь процесс: он
+        /// неизменяем, и заводить его на каждый вызов было бы платой за то,
+        /// чем guard и так уже не бесплатен.
+        /// </summary>
+        private static readonly System.Text.Encoding StrictUtf8 =
+            new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
 #if NET8_0_OR_GREATER
         private static string Utf8ToString(ReadOnlySpan<byte> raw)
         {
             return System.Text.Encoding.UTF8.GetString(raw);
+        }
+
+        private static string Utf8ToStringStrict(ReadOnlySpan<byte> raw)
+        {
+            try
+            {
+                return StrictUtf8.GetString(raw);
+            }
+            catch (System.Text.DecoderFallbackException ex)
+            {
+                throw new JsonDocumentException("Invalid UTF-8 sequence in a JSON string: " + ex.Message);
+            }
         }
 
         private static string SpanToString(ReadOnlySpan<char> text)
@@ -205,12 +316,39 @@ namespace JsonGoddess.Internal
         {
             return System.Text.Encoding.UTF8.GetChars(raw, destination);
         }
+
+        private static int TranscodeStrict(ReadOnlySpan<byte> raw, Span<char> destination)
+        {
+            try
+            {
+                return StrictUtf8.GetChars(raw, destination);
+            }
+            catch (System.Text.DecoderFallbackException ex)
+            {
+                throw new JsonDocumentException("Invalid UTF-8 sequence in a JSON string: " + ex.Message);
+            }
+        }
 #else
         private static unsafe string Utf8ToString(ReadOnlySpan<byte> raw)
         {
             fixed (byte* p = raw)
             {
                 return System.Text.Encoding.UTF8.GetString(p, raw.Length);
+            }
+        }
+
+        private static unsafe string Utf8ToStringStrict(ReadOnlySpan<byte> raw)
+        {
+            try
+            {
+                fixed (byte* p = raw)
+                {
+                    return StrictUtf8.GetString(p, raw.Length);
+                }
+            }
+            catch (System.Text.DecoderFallbackException ex)
+            {
+                throw new JsonDocumentException("Invalid UTF-8 sequence in a JSON string: " + ex.Message);
             }
         }
 
@@ -233,6 +371,27 @@ namespace JsonGoddess.Internal
             fixed (char* dst = destination)
             {
                 return System.Text.Encoding.UTF8.GetChars(src, raw.Length, dst, destination.Length);
+            }
+        }
+
+        private static unsafe int TranscodeStrict(ReadOnlySpan<byte> raw, Span<char> destination)
+        {
+            if (raw.Length == 0)
+            {
+                return 0;
+            }
+
+            try
+            {
+                fixed (byte* src = raw)
+                fixed (char* dst = destination)
+                {
+                    return StrictUtf8.GetChars(src, raw.Length, dst, destination.Length);
+                }
+            }
+            catch (System.Text.DecoderFallbackException ex)
+            {
+                throw new JsonDocumentException("Invalid UTF-8 sequence in a JSON string: " + ex.Message);
             }
         }
 #endif

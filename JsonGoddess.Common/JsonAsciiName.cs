@@ -11,8 +11,10 @@ namespace JsonGoddess.Internal
     /// имён свойств такого сравнения нет и не будет - там регистр значим.
     ///
     /// Ограничение ASCII не спрятано, а вынесено в отказ генератора: имя члена
-    /// enum'а вне ASCII отвергается (JGD029), потому что эталон свернул бы
+    /// enum'а вне ASCII отвергается (JGD022), потому что эталон свернул бы
     /// регистр по Unicode, а мы - нет, и совпадение зависело бы от алфавита.
+    /// Отказ закреплён тестом
+    /// <c>GeneratorDiagnosticsFixture.String_enum_refuses_what_cannot_be_matched_exactly</c>.
     /// </summary>
     public static class JsonAsciiName
     {

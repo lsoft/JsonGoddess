@@ -28,6 +28,31 @@ namespace JsonGoddess.Generator.Emit
         public const string Array = "global::System.Array";
         public const string Naming = "global::JsonGoddess.Internal.JsonNaming";
         public const string NamingStyle = "global::JsonGoddess.Internal.JsonNamingStyle";
+        public const string StringDecoder = "global::JsonGoddess.Internal.JsonStringDecoder";
+
+        /// <summary>
+        /// Имя метода сканера для содержимого строки - обычное или строгое
+        /// (<c>JsonGuard.ControlCharsInStrings</c>).
+        ///
+        /// Выбор делается на этапе генерации, а не в рантайме: выключенный
+        /// страж обязан не стоить ни одной ветки, а не «стоить одну дешёвую
+        /// проверку булева параметра». Поэтому это конкатенация строки внутри
+        /// эмиттера, а не аргумент функции сканера.
+        /// </summary>
+        internal static string StringReadCall(JsonGuard guards)
+        {
+            return Scan + ((guards & JsonGuard.ControlCharsInStrings) != 0
+                ? ".ReadStringContentStrict"
+                : ".ReadStringContent");
+        }
+
+        /// <summary>Тот же приём для чисел - <c>JsonGuard.StrictNumbers</c>.</summary>
+        internal static string NumberReadCall(JsonGuard guards)
+        {
+            return Scan + ((guards & JsonGuard.StrictNumbers) != 0
+                ? ".ReadNumberRawStrict"
+                : ".ReadNumberRaw");
+        }
 
         /// <summary>
         /// Ключ словаря под политикой именования.
@@ -364,8 +389,16 @@ namespace JsonGoddess.Generator.Emit
         /// <summary>
         /// Тело читателя скаляра: лексема плюс разбор. Возвращает значение, а
         /// не пишет в цель, - цель у него на каждом месте своя, а тело одно.
+        ///
+        /// <paramref name="guards"/> выбирает лексику сканера
+        /// (<c>JsonGuard.StrictNumbers</c>/<c>ControlCharsInStrings</c>) и,
+        /// для <c>string</c> - единственного builtin'а, чья материализация
+        /// может молча замолчать битую UTF-8 (§6.3 плана: <c>InvalidUtf8</c>),
+        /// - предварительную проверку перед вызовом инжектора: даты, GUID'ы и
+        /// подобные и так упадут на разборе некорректного текста
+        /// <c>FormatException</c>'ом, а строка - нет, ей подходит любой байт.
         /// </summary>
-        public static void ReadScalarBody(SourceBuilder builder, ValueModel value)
+        public static void ReadScalarBody(SourceBuilder builder, ValueModel value, JsonGuard guards)
         {
             var typeName = BuiltinTypes.GetTypeName(value.Builtin);
 
@@ -381,7 +414,7 @@ namespace JsonGoddess.Generator.Emit
             {
                 case LexemeKind.Number:
                 {
-                    builder.Line("var raw = " + Scan + ".ReadNumberRaw(json, ref position);");
+                    builder.Line("var raw = " + NumberReadCall(guards) + "(json, ref position);");
                     builder.Line("injector.Parse(ref context, raw, out " + typeName + " parsed);");
                     break;
                 }
@@ -395,7 +428,13 @@ namespace JsonGoddess.Generator.Emit
 
                 default:
                 {
-                    builder.Line("var raw = " + Scan + ".ReadStringContent(json, ref position, out var rawEscaped);");
+                    builder.Line("var raw = " + StringReadCall(guards) + "(json, ref position, out var rawEscaped);");
+
+                    if (value.Builtin == BuiltinKind.String && (guards & JsonGuard.InvalidUtf8) != 0)
+                    {
+                        builder.Line(StringDecoder + ".EnsureValidUtf8(raw, rawEscaped);");
+                    }
+
                     builder.Line("injector.ParseText(ref context, raw, rawEscaped, out " + typeName + " parsed);");
                     break;
                 }

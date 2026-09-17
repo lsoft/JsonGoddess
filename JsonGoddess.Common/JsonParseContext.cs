@@ -54,12 +54,29 @@ namespace JsonGoddess
         /// </summary>
         private byte[]? _valueBuffer;
 
+        /// <summary>
+        /// Счётчик вложенности - <c>JsonGuard.MaxDepth</c>. Поле, а не
+        /// параметр отдельного метода: он общий для рекурсии по известным
+        /// типам (<c>Read_</c>/<c>ReadCollection_</c> печатают
+        /// <c>context.Depth++</c>/<c>--</c> вокруг своего тела, когда хост
+        /// включил страж) и для пропуска неизвестных поддеревьев
+        /// (<see cref="JsonScan.SkipValueGuarded"/>) - предел у эталона общий
+        /// на оба случая, проверено пробой.
+        ///
+        /// На хосте без стража поле объявлено, но не читается и не пишется
+        /// ни разу - лишний <c>int</c> в ref struct не стоит ветки в
+        /// порождённом коде, а именно ветка и есть то, что обязано быть
+        /// нулевым (§6.3 плана).
+        /// </summary>
+        public int Depth;
+
         public JsonParseContext(ReadOnlySpan<byte> document)
         {
             Document = document;
             TokenStart = 0;
             _nameBuffer = null;
             _valueBuffer = null;
+            Depth = 0;
         }
 
         /// <summary>
@@ -72,9 +89,15 @@ namespace JsonGoddess
         /// </summary>
         public ReadOnlySpan<byte> UnescapeName(scoped ReadOnlySpan<byte> raw)
         {
+            return UnescapeName(raw, false);
+        }
+
+        /// <param name="strict"><c>JsonGuard.InvalidUtf8</c>: непарный суррогат в имени - отказ, а не U+FFFD.</param>
+        public ReadOnlySpan<byte> UnescapeName(scoped ReadOnlySpan<byte> raw, bool strict)
+        {
             _nameBuffer = Ensure(_nameBuffer, raw.Length);
 
-            var written = JsonNameUnescape.Decode(raw, _nameBuffer);
+            var written = JsonNameUnescape.Decode(raw, _nameBuffer, strict);
             return new ReadOnlySpan<byte>(_nameBuffer, 0, written);
         }
 
@@ -85,9 +108,15 @@ namespace JsonGoddess
         /// </summary>
         public ReadOnlySpan<byte> UnescapeValue(scoped ReadOnlySpan<byte> raw)
         {
+            return UnescapeValue(raw, false);
+        }
+
+        /// <param name="strict"><c>JsonGuard.InvalidUtf8</c>: непарный суррогат - отказ, а не U+FFFD.</param>
+        public ReadOnlySpan<byte> UnescapeValue(scoped ReadOnlySpan<byte> raw, bool strict)
+        {
             _valueBuffer = Ensure(_valueBuffer, raw.Length);
 
-            var written = JsonNameUnescape.Decode(raw, _valueBuffer);
+            var written = JsonNameUnescape.Decode(raw, _valueBuffer, strict);
             return new ReadOnlySpan<byte>(_valueBuffer, 0, written);
         }
 

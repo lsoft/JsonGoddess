@@ -161,6 +161,7 @@ namespace JsonGoddess.Generator.Binding
             var failed = accepted.Count != registered.Count;
 
             var options = SerializationOptions.Read(host, known, diagnostics, ref failed);
+            var guardOptions = GuardOptions.Read(host, known, diagnostics, ref failed);
 
             foreach (var registration in accepted)
             {
@@ -255,7 +256,9 @@ namespace JsonGoddess.Generator.Binding
                 collectionList,
                 enumList,
                 scalarList,
-                options.DictionaryKeyNaming
+                options.DictionaryKeyNaming,
+                guardOptions.Guards,
+                guardOptions.MaxDepth
                 );
         }
 
@@ -1137,6 +1140,37 @@ namespace JsonGoddess.Generator.Binding
                     "the member carries [JsonConverter], and JsonGoddess cannot reproduce an arbitrary converter; "
                     + "put [JsonConverter(typeof(JsonStringEnumConverter))] on the enum type instead, "
                     + "or mark the member [JsonIgnore]");
+                return null;
+            }
+
+            //Оба атрибута §6.1 перечислял как читаемые, а генератор не знал о
+            //них вовсе - найдено при сборке docs/stj-divergences.md. Молчание
+            //здесь стоило дороже всего: [JsonNumberHandling(WriteAsString)] у
+            //эталона даёт {"Amount":"5"}, у нас давало {"Amount":5}, то есть
+            //расходился сам документ, и ни одного слова на компиляции. Пока не
+            //умеем воспроизвести - отказываем, как отказываем чужому
+            //конвертеру.
+            if (known.Has(member, known.JsonNumberHandling))
+            {
+                Refuse(subject, member, memberType, location, diagnostics, ref failed,
+                    "the member carries [JsonNumberHandling], which changes the shape of the number in the "
+                    + "document (WriteAsString writes it quoted, AllowReadingFromString accepts it quoted); "
+                    + "JsonGoddess does not reproduce it yet, and writing the number plainly would silently "
+                    + "produce a document the reference implementation never produces");
+                return null;
+            }
+
+            //[JsonRequired] - не то же самое, что ключевое слово required: оно
+            //ловится выше по property.IsRequired, а атрибут до сих пор не
+            //ловился ничем. Расходится здесь не документ, а строгость чтения:
+            //эталон бросает на отсутствующем имени, мы молча оставляли
+            //умолчание.
+            if (known.Has(member, known.JsonRequired))
+            {
+                Refuse(subject, member, memberType, location, diagnostics, ref failed,
+                    "the member carries [JsonRequired], and System.Text.Json refuses a document in which the "
+                    + "name is absent; JsonGoddess does not track presence yet, so accepting such a document "
+                    + "silently would be a divergence in strictness");
                 return null;
             }
 
