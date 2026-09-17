@@ -168,14 +168,16 @@ namespace JsonGoddess.GeneratorTests.Stj
                 "корпус усох до " + StjCatalogue.Candidates.Count + " типов"
                 );
 
+            //Фаза 6, §9.10: было 21 (структуры, §9.7), стало 38 - тип-коллекция
+            //(часть 1) и коллекционные интерфейсы на месте члена (часть 2).
             Assert.True(
-                StjExecution.Specimens.Count >= 21,
-                "принятых типов стало " + StjExecution.Specimens.Count + ", было 21"
+                StjExecution.Specimens.Count >= 38,
+                "принятых типов стало " + StjExecution.Specimens.Count + ", было 38"
                 );
 
             Assert.True(
-                StjExecution.Specimens.Count(s => s.Document is not null) >= 8,
-                "их документов стало " + StjExecution.Specimens.Count(s => s.Document is not null) + ", было 8"
+                StjExecution.Specimens.Count(s => s.Document is not null) >= 14,
+                "их документов стало " + StjExecution.Specimens.Count(s => s.Document is not null) + ", было 14"
                 );
         }
 

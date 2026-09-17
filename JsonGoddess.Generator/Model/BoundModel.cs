@@ -58,11 +58,35 @@ namespace JsonGoddess.Generator.Model
     {
         Builtin,
         Subject,
+
+        /// <summary>
+        /// Индексированная запись (<c>for</c> + <c>Count</c>/<c>Length</c> +
+        /// индексатор): <c>List&lt;T&gt;</c>, а с фазы 6 - также
+        /// <c>IList&lt;T&gt;</c> и <c>IReadOnlyList&lt;T&gt;</c>, у которых
+        /// индексатор гарантирован интерфейсом. Различает их только
+        /// <see cref="ValueModel.TypeName"/>: тело писателя и читателя общее.
+        /// </summary>
         List,
         Array,
 
-        /// <summary><c>Dictionary&lt;string, V&gt;</c>: объект, имена свойств которого неизвестны на этапе компиляции.</summary>
+        /// <summary>
+        /// <c>Dictionary&lt;string, V&gt;</c>, а с фазы 6 - также
+        /// <c>IDictionary&lt;string, V&gt;</c> и
+        /// <c>IReadOnlyDictionary&lt;string, V&gt;</c>: объект, имена свойств
+        /// которого неизвестны на этапе компиляции.
+        /// </summary>
         Dictionary,
+
+        /// <summary>
+        /// Запись <c>foreach</c>'ем со счётчиком, без индексатора: фаза 6,
+        /// <c>ICollection&lt;T&gt;</c>, <c>IEnumerable&lt;T&gt;</c>,
+        /// <c>IReadOnlyCollection&lt;T&gt;</c> - интерфейсы, у которых
+        /// <c>this[int]</c> не гарантирован. Чтение у них то же самое, что у
+        /// <see cref="List"/> (<c>List&lt;T&gt;</c> собирается и через
+        /// <c>Add</c>, и индексатором не пользуется), различается только
+        /// запись.
+        /// </summary>
+        Enumerable,
 
         Enum,
     }
@@ -134,11 +158,33 @@ namespace JsonGoddess.Generator.Model
         public BuiltinKind Builtin { get; }
 
         /// <summary>
-        /// Имя типа, каким оно печатается в объявление локальной переменной и в
-        /// <c>new</c>. Без <c>?</c>: nullability приписывается по
+        /// Имя типа, каким оно печатается в объявление локальной переменной, в
+        /// параметр и в возврат. Без <c>?</c>: nullability приписывается по
         /// <see cref="IsNullable"/>.
+        ///
+        /// Для коллекции это ровно тот тип, что стоит на месте члена -
+        /// <c>List&lt;T&gt;</c>, но с фазы 6 и <c>IList&lt;T&gt;</c>,
+        /// <c>IReadOnlyDictionary&lt;string, V&gt;</c> и так далее. Тип,
+        /// которым коллекция на самом деле <c>new</c>'ится на чтении, может
+        /// быть другим - см. <see cref="ConstructTypeName"/>.
         /// </summary>
         public string TypeName { get; }
+
+        /// <summary>
+        /// Тип, которым читатель коллекции создаёт результат: <c>new
+        /// ConstructTypeName()</c>, присвоенный <c>var</c> - и потому
+        /// возвращаемый как <see cref="TypeName"/> без явного приведения, раз
+        /// он ему присваиваем.
+        ///
+        /// Равен <see cref="TypeName"/> для <c>List&lt;T&gt;</c>,
+        /// <c>T[]</c> и <c>Dictionary&lt;string, V&gt;</c> - там объявленный
+        /// тип и есть конкретный. Расходится он только у интерфейсов на месте
+        /// члена (фаза 6): <c>IList&lt;T&gt;</c> и его пять соседей объявляют
+        /// тип члена, а строить читателю нечем, кроме конкретного
+        /// <c>List&lt;T&gt;</c>/<c>Dictionary&lt;string, V&gt;</c> - тот же
+        /// выбор, что делает и сам эталон (проверено пробой).
+        /// </summary>
+        public string ConstructTypeName { get; }
 
         /// <summary>
         /// Суффикс имён методов: для субъекта - его же, общий с
@@ -189,13 +235,15 @@ namespace JsonGoddess.Generator.Model
             bool isNullable,
             EnumModel? enumModel = null,
             bool isStringEnum = false,
-            bool isValueType = false
+            bool isValueType = false,
+            string? constructTypeName = null
             )
         {
             IsValueType = isValueType;
             Form = form;
             Builtin = builtin;
             TypeName = typeName;
+            ConstructTypeName = constructTypeName ?? typeName;
             MethodSuffix = methodSuffix;
             Element = element;
             IsNullable = isNullable;
@@ -212,7 +260,8 @@ namespace JsonGoddess.Generator.Model
         /// только тем, что перед каждым элементом стоит ключ.
         /// </summary>
         public bool IsCollection =>
-            Form == ValueForm.List || Form == ValueForm.Array || Form == ValueForm.Dictionary;
+            Form == ValueForm.List || Form == ValueForm.Array || Form == ValueForm.Dictionary
+            || Form == ValueForm.Enumerable;
     }
 
     /// <summary>
@@ -370,6 +419,40 @@ namespace JsonGoddess.Generator.Model
         }
     }
 
+    /// <summary>
+    /// Субъект, который сам является коллекцией (§9.10 плана): у него нет
+    /// обычных членов вовсе, а тело <c>Write_</c>/<c>Read_</c> - это цикл по
+    /// элементам, а не по <see cref="SubjectModel.Members"/> (он у такого
+    /// субъекта всегда пуст).
+    ///
+    /// Собственные свойства такого типа теряются - молча, но <b>так же</b>,
+    /// как их теряет эталон (проверено пробой: <c>ICollection&lt;string&gt;</c>
+    /// с property-членом он пишет как массив без единого свойства). Это не
+    /// недосмотр, а решение §9.10: терять их одинаково не значит выдавать
+    /// другой документ.
+    /// </summary>
+    public sealed class CollectionShapeModel
+    {
+        /// <summary>Элемент (список) или значение (словарь) - без имени ключа, оно у словаря не типизировано.</summary>
+        public ValueModel Element { get; }
+
+        /// <summary>
+        /// <c>true</c> - субъект реализует <c>IDictionary&lt;string, V&gt;</c>
+        /// и пишется объектом. Проверка стоит раньше <c>ICollection&lt;T&gt;</c>
+        /// нарочно: <c>Dictionary&lt;TKey,TValue&gt;</c> реализует оба, а
+        /// эталон смотрит на словарь первым (проверено пробой на
+        /// <c>class X : Dictionary&lt;string,int&gt;</c> - пишется <c>{}</c>,
+        /// а не <c>[]</c>).
+        /// </summary>
+        public bool IsDictionary { get; }
+
+        public CollectionShapeModel(ValueModel element, bool isDictionary)
+        {
+            Element = element;
+            IsDictionary = isDictionary;
+        }
+    }
+
     public sealed class SubjectModel
     {
         /// <summary>Полное имя с <c>global::</c>: печатается в код как есть.</summary>
@@ -413,6 +496,13 @@ namespace JsonGoddess.Generator.Model
         /// </summary>
         public string DiscriminatorName { get; }
 
+        /// <summary>
+        /// Не <c>null</c> - субъект сам является коллекцией (§9.10), и
+        /// <see cref="Members"/> у него пуст, а <see cref="Parameters"/> -
+        /// тоже: конструктор без параметров обязателен, класть в него нечего.
+        /// </summary>
+        public CollectionShapeModel? CollectionShape { get; }
+
         public SubjectModel(
             string fullName,
             string methodSuffix,
@@ -421,7 +511,8 @@ namespace JsonGoddess.Generator.Model
             IReadOnlyList<MemberModel> members,
             IReadOnlyList<ParameterModel> parameters,
             IReadOnlyList<DerivedTypeModel> derived,
-            string discriminatorName
+            string discriminatorName,
+            CollectionShapeModel? collectionShape = null
             )
         {
             FullName = fullName;
@@ -432,6 +523,7 @@ namespace JsonGoddess.Generator.Model
             Parameters = parameters;
             Derived = derived;
             DiscriminatorName = discriminatorName;
+            CollectionShape = collectionShape;
         }
 
         public bool IsPolymorphic => Derived.Count > 0;
@@ -479,9 +571,17 @@ namespace JsonGoddess.Generator.Model
 
         /// <summary>
         /// Различные коллекции, встретившиеся в членах - включая вложенные.
-        /// Чтение коллекции вынесено в метод, потому что иначе вложенность
-        /// пришлось бы разворачивать в цикл внутри цикла прямо в ветке
-        /// диспетчера; запись, наоборот, печатается по месту.
+        /// И чтение, и запись вынесены в метод (§16.2 плана: на графе из
+        /// двухсот типов один и тот же <c>Dictionary&lt;string,int&gt;</c>
+        /// печатался двести раз подряд) - иначе вложенность пришлось бы ещё и
+        /// разворачивать в цикл внутри цикла прямо в ветке диспетчера.
+        ///
+        /// С фазы 6 сюда же попадают и коллекционные интерфейсы на месте
+        /// члена (<c>IList&lt;T&gt;</c>, <c>IReadOnlyDictionary&lt;string,
+        /// V&gt;</c> и так далее, §9.10) - каждый со своим суффиксом, потому
+        /// что объявленный тип у них другой, хотя тело читателя может
+        /// совпадать с <c>List&lt;T&gt;</c>/<c>Dictionary&lt;string,V&gt;</c>
+        /// дословно.
         /// </summary>
         public IReadOnlyList<ValueModel> Collections { get; }
 

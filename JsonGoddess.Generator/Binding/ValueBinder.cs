@@ -19,6 +19,19 @@ namespace JsonGoddess.Generator.Binding
         private const string ListMetadataName = "List`1";
         private const string DictionaryMetadataName = "Dictionary`2";
 
+        //Интерфейсы фазы 6 (§9.10 плана). Объявленный тип члена - это в
+        //точности один из них или ни один: член не может «быть одновременно»
+        //IList<T> и ICollection<T>, поэтому, в отличие от связывания субъекта,
+        //который сам является коллекцией (HostBinder), здесь не нужен обход
+        //AllInterfaces - метаданное имя сравнивается напрямую с объявленным типом.
+        private const string IListMetadataName = "IList`1";
+        private const string IReadOnlyListMetadataName = "IReadOnlyList`1";
+        private const string ICollectionMetadataName = "ICollection`1";
+        private const string IEnumerableMetadataName = "IEnumerable`1";
+        private const string IReadOnlyCollectionMetadataName = "IReadOnlyCollection`1";
+        private const string IDictionaryMetadataName = "IDictionary`2";
+        private const string IReadOnlyDictionaryMetadataName = "IReadOnlyDictionary`2";
+
         /// <summary>
         /// Класс, зарегистрированный <c>[JsonSubject]</c>, опознаётся по карте,
         /// а не по форме: регистрация - это явное решение автора, и подменять
@@ -168,10 +181,166 @@ namespace JsonGoddess.Generator.Binding
                 return true;
             }
 
+            //Фаза 6 (§9.10 плана): интерфейсы на месте члена. Читателю всё
+            //равно нечем строить результат, кроме конкретного типа - List<T>
+            //для всех пяти интерфейсов списка, Dictionary<string,V> для двух
+            //словарных, - и это ровно то, что подставляет сам эталон
+            //(проверено пробой: IReadOnlyDictionary<string,int> на чтении
+            //оказывается Dictionary<string,int>). Оттого у них свой
+            //ConstructTypeName, а TypeName остаётся объявленным интерфейсом.
+            if (TryBindInterfaceDictionary(type, subjects, known, out value, out refusal))
+            {
+                return value is not null;
+            }
+
+            if (TryBindInterfaceList(type, subjects, known, out value, out refusal))
+            {
+                return value is not null;
+            }
+
             refusal = type.TypeKind == TypeKind.Class || type.TypeKind == TypeKind.Struct
                 ? "the type is not registered; add [JsonSubject(typeof(" + type.Name + "), false)] to the host, or mark the member [JsonIgnore]"
-                : "only builtin types, registered [JsonSubject] classes, List<T>, T[] and Dictionary<string, V> are supported; interfaces and other collections arrive later";
+                : "only builtin types, registered [JsonSubject] classes/structs, List<T>, T[], Dictionary<string, V>, "
+                    + "IList<T>, ICollection<T>, IEnumerable<T>, IReadOnlyList<T>, IReadOnlyCollection<T>, "
+                    + "IDictionary<string, V> and IReadOnlyDictionary<string, V> are supported; other collections "
+                    + "(sets, queues, stacks, non-string-keyed dictionaries, multidimensional arrays) are not";
             return false;
+        }
+
+        /// <summary>
+        /// <c>IDictionary&lt;string, V&gt;</c> / <c>IReadOnlyDictionary&lt;string, V&gt;</c>.
+        /// <c>false</c> без <paramref name="value"/> и без <paramref name="refusal"/>
+        /// означает «тип не один из этих двух интерфейсов вовсе» - продолжать
+        /// связывание дальше, это не отказ.
+        /// </summary>
+        private static bool TryBindInterfaceDictionary(
+            ITypeSymbol type,
+            IReadOnlyDictionary<ISymbol, string> subjects,
+            KnownSymbols known,
+            out ValueModel? value,
+            out string refusal
+            )
+        {
+            value = null;
+            refusal = string.Empty;
+
+            string prefix;
+            if (IsGeneric(type, IDictionaryMetadataName, out var named))
+            {
+                prefix = "IDictionaryOf_";
+            }
+            else if (IsGeneric(type, IReadOnlyDictionaryMetadataName, out named))
+            {
+                prefix = "IReadOnlyDictionaryOf_";
+            }
+            else
+            {
+                return false;
+            }
+
+            var keyType = named!.TypeArguments[0];
+            var valueType = named.TypeArguments[1];
+
+            if (keyType.SpecialType != SpecialType.System_String)
+            {
+                refusal = "only a string-keyed " + named.OriginalDefinition.Name + " is supported; other key types arrive later";
+                value = null;
+                return true;
+            }
+
+            if (!TryBind(valueType, subjects, known, out var dictionaryValue, out refusal))
+            {
+                value = null;
+                return true;
+            }
+
+            value = new ValueModel(
+                ValueForm.Dictionary,
+                default,
+                known.FullName(type),
+                prefix + dictionaryValue!.MethodSuffix,
+                dictionaryValue,
+                true,
+                constructTypeName: "global::System.Collections.Generic.Dictionary<string, " + dictionaryValue.Declaration + ">"
+                );
+            return true;
+        }
+
+        /// <summary>
+        /// <c>IList&lt;T&gt;</c>, <c>IReadOnlyList&lt;T&gt;</c>,
+        /// <c>ICollection&lt;T&gt;</c>, <c>IEnumerable&lt;T&gt;</c>,
+        /// <c>IReadOnlyCollection&lt;T&gt;</c>.
+        ///
+        /// Первые два получают <see cref="ValueForm.List"/>: у обоих
+        /// гарантирован индексатор и <c>Count</c>, значит писать их можно тем
+        /// же индексированным циклом, что и <c>List&lt;T&gt;</c>. Остальным
+        /// трём индексатор не гарантирован (<c>ICollection&lt;T&gt;</c> его
+        /// вовсе не объявляет), и им достаётся <see cref="ValueForm.Enumerable"/> -
+        /// запись <c>foreach</c>'ем со своим счётчиком, как у словаря, но без
+        /// ключа. Чтение при этом одно и то же для всех пяти: <c>List&lt;T&gt;</c>
+        /// строится и наполняется через <c>Add</c>, индексатор ему не нужен.
+        /// </summary>
+        private static bool TryBindInterfaceList(
+            ITypeSymbol type,
+            IReadOnlyDictionary<ISymbol, string> subjects,
+            KnownSymbols known,
+            out ValueModel? value,
+            out string refusal
+            )
+        {
+            value = null;
+            refusal = string.Empty;
+
+            ValueForm form;
+            string prefix;
+            INamedTypeSymbol? named;
+
+            if (IsGeneric(type, IListMetadataName, out named))
+            {
+                form = ValueForm.List;
+                prefix = "IListOf_";
+            }
+            else if (IsGeneric(type, IReadOnlyListMetadataName, out named))
+            {
+                form = ValueForm.List;
+                prefix = "IReadOnlyListOf_";
+            }
+            else if (IsGeneric(type, ICollectionMetadataName, out named))
+            {
+                form = ValueForm.Enumerable;
+                prefix = "ICollectionOf_";
+            }
+            else if (IsGeneric(type, IEnumerableMetadataName, out named))
+            {
+                form = ValueForm.Enumerable;
+                prefix = "IEnumerableOf_";
+            }
+            else if (IsGeneric(type, IReadOnlyCollectionMetadataName, out named))
+            {
+                form = ValueForm.Enumerable;
+                prefix = "IReadOnlyCollectionOf_";
+            }
+            else
+            {
+                return false;
+            }
+
+            if (!TryBind(named!.TypeArguments[0], subjects, known, out var element, out refusal))
+            {
+                value = null;
+                return true;
+            }
+
+            value = new ValueModel(
+                form,
+                default,
+                known.FullName(type),
+                prefix + element!.MethodSuffix,
+                element,
+                true,
+                constructTypeName: "global::System.Collections.Generic.List<" + element.Declaration + ">"
+                );
+            return true;
         }
 
         /// <summary>

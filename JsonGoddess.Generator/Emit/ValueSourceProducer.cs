@@ -38,7 +38,11 @@ namespace JsonGoddess.Generator.Emit
         /// со строкой на ключ. Поэтому без политики здесь не появляется ни
         /// одного лишнего вызова, а с политикой цена видна и названа.
         /// </summary>
-        private static string Key(string accessor, JsonNamingStyle style)
+        //internal, а не private: писатель субъекта-коллекции (§9.10 плана,
+        //ClassSourceProducer.EmitCollectionSubjectWriterBody) пишет ключ
+        //словаря точно так же, как обычная Dictionary<string,V>, и заводить
+        //вторую копию преобразования политики ради видимости не стоит
+        internal static string Key(string accessor, JsonNamingStyle style)
         {
             return style == JsonNamingStyle.None
                 ? accessor
@@ -164,16 +168,33 @@ namespace JsonGoddess.Generator.Emit
         }
 
         /// <summary>
-        /// Тело писателя коллекции. Параметр у метода один - <c>items</c>, и
-        /// номеров в именах локальных поэтому больше нет: вложенная коллекция
-        /// уезжает в свой собственный метод, а не разворачивается в цикл
-        /// внутри цикла.
+        /// Тело писателя коллекции. Параметр у метода один - по умолчанию
+        /// <c>items</c> (обычная коллекция-член), а у писателя субъекта,
+        /// который сам является коллекцией (§9.10), - <c>value</c>, потому что
+        /// имя параметра там уже задано сигнатурой обычного писателя субъекта.
+        /// Номеров в именах локальных нет: вложенная коллекция уезжает в свой
+        /// собственный метод, а не разворачивается в цикл внутри цикла.
+        ///
+        /// Три формы цикла, а не одна: индексированная (<see cref="ValueForm.List"/>,
+        /// <see cref="ValueForm.Array"/> - <c>Count</c>/<c>Length</c> и
+        /// индексатор гарантированы), с ключом (<see cref="ValueForm.Dictionary"/> -
+        /// <c>foreach</c>, ключ не константа и экранируется по-настоящему) и
+        /// без ключа (<see cref="ValueForm.Enumerable"/>, фаза 6: интерфейсы
+        /// без индексатора - <c>ICollection&lt;T&gt;</c>,
+        /// <c>IEnumerable&lt;T&gt;</c>, <c>IReadOnlyCollection&lt;T&gt;</c>, -
+        /// <c>foreach</c> со своим счётчиком, как у словаря, но без пары).
         /// </summary>
-        public static void WriteCollectionBody(SourceBuilder builder, ValueModel value, JsonNamingStyle keyNaming)
+        public static void WriteCollectionBody(
+            SourceBuilder builder,
+            ValueModel value,
+            JsonNamingStyle keyNaming,
+            string accessor = "items"
+            )
         {
             var isMap = value.Form == ValueForm.Dictionary;
+            var isForEach = isMap || value.Form == ValueForm.Enumerable;
 
-            builder.OpenBlock("if (items is null)");
+            builder.OpenBlock("if (" + accessor + " is null)");
             builder.Line("exhauster.AppendNull();");
             builder.Line("return;");
             builder.CloseBlock();
@@ -181,18 +202,19 @@ namespace JsonGoddess.Generator.Emit
 
             builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(isMap ? "{" : "[") + ");");
 
-            if (isMap)
+            if (isForEach)
             {
                 //foreach по конкретному Dictionary<,> берёт структурный
-                //перечислитель и ничего не выделяет; по позиции словарь не
-                //индексируется, поэтому счётчик ведётся руками
+                //перечислитель и ничего не выделяет; по позиции ни словарь, ни
+                //ICollection<T>/IEnumerable<T> не индексируются, поэтому
+                //счётчик ведётся руками
                 builder.Line("var i = 0;");
-                builder.OpenBlock("foreach (var pair in items)");
+                builder.OpenBlock("foreach (var " + (isMap ? "pair" : "element") + " in " + accessor + ")");
             }
             else
             {
                 builder.OpenBlock(
-                    "for (var i = 0; i < items"
+                    "for (var i = 0; i < " + accessor
                     + (value.Form == ValueForm.Array ? ".Length" : ".Count") + "; i++)"
                     );
             }
@@ -213,9 +235,14 @@ namespace JsonGoddess.Generator.Emit
                 builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(":") + ");");
                 WriteValue(builder, value.Element!, "pair.Value", keyNaming);
             }
+            else if (isForEach)
+            {
+                builder.Line("i++;");
+                WriteValue(builder, value.Element!, "element", keyNaming);
+            }
             else
             {
-                WriteValue(builder, value.Element!, "items[i]", keyNaming);
+                WriteValue(builder, value.Element!, accessor + "[i]", keyNaming);
             }
 
             builder.CloseBlock();
@@ -266,6 +293,7 @@ namespace JsonGoddess.Generator.Emit
                 case ValueForm.List:
                 case ValueForm.Array:
                 case ValueForm.Dictionary:
+                case ValueForm.Enumerable:
                 {
                     builder.Line(
                         target + " = ReadCollection_" + value.MethodSuffix

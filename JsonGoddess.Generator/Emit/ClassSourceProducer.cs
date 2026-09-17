@@ -347,6 +347,19 @@ namespace JsonGoddess.Generator.Emit
                 builder.Line();
             }
 
+            //Субъект, который сам является коллекцией (§9.10 плана): у него
+            //нет обычных членов вовсе (members здесь и так пуст), а тело -
+            //цикл по элементам. Проверка стоит раньше "members.Count == 0",
+            //иначе такой субъект уехал бы как "{}" - ветка ниже про пустой
+            //объект, а не про пустую коллекцию.
+            if (subject.CollectionShape is not null)
+            {
+                EmitCollectionSubjectWriterBody(builder, subject, keyNaming);
+                builder.CloseBlock();
+                builder.Line();
+                return;
+            }
+
             if (members.Count == 0)
             {
                 builder.Line(
@@ -609,6 +622,19 @@ namespace JsonGoddess.Generator.Emit
                 builder.Line("return null;");
                 builder.CloseBlock();
                 builder.Line();
+            }
+
+            //Субъект-коллекция (§9.10) не полиморфен (связыватель отказывает
+            //на этой комбинации), значит body здесь всегда null, и метод
+            //целиком печатается этой веткой - без диспетчера имён, без
+            //отложенной сборки: строить нечем, кроме конструктора без
+            //параметров, а класть - только в саму коллекцию.
+            if (subject.CollectionShape is not null)
+            {
+                EmitCollectionSubjectReaderBody(builder, subject);
+                builder.CloseBlock();
+                builder.Line();
+                return;
             }
 
             if (!body)
@@ -985,6 +1011,110 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
         }
 
+        /// <summary>
+        /// Тело писателя субъекта-коллекции (§9.10 плана). Параметр уже
+        /// объявлен сигнатурой обычного писателя субъекта - <c>value</c>, а не
+        /// <c>items</c>, - поэтому тело печатается своей копией цикла, а не
+        /// вызовом <see cref="ValueSourceProducer.WriteCollectionBody"/>: та
+        /// сама печатает проверку на <c>null</c> перед собой, а здесь она уже
+        /// напечатана снаружи (и не печатается вовсе для структуры).
+        /// </summary>
+        private static void EmitCollectionSubjectWriterBody(
+            SourceBuilder builder,
+            SubjectModel subject,
+            JsonNamingStyle keyNaming
+            )
+        {
+            var shape = subject.CollectionShape!;
+            var isDictionary = shape.IsDictionary;
+
+            builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(isDictionary ? "{" : "[") + ");");
+            builder.Line("var i = 0;");
+            builder.OpenBlock("foreach (var " + (isDictionary ? "pair" : "element") + " in value)");
+
+            builder.OpenBlock("if (i > 0)");
+            builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(",") + ");");
+            builder.CloseBlock();
+            builder.Line();
+            builder.Line("i++;");
+
+            if (isDictionary)
+            {
+                builder.Line("exhauster.Append(" + ValueSourceProducer.Key("pair.Key", keyNaming) + ");");
+                builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(":") + ");");
+                ValueSourceProducer.WriteValue(builder, shape.Element, "pair.Value", keyNaming);
+            }
+            else
+            {
+                ValueSourceProducer.WriteValue(builder, shape.Element, "element", keyNaming);
+            }
+
+            builder.CloseBlock();
+            builder.Line();
+            builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(isDictionary ? "}" : "]") + ");");
+        }
+
+        /// <summary>
+        /// Тело читателя субъекта-коллекции (§9.10 плана). Элемент кладётся в
+        /// уже построенный <c>result</c> через явное приведение к интерфейсу
+        /// (<c>ICollection&lt;T&gt;</c>/<c>IDictionary&lt;string,V&gt;</c>), а
+        /// не напрямую: субъект мог реализовать интерфейс явно (без открытого
+        /// метода на самом себе), и приведение работает в обоих случаях
+        /// одинаково, тогда как прямой вызов - только в одном.
+        /// </summary>
+        private static void EmitCollectionSubjectReaderBody(SourceBuilder builder, SubjectModel subject)
+        {
+            var shape = subject.CollectionShape!;
+            var element = shape.Element;
+
+            var open = Scan + (shape.IsDictionary ? ".OpenBrace" : ".OpenBracket");
+            var close = Scan + (shape.IsDictionary ? ".CloseBrace" : ".CloseBracket");
+
+            builder.Line(Scan + ".Expect(json, ref position, " + open + ");");
+            builder.Line();
+
+            builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + close + "))");
+            builder.Line("return new " + subject.FullName + "();");
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line("var result = new " + subject.FullName + "();");
+            builder.Line();
+            builder.OpenBlock("while (true)");
+
+            if (shape.IsDictionary)
+            {
+                //ключ приходится материализовать строкой - положить спан в
+                //чужую реализацию IDictionary<string,V> нечем
+                builder.Line("var rawKey = " + Scan + ".ReadStringContent(json, ref position, out var keyEscaped);");
+                builder.Line("injector.ParseText(ref context, rawKey, keyEscaped, out string key);");
+                builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".Colon);");
+                builder.Line();
+            }
+
+            builder.Line(element.Declaration + " item;");
+            ValueSourceProducer.ReadValue(builder, element, "item");
+            builder.Line();
+
+            builder.Line(
+                shape.IsDictionary
+                    ? "((global::System.Collections.Generic.IDictionary<string, " + element.Declaration
+                        + ">)result)[key] = item;"
+                    : "((global::System.Collections.Generic.ICollection<" + element.Declaration + ">)result).Add(item);"
+                );
+
+            builder.Line();
+            builder.OpenBlock("if (!" + Scan + ".TryConsume(json, ref position, " + Scan + ".Comma))");
+            builder.Line("break;");
+            builder.CloseBlock();
+
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line(Scan + ".Expect(json, ref position, " + close + ");");
+            builder.Line("return result;");
+        }
+
         private static void EmitCollectionReader(SourceBuilder builder, ValueModel collection, string injector)
         {
             var isArray = collection.Form == ValueForm.Array;
@@ -1018,7 +1148,7 @@ namespace JsonGoddess.Generator.Emit
             builder.Line(
                 isArray
                     ? "return " + ValueSourceProducer.Array + ".Empty<" + element.Declaration + ">();"
-                    : "return new " + collection.TypeName + "();"
+                    : "return new " + collection.ConstructTypeName + "();"
                 );
             builder.CloseBlock();
             builder.Line();
@@ -1030,7 +1160,14 @@ namespace JsonGoddess.Generator.Emit
             }
             else
             {
-                builder.Line("var result = new " + collection.TypeName + "();");
+                //ConstructTypeName - конкретный тип (List<T>/Dictionary<string,V>),
+                //а не объявленный: для List<T>/Dictionary<string,V> самих по
+                //себе это одно и то же, а для интерфейсов на месте члена
+                //(фаза 6, §9.10) строить нечем, кроме конкретного - ровно то,
+                //что подставляет и сам эталон. var ниже забирает этот
+                //конкретный тип, и возврат как объявленный (интерфейс)
+                //происходит неявным приведением на return result.
+                builder.Line("var result = new " + collection.ConstructTypeName + "();");
             }
 
             builder.Line();

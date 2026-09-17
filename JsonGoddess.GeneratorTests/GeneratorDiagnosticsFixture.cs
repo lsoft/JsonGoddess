@@ -653,16 +653,13 @@ namespace Demo
         }
 
         /// <summary>
-        /// Найдено переносом набора System.Text.Json (§11.1) - их
-        /// <c>StringListWrapper : List&lt;string&gt; { }</c> мы принимали и
-        /// писали <c>{}</c> вместо <c>["Hello","World"]</c>.
-        ///
-        /// Проверяются обе формы, потому что они разные по причине: у
-        /// наследника коллекции своих членов нет вовсе, а у класса с
-        /// <c>ICollection&lt;T&gt;</c> они есть - и эталон их молча
-        /// выбрасывает, потому что смотрит на интерфейс, а не на свойства.
-        /// Принять вторую значило бы выдать документ, в котором есть то, чего
-        /// у эталона нет.
+        /// Часть 1 фазы 6 (§9.10 плана): субъект, который сам является
+        /// коллекцией, - теперь принят, а не отказ <c>JGD021</c> целиком, как
+        /// было решено в §9.6. Обе формы: наследник <c>List&lt;T&gt;</c> без
+        /// собственных членов и ручная <c>ICollection&lt;T&gt;</c> <b>с</b>
+        /// собственным свойством - свойство эталон молча теряет (проверено
+        /// пробой), и мы теряем его так же, а не отказываем: это не
+        /// расхождение, а намеренное совпадение с тем, что теряет сам эталон.
         /// </summary>
         [Theory]
         [InlineData("public class Payload : global::System.Collections.Generic.List<string> { }")]
@@ -680,7 +677,7 @@ namespace Demo
         public global::System.Collections.Generic.IEnumerator<string> GetEnumerator() => null!;
         global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => null!;
     }")]
-        public void Subject_that_is_itself_a_collection_is_refused(string payload)
+        public void Subject_that_is_itself_a_collection_is_accepted_and_loses_its_own_members(string payload)
         {
             var run = GeneratorHarness.Run(@"
 using JsonGoddess;
@@ -694,12 +691,207 @@ namespace Demo
 }
 ");
 
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.NotEmpty(run.GeneratedFiles);
+
+            //"Unrelated"/собственных свойств в порождённом коде не бывает
+            //вовсе - ни на запись, ни на чтение: субъект-коллекция читается и
+            //пишется циклом по элементам, а не диспетчером имён
+            Assert.DoesNotContain("Unrelated", run.SingleGeneratedFile);
+            Assert.Contains("AppendRaw(\"[\"u8)", run.SingleGeneratedFile);
+        }
+
+        /// <summary>
+        /// Словарь смотрится раньше списка (§9.10): <c>Dictionary&lt;,&gt;</c>
+        /// реализует оба, а эталон пишет его объектом - проверено пробой.
+        /// </summary>
+        [Fact]
+        public void Subject_that_is_a_dictionary_is_accepted_and_written_as_an_object()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Payload : global::System.Collections.Generic.Dictionary<string, int> { }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Contains("AppendRaw(\"{\"u8)", run.SingleGeneratedFile);
+        }
+
+        /// <summary>
+        /// Ключ не-<c>string</c> - отказ, как и на месте члена (§9.3): у
+        /// эталона свои правила преобразования для чисел, повторять их
+        /// вслепую нельзя.
+        /// </summary>
+        [Fact]
+        public void Subject_that_is_a_non_string_keyed_dictionary_is_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Payload : global::System.Collections.Generic.Dictionary<int, int> { }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains("not string", run.GeneratorDiagnostics.Single(d => d.Id == "JGD021").GetMessage());
+        }
+
+        /// <summary>
+        /// <c>IEnumerable&lt;T&gt;</c> без <c>ICollection&lt;T&gt;</c> - пишется
+        /// (<c>GetEnumerator</c> хватает), но читать некуда: у эталона на
+        /// любом документе <c>NotSupportedException</c>, потому что класть
+        /// элемент негде. Отказ на компиляции - то же решение раньше, а не
+        /// метод, обречённый бросать всегда.
+        /// </summary>
+        [Fact]
+        public void Subject_that_implements_only_ienumerable_without_add_is_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Collections;
+using System.Collections.Generic;
+
+namespace Demo
+{
+    public class Payload : IEnumerable<string>
+    {
+        public IEnumerator<string> GetEnumerator() => new List<string>().GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
             Assert.Contains("JGD021", run.DiagnosticIds);
             Assert.Contains(
-                "IEnumerable",
+                "no accessible Add method",
                 run.GeneratorDiagnostics.Single(d => d.Id == "JGD021").GetMessage()
                 );
-            Assert.Empty(run.GeneratedFiles);
+        }
+
+        /// <summary>
+        /// Только негенерический <c>IEnumerable</c> - элемент был бы
+        /// <c>object</c>, а <c>object</c> этот генератор не пишет.
+        /// </summary>
+        [Fact]
+        public void Subject_that_implements_only_the_non_generic_ienumerable_is_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Collections;
+using System.Collections.Generic;
+
+namespace Demo
+{
+    public class Payload : IEnumerable
+    {
+        public IEnumerator GetEnumerator() => new List<int> { 1 }.GetEnumerator();
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains(
+                "System.Object",
+                run.GeneratorDiagnostics.Single(d => d.Id == "JGD021").GetMessage()
+                );
+        }
+
+        /// <summary>
+        /// <c>IsReadOnly</c>, зашитый в <c>true</c>, - найдено их же корпусом
+        /// (<c>ReadOnlyStringICollectionWrapper</c> и три соседа, §9.10):
+        /// эталон бросает <c>NotSupportedException</c> на любом документе,
+        /// потому что класть элемент, даже когда <c>Add</c> есть, запрещает
+        /// сам контракт коллекции.
+        /// </summary>
+        [Fact]
+        public void Subject_with_hardcoded_read_only_true_is_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Collections;
+using System.Collections.Generic;
+
+namespace Demo
+{
+    public class Base<T> : ICollection<T>
+    {
+        private readonly List<T> _list = new List<T>();
+        public int Count => _list.Count;
+        public virtual bool IsReadOnly => false;
+        public void Add(T item) => _list.Add(item);
+        public void Clear() => _list.Clear();
+        public bool Contains(T item) => false;
+        public void CopyTo(T[] array, int index) { }
+        public bool Remove(T item) => false;
+        public IEnumerator<T> GetEnumerator() => _list.GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    public class Payload : Base<string>
+    {
+        public override bool IsReadOnly => true;
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains(
+                "IsReadOnly",
+                run.GeneratorDiagnostics.Single(d => d.Id == "JGD021").GetMessage()
+                );
+        }
+
+        /// <summary>
+        /// Комбинация исключена по построению: у субъекта-коллекции нет
+        /// собственных членов, а эталон не печатает дискриминатор для
+        /// типа, который пишется как голый массив или объект.
+        /// </summary>
+        [Fact]
+        public void Subject_that_is_both_collection_shaped_and_polymorphic_is_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Text.Json.Serialization;
+using System.Collections.Generic;
+
+namespace Demo
+{
+    [JsonDerivedType(typeof(Payload), ""p"")]
+    public class Payload : List<string>
+    {
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+            Assert.Contains(
+                "JsonDerivedType",
+                run.GeneratorDiagnostics.Single(d => d.Id == "JGD021").GetMessage()
+                );
         }
 
         /// <summary>

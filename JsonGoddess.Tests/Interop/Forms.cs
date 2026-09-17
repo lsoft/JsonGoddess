@@ -188,7 +188,44 @@ namespace JsonGoddess.Tests.Interop
                     new Marks(), MarksSerializer.Serialize, ReadMarks),
                 Form("marks/enum-out-of-range", "значение вне набора: числом в обоих режимах",
                     new Marks { Plain = (Status)999, Mode = (Mode)77, }, MarksSerializer.Serialize, ReadMarks),
+
+                //фаза 6, §9.10: субъект, который сам является коллекцией
+                Form("collection-subject/list", "наследник List<T> без собственных членов",
+                    new StringListWrapper { "Hello", "World", }, CollectionSubjectSerializer.Serialize, ReadStringListWrapper),
+                Form("collection-subject/list-empty", "тот же тип, пустой",
+                    new StringListWrapper(), CollectionSubjectSerializer.Serialize, ReadStringListWrapper),
+                Form("collection-subject/dict", "наследник Dictionary<string,V>: объект, а не массив",
+                    new IntDictionaryWrapper { ["a"] = 1, ["b"] = 2, }, CollectionSubjectSerializer.Serialize, ReadIntDictionaryWrapper),
+                Form("collection-subject/custom-add", "ручной ICollection<T> с собственным свойством: свойство теряется, как у эталона",
+                    CreateCustomStringCollection(), CollectionSubjectSerializer.Serialize, ReadCustomStringCollection),
+                Form("collection-subject/as-member", "субъект-коллекция членом, null и вложенность",
+                    new CollectionHost
+                    {
+                        Wrapper = new StringListWrapper { "x", "y", },
+                        Nested = new List<StringListWrapper> { new StringListWrapper { "p", }, new StringListWrapper(), },
+                    },
+                    CollectionSubjectSerializer.Serialize, ReadCollectionHost),
+                Form("collection-subject/as-member-null", "субъект-коллекция членом равна null",
+                    new CollectionHost(), CollectionSubjectSerializer.Serialize, ReadCollectionHost),
+
+                //фаза 6, §9.10: коллекционные интерфейсы на месте члена
+                Form("iface-collections/full", "все семь принятых интерфейсов разом",
+                    IfaceCollections.CreateSample(), IfaceCollectionsSerializer.Serialize, ReadIfaceCollections),
+                Form("iface-collections/empty", "все семь - пустые коллекции",
+                    IfaceCollections.CreateEmpty(), IfaceCollectionsSerializer.Serialize, ReadIfaceCollections),
+                Form("iface-collections/null", "все семь равны null",
+                    new IfaceCollections(), IfaceCollectionsSerializer.Serialize, ReadIfaceCollections),
             };
+        }
+
+        private static CustomStringCollection CreateCustomStringCollection()
+        {
+            //"a"/"b" и Label в одном инициализаторе не смешать (CS0747):
+            //компилятор не различает элемент коллекции и присваивание члену
+            //в одних фигурных скобках
+            var result = new CustomStringCollection { "a", "b", };
+            result.Label = "hi";
+            return result;
         }
 
         private static InteropForm Form<T>(
@@ -409,6 +446,36 @@ namespace JsonGoddess.Tests.Interop
         private static Shelter? ReadShelter(ReadOnlySpan<byte> json)
         {
             ShelterSerializer.Deserialize(DefaultInjector.Instance, json, out Shelter? result);
+            return result;
+        }
+
+        private static StringListWrapper? ReadStringListWrapper(ReadOnlySpan<byte> json)
+        {
+            CollectionSubjectSerializer.Deserialize(DefaultInjector.Instance, json, out StringListWrapper? result);
+            return result;
+        }
+
+        private static IntDictionaryWrapper? ReadIntDictionaryWrapper(ReadOnlySpan<byte> json)
+        {
+            CollectionSubjectSerializer.Deserialize(DefaultInjector.Instance, json, out IntDictionaryWrapper? result);
+            return result;
+        }
+
+        private static CustomStringCollection? ReadCustomStringCollection(ReadOnlySpan<byte> json)
+        {
+            CollectionSubjectSerializer.Deserialize(DefaultInjector.Instance, json, out CustomStringCollection? result);
+            return result;
+        }
+
+        private static CollectionHost? ReadCollectionHost(ReadOnlySpan<byte> json)
+        {
+            CollectionSubjectSerializer.Deserialize(DefaultInjector.Instance, json, out CollectionHost? result);
+            return result;
+        }
+
+        private static IfaceCollections? ReadIfaceCollections(ReadOnlySpan<byte> json)
+        {
+            IfaceCollectionsSerializer.Deserialize(DefaultInjector.Instance, json, out IfaceCollections? result);
             return result;
         }
     }

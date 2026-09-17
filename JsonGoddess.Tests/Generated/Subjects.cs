@@ -882,4 +882,120 @@ namespace JsonGoddess.Tests.Generated
     public partial class ShelterSerializer
     {
     }
+
+    // ---- Фаза 6, §9.10: субъект, который сам является коллекцией (часть 1) ----
+
+    /// <summary>
+    /// Простейшая форма из их корпуса (§11.1, §9.6): наследник
+    /// <c>List&lt;T&gt;</c> без единого собственного члена.
+    /// </summary>
+    public class StringListWrapper : List<string>
+    {
+    }
+
+    /// <summary>
+    /// Тот же угол словарём: эталон смотрит на <c>IDictionary&lt;,&gt;</c>
+    /// раньше, чем на <c>IEnumerable</c>, и пишет объект, а не массив -
+    /// проверено пробой.
+    /// </summary>
+    public class IntDictionaryWrapper : Dictionary<string, int>
+    {
+    }
+
+    /// <summary>
+    /// Ручная реализация <c>ICollection&lt;T&gt;</c> - <c>Add</c> есть, но не
+    /// унаследован от <c>List&lt;T&gt;</c>. Собственное свойство
+    /// <see cref="Label"/> эталон молча теряет (проверено пробой: класс с
+    /// <c>ICollection&lt;string&gt;</c> и property-членом пишется как массив
+    /// без единого свойства), и мы теряем его так же - решение §9.10.
+    /// </summary>
+    public class CustomStringCollection : ICollection<string>
+    {
+        private readonly List<string> _items = new List<string>();
+
+        public string? Label { get; set; }
+
+        public int Count => _items.Count;
+        public bool IsReadOnly => false;
+        public void Add(string item) => _items.Add(item);
+        public void Clear() => _items.Clear();
+        public bool Contains(string item) => _items.Contains(item);
+        public void CopyTo(string[] array, int arrayIndex) => _items.CopyTo(array, arrayIndex);
+        public bool Remove(string item) => _items.Remove(item);
+        public IEnumerator<string> GetEnumerator() => _items.GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    /// <summary>
+    /// Субъект-коллекция на месте члена другого субъекта: <c>null</c>,
+    /// вложенность (список коллекций-субъектов) и обычный заполненный случай -
+    /// три разных пути кода на одном типе.
+    /// </summary>
+    public class CollectionHost
+    {
+        public StringListWrapper? Wrapper { get; set; }
+        public List<StringListWrapper>? Nested { get; set; }
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(StringListWrapper), true)]
+    [JsonSubject(typeof(IntDictionaryWrapper), true)]
+    [JsonSubject(typeof(CustomStringCollection), true)]
+    [JsonSubject(typeof(CollectionHost), true)]
+    public partial class CollectionSubjectSerializer
+    {
+    }
+
+    // ---- Фаза 6, §9.10: коллекционные интерфейсы на месте члена (часть 2) ----
+
+    /// <summary>
+    /// Все семь принятых интерфейсов разом, плюс <c>null</c> и пустая форма -
+    /// см. <c>Forms</c>.
+    /// </summary>
+    public class IfaceCollections
+    {
+        public IList<int>? AsIList { get; set; }
+        public ICollection<int>? AsICollection { get; set; }
+        public IEnumerable<int>? AsIEnumerable { get; set; }
+        public IReadOnlyList<int>? AsIReadOnlyList { get; set; }
+        public IReadOnlyCollection<int>? AsIReadOnlyCollection { get; set; }
+        public IDictionary<string, int>? AsIDictionary { get; set; }
+        public IReadOnlyDictionary<string, int>? AsIReadOnlyDictionary { get; set; }
+
+        public static IfaceCollections CreateSample()
+        {
+            return new IfaceCollections
+            {
+                AsIList = new List<int> { 1, 2, 3, },
+                AsICollection = new List<int> { 4, 5, },
+                AsIEnumerable = new List<int> { 6, },
+                AsIReadOnlyList = new List<int> { 7, 8, },
+                AsIReadOnlyCollection = new List<int> { 9, },
+                AsIDictionary = new Dictionary<string, int> { ["a"] = 1, },
+                AsIReadOnlyDictionary = new Dictionary<string, int> { ["b"] = 2, },
+            };
+        }
+
+        public static IfaceCollections CreateEmpty()
+        {
+            return new IfaceCollections
+            {
+                AsIList = new List<int>(),
+                AsICollection = new List<int>(),
+                AsIEnumerable = new List<int>(),
+                AsIReadOnlyList = new List<int>(),
+                AsIReadOnlyCollection = new List<int>(),
+                AsIDictionary = new Dictionary<string, int>(),
+                AsIReadOnlyDictionary = new Dictionary<string, int>(),
+            };
+        }
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(IfaceCollections), true)]
+    public partial class IfaceCollectionsSerializer
+    {
+    }
 }

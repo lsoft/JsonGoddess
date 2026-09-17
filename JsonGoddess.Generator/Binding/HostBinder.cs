@@ -164,6 +164,20 @@ namespace JsonGoddess.Generator.Binding
 
             foreach (var registration in accepted)
             {
+                if (TryClassifyCollectionShape(registration.Type, out var elementType, out var isDictionary, out _))
+                {
+                    if (!BindCollectionSubject(
+                            registration, byType, known, hostLocation, diagnostics,
+                            elementType!, isDictionary, collections, stringEnums, scalars,
+                            out var collectionModel, ref failed))
+                    {
+                        continue;
+                    }
+
+                    subjects.Add(collectionModel!);
+                    continue;
+                }
+
                 var members = BindMembers(registration.Type, byType, known, options, hostLocation, diagnostics);
                 if (members is null)
                 {
@@ -445,12 +459,13 @@ namespace JsonGoddess.Generator.Binding
             {
                 refusal = "generic types are not supported";
             }
-            else if (IsCollectionShaped(subject))
+            else if (IsCollectionShaped(subject) && !TryClassifyCollectionShape(subject, out _, out _, out refusal))
             {
-                refusal =
-                    "the type implements IEnumerable, so System.Text.Json writes it as a JSON array of its "
-                    + "elements and ignores its properties entirely; serving it as an object would produce a "
-                    + "document the reference implementation never produces (collection-shaped subjects arrive later)";
+                //refusal уже присвоен внутри TryClassifyCollectionShape -
+                //его собственный контракт: false означает либо "не
+                //коллекция" (сюда мы уже не попадаем - IsCollectionShaped
+                //отсеял), либо "коллекция, но не такая, какую мы обслуживаем",
+                //и тогда причина обязана быть названа
             }
 
             if (refusal is not null)
@@ -470,24 +485,14 @@ namespace JsonGoddess.Generator.Binding
         }
 
         /// <summary>
-        /// Тип, который сам является коллекцией.
-        ///
-        /// Найдено переносом их набора (§11.1): <c>class StringListWrapper :
-        /// List&lt;string&gt; { }</c> мы принимали и писали <c>{}</c>, а эталон
-        /// пишет <c>["Hello","World"]</c>. Проверено прогоном и на классе с
-        /// собственным свойством: <c>ICollection&lt;string&gt;</c> с
-        /// property-членом эталон пишет как <c>["a"]</c> - свойство исчезает
-        /// целиком.
-        ///
-        /// То есть отличался не порядок и не состав, а <b>строение</b>
-        /// документа, и отличался молча. Ровно тот исход, который план
-        /// называет худшим.
-        ///
-        /// Проверка стоит после конструктора и по <c>IEnumerable</c>, а не по
-        /// <c>IEnumerable&lt;T&gt;</c>: эталон смотрит на негенерический
-        /// интерфейс. <c>string</c>, <c>byte[]</c>, <c>List&lt;T&gt;</c> и
-        /// словарь сюда не доезжают - их разбирает связыватель значений раньше,
-        /// каждый своей веткой.
+        /// Тип, который сам является коллекцией - быстрый предварительный
+        /// отбор по негенерическому <c>IEnumerable</c>, тому же интерфейсу,
+        /// на который смотрит сам эталон (не по <c>IEnumerable&lt;T&gt;</c>).
+        /// <c>string</c>, <c>byte[]</c>, <c>List&lt;T&gt;</c> и словарь сюда не
+        /// доезжают как <b>член</b> - их разбирает связыватель значений раньше,
+        /// каждый своей веткой, - но как <b>субъект</b> (класс, унаследованный
+        /// от одного из них) доезжают, и <see cref="TryClassifyCollectionShape"/>
+        /// разбирает, какая именно это форма (§9.10 плана).
         /// </summary>
         private static bool IsCollectionShaped(INamedTypeSymbol subject)
         {
@@ -502,6 +507,391 @@ namespace JsonGoddess.Generator.Binding
             return false;
         }
 
+        /// <summary>
+        /// Форма субъекта-коллекции (§9.10 плана, часть 1). Найдено переносом
+        /// их набора (§11.1, §9.6): <c>class StringListWrapper : List&lt;string&gt;
+        /// { }</c> мы принимали и писали <c>{}</c>, а эталон пишет
+        /// <c>["Hello","World"]</c>. Дальше - три пробы, разошедшиеся с
+        /// ожиданием:
+        ///
+        /// <list type="number">
+        /// <item><b>словарь смотрится раньше списка.</b>
+        /// <c>class X : Dictionary&lt;string,int&gt;</c> эталон пишет
+        /// <c>{"a":1}</c>, а не <c>[...]</c> - хотя <c>Dictionary&lt;,&gt;</c>
+        /// реализует и <c>ICollection&lt;KeyValuePair&lt;,&gt;&gt;</c> тоже.
+        /// Поэтому <c>IDictionary&lt;string,V&gt;</c> проверяется первым;</item>
+        /// <item><b>собственные свойства теряются одинаково у обеих форм.</b>
+        /// <c>ICollection&lt;string&gt;</c> с property-членом эталон пишет как
+        /// <c>["a"]</c> - свойство исчезает целиком, и мы теряем его так же
+        /// (subject.Members у коллекции-субъекта всегда пуст), а не отказываем:
+        /// это не «молчаливое расхождение» principle 2, а намеренное совпадение
+        /// с тем, что теряет сам эталон;</item>
+        /// <item><b>без <c>Add</c> - отказ, а не рантайм-исключение.</b> Тип,
+        /// реализующий только <c>IEnumerable&lt;T&gt;</c> без <c>ICollection&lt;T&gt;</c>,
+        /// эталон пишет как массив, но читает с <c>NotSupportedException</c>
+        /// <b>на любом документе</b> - класть добавленный элемент некуда.
+        /// Мы отказываем на компиляции по той же причине, а не генерируем
+        /// метод, обречённый бросать всегда.</item>
+        /// </list>
+        ///
+        /// Тип, реализующий только негенерический <c>IEnumerable</c> (без
+        /// закрытого <c>IEnumerable&lt;T&gt;</c> вовсе), - тоже отказ: элемент
+        /// был бы <c>object</c>, а <c>object</c> этот генератор не пишет и не
+        /// планирует.
+        /// </summary>
+        private static bool TryClassifyCollectionShape(
+            INamedTypeSymbol subject,
+            out ITypeSymbol? elementOrValueType,
+            out bool isDictionary,
+            out string? refusal
+            )
+        {
+            elementOrValueType = null;
+            isDictionary = false;
+            refusal = null;
+
+            INamedTypeSymbol? dictionaryInterface = null;
+            var dictionaryAmbiguous = false;
+            INamedTypeSymbol? collectionInterface = null;
+            var collectionAmbiguous = false;
+            INamedTypeSymbol? enumerableInterface = null;
+            var enumerableAmbiguous = false;
+
+            foreach (var contract in subject.AllInterfaces)
+            {
+                //System.Collections.Generic - по звеньям, а не строкой, как и
+                //в ValueBinder.IsCollectionsGeneric: ToDisplayString собирал
+                //бы её заново на каждый интерфейс каждого субъекта.
+                if (!contract.IsGenericType
+                    || contract.ContainingNamespace is not { Name: "Generic", } ns
+                    || ns.ContainingNamespace is not { Name: "Collections", } collectionsNs
+                    || collectionsNs.ContainingNamespace is not { Name: "System", } systemNs
+                    || !systemNs.ContainingNamespace.IsGlobalNamespace)
+                {
+                    continue;
+                }
+
+                switch (contract.OriginalDefinition.MetadataName)
+                {
+                    case "IDictionary`2":
+                        dictionaryAmbiguous |= dictionaryInterface is not null
+                            && !SymbolEqualityComparer.Default.Equals(dictionaryInterface, contract);
+                        dictionaryInterface = contract;
+                        break;
+
+                    case "ICollection`1":
+                        collectionAmbiguous |= collectionInterface is not null
+                            && !SymbolEqualityComparer.Default.Equals(collectionInterface, contract);
+                        collectionInterface = contract;
+                        break;
+
+                    case "IEnumerable`1":
+                        enumerableAmbiguous |= enumerableInterface is not null
+                            && !SymbolEqualityComparer.Default.Equals(enumerableInterface, contract);
+                        enumerableInterface = contract;
+                        break;
+                }
+            }
+
+            //Словарь смотрится раньше списка: Dictionary<TKey,TValue> реализует
+            //и IDictionary<,>, и ICollection<KeyValuePair<,>> одновременно, а
+            //эталон пишет его объектом - проверено пробой.
+            if (dictionaryInterface is not null)
+            {
+                if (dictionaryAmbiguous)
+                {
+                    refusal = "the type implements more than one closed construction of IDictionary<,>, "
+                        + "so the value type cannot be determined unambiguously";
+                    return false;
+                }
+
+                var key = dictionaryInterface.TypeArguments[0];
+                if (key.SpecialType != SpecialType.System_String)
+                {
+                    refusal = "the dictionary key is '" + key.ToDisplayString()
+                        + "', not string; only string-keyed dictionaries are supported";
+                    return false;
+                }
+
+                if (HasHardcodedReadOnlyTrue(subject, dictionaryInterface))
+                {
+                    refusal = "IsReadOnly on this type always returns true; System.Text.Json refuses to "
+                        + "populate such a collection on any document, and so do we - a generated reader "
+                        + "that always throws is not a served type";
+                    return false;
+                }
+
+                elementOrValueType = dictionaryInterface.TypeArguments[1];
+                isDictionary = true;
+                return true;
+            }
+
+            if (collectionInterface is not null)
+            {
+                if (collectionAmbiguous)
+                {
+                    refusal = "the type implements more than one closed construction of ICollection<>, "
+                        + "so the element type cannot be determined unambiguously";
+                    return false;
+                }
+
+                if (HasHardcodedReadOnlyTrue(subject, collectionInterface))
+                {
+                    refusal = "IsReadOnly on this type always returns true; System.Text.Json refuses to "
+                        + "populate such a collection on any document, and so do we - a generated reader "
+                        + "that always throws is not a served type";
+                    return false;
+                }
+
+                elementOrValueType = collectionInterface.TypeArguments[0];
+                return true;
+            }
+
+            if (enumerableInterface is not null)
+            {
+                if (enumerableAmbiguous)
+                {
+                    refusal = "the type implements more than one closed construction of IEnumerable<>, "
+                        + "so the element type cannot be determined unambiguously";
+                    return false;
+                }
+
+                //Пишется этот тип успешно - GetEnumerator для записи хватает, -
+                //но читать некуда: ICollection<T> с его Add не реализован, а
+                //без него System.Text.Json бросает NotSupportedException на
+                //любом документе. Отказ на компиляции - то же решение раньше.
+                refusal = "the type implements IEnumerable<" + enumerableInterface.TypeArguments[0].ToDisplayString()
+                    + "> but not ICollection<> of the same element, so there is no accessible Add method; "
+                    + "System.Text.Json throws NotSupportedException at run time for the very same reason";
+                return false;
+            }
+
+            refusal = "the type implements only the non-generic IEnumerable, so its element type would be "
+                + "'object', and JsonGoddess does not serialize System.Object";
+            return false;
+        }
+
+        /// <summary>
+        /// <c>IsReadOnly</c>, зашитый константой <c>true</c>. Найдено их
+        /// же корпусом (§9.10): <c>ReadOnlyStringICollectionWrapper</c> и три
+        /// его соседа переопределяют <c>IsReadOnly</c> ровно так - и эталон
+        /// на любом документе для них бросает <c>NotSupportedException</c>,
+        /// потому что класть элемент, даже когда <c>Add</c> есть, ему запрещает
+        /// сам контракт коллекции.
+        ///
+        /// Это единственное место во всей части 1, где решение снято не с
+        /// формы типа, а с <b>тела</b> члена: <c>IsReadOnly</c> в общем случае
+        /// вычисляемое (у <c>HashSetWithBackingCollection</c> - делегат к
+        /// вложенной коллекции, и он законен), и врать про такие типы, отказывая
+        /// им тоже, было бы не честнее, чем принимать их. Различает их
+        /// только буквальное <c>=&gt; true</c>/<c>{ get { return true; } }</c> -
+        /// то, что можно утверждать не запуская код.
+        /// </summary>
+        private static bool HasHardcodedReadOnlyTrue(INamedTypeSymbol subject, INamedTypeSymbol constructedInterface)
+        {
+            var collectionOfT = constructedInterface.OriginalDefinition.MetadataName == "ICollection`1"
+                ? constructedInterface
+                : constructedInterface.AllInterfaces.FirstOrDefault(
+                    i => i.OriginalDefinition.MetadataName == "ICollection`1"
+                    );
+
+            var isReadOnlyOnInterface = collectionOfT?.GetMembers("IsReadOnly")
+                .OfType<IPropertySymbol>()
+                .FirstOrDefault();
+
+            if (isReadOnlyOnInterface is null)
+            {
+                return false;
+            }
+
+            var implementation = subject.FindImplementationForInterfaceMember(isReadOnlyOnInterface) as IPropertySymbol;
+            if (implementation is null)
+            {
+                return false;
+            }
+
+            //FindImplementationForInterfaceMember отдаёт ту реализацию, что
+            //впервые закрывает контракт интерфейса - у ReadOnlyStringICollectionWrapper
+            //это virtual-свойство на generic-предке, потому что тот и есть
+            //место, где интерфейс реализован. Нам нужен не он, а тот, кого
+            //настоящий вызов найдёт виртуальной диспетчеризацией - самый
+            //производный override, который может лежать в ЛЮБОМ промежуточном
+            //типе между subject и найденной реализацией.
+            implementation = MostDerivedOverride(subject, implementation);
+
+            return GetterReturnsLiteralTrue(implementation);
+        }
+
+        /// <summary>
+        /// Самый производный override свойства <paramref name="declared"/>,
+        /// начиная поиск от <paramref name="subject"/> и подымаясь к базовым
+        /// типам. Виртуальная диспетчеризация делает то же самое в рантайме -
+        /// здесь она повторяется на символах, потому что вызывать код мы не
+        /// можем и не должны (§1 плана: код порождается на компиляции).
+        /// </summary>
+        private static IPropertySymbol MostDerivedOverride(INamedTypeSymbol subject, IPropertySymbol declared)
+        {
+            for (var current = subject; current is not null; current = current.BaseType)
+            {
+                foreach (var member in current.GetMembers(declared.Name))
+                {
+                    if (member is IPropertySymbol property && OverridesOrIs(property, declared))
+                    {
+                        return property;
+                    }
+                }
+            }
+
+            return declared;
+        }
+
+        private static bool OverridesOrIs(IPropertySymbol property, IPropertySymbol target)
+        {
+            for (var current = property; current is not null; current = current.OverriddenProperty)
+            {
+                if (SymbolEqualityComparer.Default.Equals(current, target))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool GetterReturnsLiteralTrue(IPropertySymbol property)
+        {
+            foreach (var reference in property.DeclaringSyntaxReferences)
+            {
+                if (reference.GetSyntax() is not PropertyDeclarationSyntax declaration)
+                {
+                    continue;
+                }
+
+                if (IsLiteralTrue(declaration.ExpressionBody?.Expression))
+                {
+                    return true;
+                }
+
+                var getter = declaration.AccessorList?.Accessors
+                    .FirstOrDefault(a => a.IsKind(SyntaxKind.GetAccessorDeclaration));
+
+                if (getter is null)
+                {
+                    continue;
+                }
+
+                if (IsLiteralTrue(getter.ExpressionBody?.Expression))
+                {
+                    return true;
+                }
+
+                if (getter.Body is { Statements: { Count: 1, } statements, }
+                    && statements[0] is ReturnStatementSyntax { Expression: var returned, }
+                    && IsLiteralTrue(returned))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsLiteralTrue(ExpressionSyntax? expression) =>
+            expression is LiteralExpressionSyntax literal && literal.IsKind(SyntaxKind.TrueLiteralExpression);
+
+        /// <summary>
+        /// Субъект-коллекция целиком: элемент связывается только теперь -
+        /// раньше <c>byType</c> ещё не полон (§9 плана: субъект может
+        /// ссылаться на тип, зарегистрированный ниже по списку атрибутов), -
+        /// а конструктор и полиморфизм проверяются теми же связывателями, что
+        /// и у обычного субъекта. Отличие только в том, что членов передаётся
+        /// пустой список: класть в него нечего, subject.Members у такого
+        /// субъекта всегда пуст (§9.10).
+        /// </summary>
+        private static bool BindCollectionSubject(
+            Registration registration,
+            Dictionary<ISymbol, string> byType,
+            KnownSymbols known,
+            LocationInfo? hostLocation,
+            List<DiagnosticInfo> diagnostics,
+            ITypeSymbol elementType,
+            bool isDictionary,
+            Dictionary<string, ValueModel> collections,
+            Dictionary<string, EnumModel> stringEnums,
+            Dictionary<string, ValueModel> scalars,
+            out SubjectModel? model,
+            ref bool failed
+            )
+        {
+            model = null;
+
+            if (!ValueBinder.TryBind(elementType, byType, known, out var elementValue, out var elementRefusal))
+            {
+                diagnostics.Add(
+                    new DiagnosticInfo(
+                        JsonGoddessDiagnostics.SubjectIsNotSupportedId,
+                        hostLocation,
+                        registration.Type.ToDisplayString(),
+                        (isDictionary ? "its value type '" : "its element type '") + elementType.ToDisplayString()
+                            + "' cannot be served: " + elementRefusal
+                        )
+                    );
+                failed = true;
+                return false;
+            }
+
+            var parameters = ConstructorBinder.Bind(
+                registration.Type, new List<MemberModel>(), known, hostLocation, diagnostics, ref failed
+                );
+
+            if (parameters is null)
+            {
+                return false;
+            }
+
+            if (!PolymorphismBinder.TryBind(
+                    registration.Type, byType, known, hostLocation, diagnostics,
+                    out var derived, out var discriminatorName))
+            {
+                failed = true;
+                return false;
+            }
+
+            if (derived.Count > 0)
+            {
+                //Комбинация исключена по построению: собственных членов у
+                //такого субъекта нет, а дискриминатор - это свойство,
+                //приписанное первым к объекту, которого сериализатор эталона
+                //для коллекции-субъекта не печатает вовсе
+                diagnostics.Add(
+                    new DiagnosticInfo(
+                        JsonGoddessDiagnostics.SubjectIsNotSupportedId,
+                        hostLocation,
+                        registration.Type.ToDisplayString(),
+                        "the type is both collection-shaped and carries [JsonDerivedType]; System.Text.Json "
+                            + "writes a collection-shaped type as a bare array or object and never looks for "
+                            + "a type discriminator on it"
+                        )
+                    );
+                failed = true;
+                return false;
+            }
+
+            ValueBinder.CollectValues(elementValue!, collections, stringEnums, scalars);
+
+            model = new SubjectModel(
+                registration.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                byType[registration.Type],
+                registration.IsRoot,
+                registration.Type.IsValueType,
+                new List<MemberModel>(),
+                parameters,
+                derived,
+                discriminatorName,
+                new CollectionShapeModel(elementValue!, isDictionary)
+                );
+            return true;
+        }
 
         /// <summary>
         /// Порядок членов целиком снят с <c>System.Text.Json</c> прогоном, и
