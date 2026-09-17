@@ -89,12 +89,18 @@ rem signed 32-bit number, so it cannot even express cores above CPU 30.
 rem
 rem /b keeps the child in this console, so the redirection below still reaches it,
 rem and /wait is what makes errorlevel below mean the benchmark run.
+rem Priority goes on for the same reason as the affinity mask, and by the same
+rem mechanism: Windows hands a priority class down to every child, so the one
+rem setting covers the per-job exe BenchmarkDotNet generates and runs. Above
+rem normal rather than high on purpose - high starves the shell that has to
+rem collect the output, and the point here is to lose fewer timeslices to
+rem background work, not to win a fight with the OS.
 if defined AFFINITY (
-    echo [2/2] Running benchmarks on the performance cores, this takes several minutes ...
-    start "JsonGoddess benchmarks" /affinity %AFFINITY% /b /wait "%HOSTEXE%" %BENCHARGS% >> "%LOG%" 2>&1
+    echo [2/2] Running benchmarks on the performance cores, above normal priority ...
+    start "JsonGoddess benchmarks" /affinity %AFFINITY% /abovenormal /b /wait "%HOSTEXE%" %BENCHARGS% >> "%LOG%" 2>&1
 ) else (
-    echo [2/2] Running benchmarks, this takes several minutes ...
-    "%HOSTEXE%" %BENCHARGS% >> "%LOG%" 2>&1
+    echo [2/2] Running benchmarks, above normal priority ...
+    start "JsonGoddess benchmarks" /abovenormal /b /wait "%HOSTEXE%" %BENCHARGS% >> "%LOG%" 2>&1
 )
 if errorlevel 1 goto :failed
 

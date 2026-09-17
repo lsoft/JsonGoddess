@@ -68,5 +68,51 @@ namespace JsonGoddess.Tests.Core
             Assert.True(char.IsSurrogatePair(decoded[0], decoded[1]));
             Assert.Equal(0x1F600, char.ConvertToUtf32(decoded[0], decoded[1]));
         }
+
+#if NET8_0_OR_GREATER
+        /// <summary>
+        /// <c>JsonGuard.InvalidUtf8</c> проверяет строку, а строит её sink, -
+        /// значит проверка обязана не выделять <b>ничего</b>.
+        ///
+        /// Тест заведён по следам замера: сперва <c>EnsureValidUtf8</c> звал
+        /// <c>DecodeStrict</c>, тот материализовал <c>string</c> и выбрасывал
+        /// его, и страж выходил в полтора раза дороже по аллокациям на чистом
+        /// документе (896 B против 616 B на REGULAR). Поймалось это по
+        /// аллокациям, а не по времени, - они детерминированы, и потому же
+        /// закрепляются тестом, а не строкой в отчёте.
+        ///
+        /// Только net8+: <c>GC.GetAllocatedBytesForCurrentThread</c> на
+        /// netstandard2.0 нет, а поведение проверяется тут не рантайма, а
+        /// нашего кода - оно общее для всех таргетов.
+        /// </summary>
+        [Fact]
+        public void Validating_utf8_allocates_nothing()
+        {
+            var plain = Encoding.UTF8.GetBytes("Hello, world");
+            var escaped = Encoding.UTF8.GetBytes("Hello\\u0021 \\uD83D\\uDE00");
+
+            //прогрев: первый проход платит за JIT и за таблицы кодировщика
+            for (var i = 0; i < 16; i++)
+            {
+                JsonStringDecoder.EnsureValidUtf8(plain, false);
+                JsonStringDecoder.EnsureValidUtf8(escaped, true);
+            }
+
+            var before = GC.GetAllocatedBytesForCurrentThread();
+
+            for (var i = 0; i < 64; i++)
+            {
+                JsonStringDecoder.EnsureValidUtf8(plain, false);
+                JsonStringDecoder.EnsureValidUtf8(escaped, true);
+            }
+
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+            Assert.True(
+                allocated == 0,
+                "проверка UTF-8 выделила " + allocated + " байт на 128 вызовов, а должна ноль"
+                );
+        }
+#endif
     }
 }

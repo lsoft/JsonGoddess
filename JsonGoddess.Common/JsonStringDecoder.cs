@@ -137,7 +137,45 @@ namespace JsonGoddess.Internal
         /// </summary>
         public static void EnsureValidUtf8(ReadOnlySpan<byte> raw, bool hasEscape)
         {
-            DecodeStrict(raw, hasEscape);
+            //Проверка не строит строку, и это не микрооптимизация. Раньше
+            //здесь стоял вызов DecodeStrict, то есть страж материализовал
+            //string на каждое строковое значение каждого документа - и тут же
+            //выбрасывал его: содержимое-то строит sink, а не мы. Замер поймал
+            //это по аллокациям (896 B против 616 B на REGULAR, в полтора
+            //раза), и поймал именно потому, что аллокации детерминированы, а
+            //время на коротком прогоне - нет.
+            if (raw.Length == 0)
+            {
+                return;
+            }
+
+            char[]? rented = null;
+            try
+            {
+                Span<char> buffer = raw.Length <= StackThreshold
+                    ? stackalloc char[StackThreshold]
+                    : (rented = ArrayPool<char>.Shared.Rent(raw.Length));
+
+                //TranscodeStrict сам отказывает на битой последовательности:
+                //у StrictUtf8 fallback выбрасывающий, а не подставляющий
+                var decoded = TranscodeStrict(raw, buffer);
+
+                //непарный суррогат в валидном UTF-8 невозможен по построению -
+                //он приезжает только из \uXXXX, поэтому без escape'ов второго
+                //прохода не нужно вовсе
+                if (hasEscape)
+                {
+                    var written = Unescape(buffer.Slice(0, decoded));
+                    ValidateNoUnpairedSurrogates(buffer.Slice(0, written));
+                }
+            }
+            finally
+            {
+                if (rented is not null)
+                {
+                    ArrayPool<char>.Shared.Return(rented);
+                }
+            }
         }
 
         private static void ValidateNoUnpairedSurrogates(ReadOnlySpan<char> text)
