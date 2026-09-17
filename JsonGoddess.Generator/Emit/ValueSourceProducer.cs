@@ -29,6 +29,8 @@ namespace JsonGoddess.Generator.Emit
         public const string Naming = "global::JsonGoddess.Internal.JsonNaming";
         public const string NamingStyle = "global::JsonGoddess.Internal.JsonNamingStyle";
         public const string StringDecoder = "global::JsonGoddess.Internal.JsonStringDecoder";
+        private const string TokenKind = "global::JsonGoddess.Internal.JsonTokenKind";
+        private const string DocumentException = "global::JsonGoddess.JsonDocumentException";
 
         /// <summary>
         /// Имя метода сканера для содержимого строки - обычное или строгое
@@ -87,12 +89,28 @@ namespace JsonGoddess.Generator.Emit
         /// заметной, а цена - один статический вызов на коллекцию, то есть
         /// ровно столько же, сколько платит чтение.
         /// </summary>
-        public static void WriteValue(SourceBuilder builder, ValueModel value, string accessor, JsonNamingStyle keyNaming)
+        public static void WriteValue(
+            SourceBuilder builder, ValueModel value, string accessor, JsonNamingStyle keyNaming, JsonFeature features
+            )
         {
             switch (value.Form)
             {
                 case ValueForm.Builtin:
                 {
+                    //JsonFeature.NamedFloatingPointLiterals: без фичи NaN и
+                    //бесконечности не имеют формы JSON-числа, и обычный
+                    //Append (без фичи) на них отказывает - пробоем
+                    //подтверждено, что так же безусловно ведёт себя и эталон.
+                    //С фичей три особых значения печатаются строкой -
+                    //решение о том, какую ветку печатать, принимается здесь,
+                    //на этапе генерации, а не rentime-проверкой внутри sink'а.
+                    if ((value.Builtin == BuiltinKind.Single || value.Builtin == BuiltinKind.Double)
+                        && (features & JsonFeature.NamedFloatingPointLiterals) != 0)
+                    {
+                        WriteNamedFloat(builder, value, accessor);
+                        return;
+                    }
+
                     builder.Line(
                         value.Builtin == BuiltinKind.ByteArray
                             ? "exhauster.AppendBase64(" + accessor + ");"
@@ -133,6 +151,47 @@ namespace JsonGoddess.Generator.Emit
                     return;
                 }
             }
+        }
+
+        /// <summary>
+        /// <c>JsonFeature.NamedFloatingPointLiterals</c>, значение целиком.
+        /// Локальная переменная - по той же причине, что и в
+        /// <see cref="WriteNullable"/>: <paramref name="accessor"/> может быть
+        /// вычисляемым свойством, и проверять его дважды (на NaN и затем ещё
+        /// раз для записи) значило бы вычислять член дважды.
+        /// </summary>
+        private static void WriteNamedFloat(SourceBuilder builder, ValueModel value, string accessor)
+        {
+            const string local = "namedFloat";
+            var named = "global::JsonGoddess.Internal.JsonNamedFloat";
+
+            builder.OpenBlock();
+
+            if (value.IsNullable)
+            {
+                builder.Line("var " + local + " = " + accessor + ";");
+                builder.OpenBlock("if (" + local + " is null)");
+                builder.Line("exhauster.AppendNull();");
+                builder.CloseBlock();
+                builder.OpenBlock("else if (" + named + ".TryGetLiteral(" + local + ".Value, out var literal))");
+                builder.Line("exhauster.AppendRaw(literal);");
+                builder.CloseBlock();
+                builder.OpenBlock("else");
+                builder.Line("exhauster.Append(" + local + ".Value);");
+                builder.CloseBlock();
+            }
+            else
+            {
+                builder.Line("var " + local + " = " + accessor + ";");
+                builder.OpenBlock("if (" + named + ".TryGetLiteral(" + local + ", out var literal))");
+                builder.Line("exhauster.AppendRaw(literal);");
+                builder.CloseBlock();
+                builder.OpenBlock("else");
+                builder.Line("exhauster.Append(" + local + ");");
+                builder.CloseBlock();
+            }
+
+            builder.CloseBlock();
         }
 
         /// <summary>
@@ -213,6 +272,7 @@ namespace JsonGoddess.Generator.Emit
             SourceBuilder builder,
             ValueModel value,
             JsonNamingStyle keyNaming,
+            JsonFeature features,
             string accessor = "items"
             )
         {
@@ -258,16 +318,16 @@ namespace JsonGoddess.Generator.Emit
                 //"a\"b" экранированным, и совпасть с ним иначе нельзя
                 builder.Line("exhauster.Append(" + Key("pair.Key", keyNaming) + ");");
                 builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(":") + ");");
-                WriteValue(builder, value.Element!, "pair.Value", keyNaming);
+                WriteValue(builder, value.Element!, "pair.Value", keyNaming, features);
             }
             else if (isForEach)
             {
                 builder.Line("i++;");
-                WriteValue(builder, value.Element!, "element", keyNaming);
+                WriteValue(builder, value.Element!, "element", keyNaming, features);
             }
             else
             {
-                WriteValue(builder, value.Element!, accessor + "[i]", keyNaming);
+                WriteValue(builder, value.Element!, accessor + "[i]", keyNaming, features);
             }
 
             builder.CloseBlock();
@@ -398,7 +458,7 @@ namespace JsonGoddess.Generator.Emit
         /// подобные и так упадут на разборе некорректного текста
         /// <c>FormatException</c>'ом, а строка - нет, ей подходит любой байт.
         /// </summary>
-        public static void ReadScalarBody(SourceBuilder builder, ValueModel value, JsonGuard guards)
+        public static void ReadScalarBody(SourceBuilder builder, ValueModel value, JsonGuard guards, JsonFeature features)
         {
             var typeName = BuiltinTypes.GetTypeName(value.Builtin);
 
@@ -414,8 +474,7 @@ namespace JsonGoddess.Generator.Emit
             {
                 case LexemeKind.Number:
                 {
-                    builder.Line("var raw = " + NumberReadCall(guards) + "(json, ref position);");
-                    builder.Line("injector.Parse(ref context, raw, out " + typeName + " parsed);");
+                    ReadNumberScalarBody(builder, value, guards, features, typeName);
                     break;
                 }
 
@@ -441,6 +500,82 @@ namespace JsonGoddess.Generator.Emit
             }
 
             builder.Line("return parsed;");
+        }
+
+        /// <summary>
+        /// Число-лексема, с учётом <c>JsonFeature.NumbersFromStrings</c>
+        /// (аналог <c>AllowReadingFromString</c>) и, для
+        /// <see cref="float"/>/<see cref="double"/>,
+        /// <c>JsonFeature.NamedFloatingPointLiterals</c>. Без обеих фич
+        /// печатается ровно то, что было всегда - ветка ниже даже не
+        /// заходит в свою ветвь <c>if</c>.
+        ///
+        /// Пробоем подтверждено: обе фичи независимы (числовая строка без
+        /// <c>NamedFloatingPointLiterals</c> не открывает "NaN", а именованный
+        /// литерал без <c>NumbersFromStrings</c> не открывает произвольную
+        /// числовую строку), поэтому решение принимается по каждой в
+        /// отдельности, а не только композитно.
+        /// </summary>
+        private static void ReadNumberScalarBody(
+            SourceBuilder builder, ValueModel value, JsonGuard guards, JsonFeature features, string typeName
+            )
+        {
+            var wantsNamedFloat = (value.Builtin == BuiltinKind.Single || value.Builtin == BuiltinKind.Double)
+                && (features & JsonFeature.NamedFloatingPointLiterals) != 0;
+            var wantsFromString = (features & JsonFeature.NumbersFromStrings) != 0;
+
+            if (!wantsNamedFloat && !wantsFromString)
+            {
+                builder.Line("var raw = " + NumberReadCall(guards) + "(json, ref position);");
+                builder.Line("injector.Parse(ref context, raw, out " + typeName + " parsed);");
+                return;
+            }
+
+            builder.Line(typeName + " parsed;");
+            builder.OpenBlock("if (" + Scan + ".Peek(json, ref position) == " + TokenKind + ".String)");
+
+            builder.Line("var raw = " + StringReadCall(guards) + "(json, ref position, out var rawEscaped);");
+            builder.OpenBlock("if (rawEscaped)");
+            builder.Line(
+                "raw = context.UnescapeValue(raw" + ((guards & JsonGuard.InvalidUtf8) != 0 ? ", true" : string.Empty) + ");"
+                );
+            builder.CloseBlock();
+            builder.Line();
+
+            if (wantsNamedFloat)
+            {
+                builder.OpenBlock("if (global::JsonGoddess.Internal.JsonNamedFloat.TryParse(raw, out var named))");
+                builder.Line("parsed = (" + typeName + ")named;");
+                builder.CloseBlock();
+                builder.OpenBlock("else");
+
+                if (wantsFromString)
+                {
+                    builder.Line("injector.Parse(ref context, raw, out parsed);");
+                }
+                else
+                {
+                    //пробоем подтверждено: с одной только
+                    //NamedFloatingPointLiterals строка, не равная в точности
+                    //"NaN"/"Infinity"/"-Infinity" (скажем, "1.5"), - отказ,
+                    //ровно как у эталона без AllowReadingFromString
+                    builder.Line(
+                        "throw new " + DocumentException + "(\"Expected a number.\", position);"
+                        );
+                }
+
+                builder.CloseBlock();
+            }
+            else
+            {
+                builder.Line("injector.Parse(ref context, raw, out parsed);");
+            }
+
+            builder.CloseBlock();
+            builder.OpenBlock("else");
+            builder.Line("var rawNumber = " + NumberReadCall(guards) + "(json, ref position);");
+            builder.Line("injector.Parse(ref context, rawNumber, out parsed);");
+            builder.CloseBlock();
         }
     }
 }

@@ -162,6 +162,7 @@ namespace JsonGoddess.Generator.Binding
 
             var options = SerializationOptions.Read(host, known, diagnostics, ref failed);
             var guardOptions = GuardOptions.Read(host, known, diagnostics, ref failed);
+            var featureOptions = FeatureOptions.Read(host, known);
 
             foreach (var registration in accepted)
             {
@@ -179,7 +180,9 @@ namespace JsonGoddess.Generator.Binding
                     continue;
                 }
 
-                var members = BindMembers(registration.Type, byType, known, options, hostLocation, diagnostics);
+                var members = BindMembers(
+                    registration.Type, byType, known, options, featureOptions.Features, hostLocation, diagnostics
+                    );
                 if (members is null)
                 {
                     failed = true;
@@ -258,7 +261,8 @@ namespace JsonGoddess.Generator.Binding
                 scalarList,
                 options.DictionaryKeyNaming,
                 guardOptions.Guards,
-                guardOptions.MaxDepth
+                guardOptions.MaxDepth,
+                featureOptions.Features
                 );
         }
 
@@ -317,6 +321,40 @@ namespace JsonGoddess.Generator.Binding
         }
 
         private static string MethodSuffix(INamedTypeSymbol subject) => subject.ToDisplayString().Replace('.', '_');
+
+        private static bool IsAscii(byte[] utf8)
+        {
+            foreach (var b in utf8)
+            {
+                if (b >= 0x80)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Свёртка регистра по ASCII для сравнения имён на предмет коллизии -
+        /// то же самое сворачивание, что печатает эмиттер в
+        /// <c>JsonAsciiName.EqualsIgnoreCase</c>, только здесь оно нужно
+        /// один раз на компиляции, а не в порождённом коде.
+        /// </summary>
+        private static string FoldAscii(string name)
+        {
+            var chars = name.ToCharArray();
+            for (var i = 0; i < chars.Length; i++)
+            {
+                var c = chars[i];
+                if (c >= 'A' && c <= 'Z')
+                {
+                    chars[i] = (char)(c + 0x20);
+                }
+            }
+
+            return new string(chars);
+        }
 
         /// <summary>
         /// Модификаторы объявления обязаны совпасть с пользовательскими:
@@ -918,6 +956,7 @@ namespace JsonGoddess.Generator.Binding
             Dictionary<ISymbol, string> byType,
             KnownSymbols known,
             SerializationOptions options,
+            JsonFeature features,
             LocationInfo? location,
             List<DiagnosticInfo> diagnostics
             )
@@ -975,6 +1014,61 @@ namespace JsonGoddess.Generator.Binding
             if (failed)
             {
                 return null;
+            }
+
+            //JsonFeature.CaseInsensitiveNames (§6.2 плана, вопрос O5 §15):
+            //сворачивание регистра здесь - по ASCII, у эталона - по Unicode
+            //(пробоем подтверждено на кириллице). На ASCII-имени оба
+            //совпадения совпадают буква в букву, а на не-ASCII разошлись бы
+            //молча - принцип 1 запрещает это, поэтому такой тип честно
+            //отвергается, а не обслуживается приблизительно. Второй отказ -
+            //на паре имён, которые после ASCII-свёртки совпадают: диспетчер
+            //не может завести две ветки на один и тот же случай, а эталон в
+            //этой ситуации тоже отказывает (проверено пробой), хоть и в
+            //рантайме при первом обращении, а не на компиляции.
+            if ((features & JsonFeature.CaseInsensitiveNames) != 0)
+            {
+                var byFolded = new Dictionary<string, MemberModel>(System.StringComparer.Ordinal);
+
+                foreach (var member in result)
+                {
+                    if (!IsAscii(member.JsonNameUtf8))
+                    {
+                        diagnostics.Add(
+                            new DiagnosticInfo(
+                                JsonGoddessDiagnostics.CaseInsensitiveNameIsNotSupportedId,
+                                location,
+                                subject.ToDisplayString(),
+                                member.MemberName,
+                                "its JSON name '" + member.JsonName + "' contains a non-ASCII character; "
+                                    + "JsonGoddess folds case by ASCII, System.Text.Json folds it by Unicode, "
+                                    + "and the two would not agree on such a name"
+                                )
+                            );
+                        return null;
+                    }
+
+                    var folded = FoldAscii(member.JsonName);
+                    if (byFolded.TryGetValue(folded, out var previous))
+                    {
+                        diagnostics.Add(
+                            new DiagnosticInfo(
+                                JsonGoddessDiagnostics.CaseInsensitiveNameIsNotSupportedId,
+                                location,
+                                subject.ToDisplayString(),
+                                member.MemberName,
+                                "its JSON name '" + member.JsonName + "' differs only by case from member '"
+                                    + previous.MemberName + "' ('" + previous.JsonName + "'); System.Text.Json "
+                                    + "itself refuses this combination when PropertyNameCaseInsensitive is set "
+                                    + "(verified by probing), and a case-insensitive dispatcher cannot serve "
+                                    + "two members through one name either"
+                                )
+                            );
+                        return null;
+                    }
+
+                    byFolded.Add(folded, member);
+                }
             }
 
             //[JsonPropertyOrder] применяется поверх уже разложенной иерархии, а

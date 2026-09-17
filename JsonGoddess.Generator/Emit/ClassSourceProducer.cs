@@ -44,6 +44,70 @@ namespace JsonGoddess.Generator.Emit
             "[global::System.Runtime.CompilerServices.MethodImpl("
             + "global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]";
 
+        /// <summary>
+        /// <c>JsonFeature.Comments</c>: имя метода, которым печатается пропуск
+        /// пробелов перед значением или структурным токеном - обычное или
+        /// комментарий-осведомлённое. Выбор делается на этапе генерации, как
+        /// и у <c>StringReadCall</c>/<c>NumberReadCall</c> в
+        /// <see cref="ValueSourceProducer"/>: выключенная фича не должна
+        /// стоить даже одной проверки, поэтому печатается только одна из двух
+        /// форм, а не обе с условием между ними.
+        /// </summary>
+        private static string SkipTrivia(JsonFeature features)
+        {
+            return Scan + ((features & JsonFeature.Comments) != 0
+                ? ".SkipWhitespaceAndComments"
+                : ".SkipWhitespace");
+        }
+
+        /// <summary>
+        /// Печатает явный пропуск пробелов и комментариев перед следующим
+        /// значением/структурным токеном - но только когда
+        /// <c>JsonFeature.Comments</c> включена; без неё не печатается вообще
+        /// ничего, потому что метод, который читает следующий токен
+        /// (<c>Expect</c>/<c>TryConsume</c>/<c>Peek</c>/<c>ReadStringContent</c>
+        /// и так далее), и так делает обычный <c>SkipWhitespace</c> первым
+        /// действием - лишний вызов был бы платой без всякой фичи.
+        ///
+        /// Печатается как самое первое действие каждого
+        /// <c>Read_</c>/<c>ReadCollection_</c>/<c>ReadScalar_</c>/<c>ReadEnum_</c>/
+        /// дискриминаторного блока и перед каждой структурной проверкой внутри
+        /// цикла (имя следующего члена, запятая, конец коллекции) - везде,
+        /// где документ, по которому прогонялся пробой, разрешает
+        /// комментарий. Единственное исключение - между именем свойства и
+        /// двоеточием (см. <see cref="JsonScan.SkipWhitespaceAndComments"/>):
+        /// там эта функция не зовётся вовсе, и туда её звать нельзя.
+        /// </summary>
+        private static void EmitCommentSkip(SourceBuilder builder, JsonFeature features)
+        {
+            if ((features & JsonFeature.Comments) != 0)
+            {
+                builder.Line(Scan + ".SkipWhitespaceAndComments(json, ref position);");
+            }
+        }
+
+        /// <summary>
+        /// <c>JsonFeature.TrailingCommas</c>: печатается сразу после успешно
+        /// потреблённой запятой, между членом/элементом и следующим - если
+        /// дальше сразу стоит закрывающая скобка, это она и есть, и цикл
+        /// обязан остановиться, не пытаясь прочесть ещё один член/элемент.
+        /// <c>Peek</c> не потребляет токен, поэтому последующий
+        /// <c>Expect(Close...)</c> после выхода из цикла видит скобку на том
+        /// же месте.
+        /// </summary>
+        private static void EmitTrailingCommaCheck(SourceBuilder builder, JsonFeature features, string endTokenKind)
+        {
+            if ((features & JsonFeature.TrailingCommas) == 0)
+            {
+                return;
+            }
+
+            EmitCommentSkip(builder, features);
+            builder.OpenBlock("if (" + Scan + ".Peek(json, ref position) == " + endTokenKind + ")");
+            builder.Line("break;");
+            builder.CloseBlock();
+        }
+
         public static string Produce(HostModel host)
         {
             var builder = new SourceBuilder();
@@ -67,6 +131,8 @@ namespace JsonGoddess.Generator.Emit
 
             builder.OpenBlock(host.TypeName);
 
+            var features = host.Features;
+
             foreach (var exhauster in host.ExhausterTypes)
             {
                 foreach (var subject in host.Subjects)
@@ -78,12 +144,12 @@ namespace JsonGoddess.Generator.Emit
 
                     if (subject.IsPolymorphic)
                     {
-                        EmitPolymorphicWriter(builder, host, subject, exhauster, host.DictionaryKeyNaming);
+                        EmitPolymorphicWriter(builder, host, subject, exhauster, host.DictionaryKeyNaming, features);
                     }
                     else
                     {
                         EmitWriter(
-                            builder, subject, exhauster, host.DictionaryKeyNaming,
+                            builder, subject, exhauster, host.DictionaryKeyNaming, features,
                             "Write_" + subject.MethodSuffix, null
                             );
                     }
@@ -91,7 +157,7 @@ namespace JsonGoddess.Generator.Emit
 
                 foreach (var collection in host.Collections)
                 {
-                    EmitCollectionWriter(builder, collection, exhauster, host.DictionaryKeyNaming);
+                    EmitCollectionWriter(builder, collection, exhauster, host.DictionaryKeyNaming, features);
                 }
 
                 foreach (var enumModel in host.StringEnums)
@@ -106,13 +172,13 @@ namespace JsonGoddess.Generator.Emit
                 {
                     if (subject.IsRoot)
                     {
-                        EmitDeserializeEntry(builder, subject, injector, host.Guards);
+                        EmitDeserializeEntry(builder, subject, injector, host.Guards, features);
                     }
 
                     EmitReader(
                         builder, subject, injector, null,
                         subject.IsPolymorphic ? subject.DiscriminatorName : null,
-                        host.Guards, host.MaxDepth
+                        host.Guards, host.MaxDepth, features
                         );
 
                     foreach (var derived in subject.Derived)
@@ -123,24 +189,24 @@ namespace JsonGoddess.Generator.Emit
                             injector,
                             PairReaderName(subject, derived),
                             subject.DiscriminatorName,
-                            host.Guards, host.MaxDepth
+                            host.Guards, host.MaxDepth, features
                             );
                     }
                 }
 
                 foreach (var scalar in host.Scalars)
                 {
-                    EmitScalarReader(builder, scalar, injector, host.Guards);
+                    EmitScalarReader(builder, scalar, injector, host.Guards, features);
                 }
 
                 foreach (var collection in host.Collections)
                 {
-                    EmitCollectionReader(builder, collection, injector, host.Guards, host.MaxDepth);
+                    EmitCollectionReader(builder, collection, injector, host.Guards, host.MaxDepth, features);
                 }
 
                 foreach (var enumModel in host.StringEnums)
                 {
-                    EmitEnumReader(builder, enumModel, injector, host.Guards);
+                    EmitEnumReader(builder, enumModel, injector, host.Guards, features);
                 }
             }
 
@@ -183,7 +249,9 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
         }
 
-        private static void EmitDeserializeEntry(SourceBuilder builder, SubjectModel subject, string injector, JsonGuard guards)
+        private static void EmitDeserializeEntry(
+            SourceBuilder builder, SubjectModel subject, string injector, JsonGuard guards, JsonFeature features
+            )
         {
             builder.OpenBlock(
                 "public static void Deserialize(" + injector + " injector, " + Span + " json, out "
@@ -204,9 +272,15 @@ namespace JsonGoddess.Generator.Emit
             //самого эталона нет. У нас по умолчанию хвост документа не
             //проверяется вовсе, и это остаётся так, пока хост не попросил
             //иначе, - ветка ниже печатается только под флагом.
+            //
+            //JsonFeature.Comments: хвостовой комментарий после единственного
+            //значения документа эталон тоже принимает
+            //(ReadCommentHandling.Skip, пробоем подтверждено) - поэтому здесь
+            //печатается комментарий-осведомлённый пропуск пробелов вместо
+            //обычного, когда фича включена.
             if ((guards & JsonGuard.TrailingContent) != 0)
             {
-                builder.Line(Scan + ".SkipWhitespace(json, ref position);");
+                builder.Line(SkipTrivia(features) + "(json, ref position);");
                 builder.OpenBlock("if (position != json.Length)");
                 builder.Line(
                     "throw new " + DocumentException
@@ -253,7 +327,8 @@ namespace JsonGoddess.Generator.Emit
             HostModel host,
             SubjectModel subject,
             string exhauster,
-            JsonNamingStyle keyNaming
+            JsonNamingStyle keyNaming,
+            JsonFeature features
             )
         {
             var selfIsDerived = subject.Derived.Any(d => d.FullName == subject.FullName);
@@ -307,7 +382,7 @@ namespace JsonGoddess.Generator.Emit
                 //объект - проверено прогоном: у эталона он появляется только
                 //тогда, когда база объявлена производной от самой себя
                 EmitWriter(
-                    builder, subject, exhauster, keyNaming, "WriteSelf_" + subject.MethodSuffix, null
+                    builder, subject, exhauster, keyNaming, features, "WriteSelf_" + subject.MethodSuffix, null
                     );
             }
 
@@ -318,6 +393,7 @@ namespace JsonGoddess.Generator.Emit
                     host.Subjects.First(s => s.FullName == derived.FullName),
                     exhauster,
                     keyNaming,
+                    features,
                     PairWriterName(subject, derived),
                     derived.DiscriminatorLiteral is null
                         ? null
@@ -344,6 +420,7 @@ namespace JsonGoddess.Generator.Emit
             SubjectModel subject,
             string exhauster,
             JsonNamingStyle keyNaming,
+            JsonFeature features,
             string methodName,
             string? discriminator
             )
@@ -374,7 +451,7 @@ namespace JsonGoddess.Generator.Emit
             //объект, а не про пустую коллекцию.
             if (subject.CollectionShape is not null)
             {
-                EmitCollectionSubjectWriterBody(builder, subject, keyNaming);
+                EmitCollectionSubjectWriterBody(builder, subject, keyNaming, features);
                 builder.CloseBlock();
                 builder.Line();
                 return;
@@ -432,7 +509,7 @@ namespace JsonGoddess.Generator.Emit
                     }
 
                     builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(literal) + ");");
-                    ValueSourceProducer.WriteValue(builder, member.Value, "value." + member.MemberName, keyNaming);
+                    ValueSourceProducer.WriteValue(builder, member.Value, "value." + member.MemberName, keyNaming, features);
 
                     pendingOpen = false;
                     commaIsCertain = true;
@@ -477,7 +554,7 @@ namespace JsonGoddess.Generator.Emit
                 }
 
                 builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(conditionalLiteral) + ");");
-                ValueSourceProducer.WriteValue(builder, member.Value, candidate, keyNaming);
+                ValueSourceProducer.WriteValue(builder, member.Value, candidate, keyNaming, features);
 
                 builder.CloseBlock();
                 builder.CloseBlock();
@@ -535,12 +612,18 @@ namespace JsonGoddess.Generator.Emit
         /// двух: <c>"dog"</c> и <c>7</c> различаются как байты и без разбора
         /// лексемы.
         /// </summary>
-        private static void EmitDiscriminatorDispatch(SourceBuilder builder, SubjectModel subject, JsonGuard guards)
+        private static void EmitDiscriminatorDispatch(
+            SourceBuilder builder, SubjectModel subject, JsonGuard guards, JsonFeature features
+            )
         {
             builder.Line("var discriminatorStart = position;");
             builder.Line("var hasDiscriminator = false;");
             builder.Line();
 
+            //первое обращение к сканеру после '{' в этом блоке - комментарий
+            //между скобкой и именем дискриминатора здесь ещё не пропущен
+            //никем
+            EmitCommentSkip(builder, features);
             builder.OpenBlock("if (" + Scan + ".Peek(json, ref position) == " + TokenKind + ".String)");
             builder.Line("var firstName = " + ValueSourceProducer.StringReadCall(guards) + "(json, ref position, out var firstEscaped);");
             builder.OpenBlock("if (firstEscaped)");
@@ -559,7 +642,7 @@ namespace JsonGoddess.Generator.Emit
 
             builder.OpenBlock("if (hasDiscriminator)");
             builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".Colon);");
-            builder.Line(Scan + ".SkipWhitespace(json, ref position);");
+            builder.Line(SkipTrivia(features) + "(json, ref position);");
             builder.Line("var valueStart = position;");
             builder.Line(Scan + ".SkipValue(json, ref position);");
             builder.Line("var discriminator = json.Slice(valueStart, position - valueStart);");
@@ -618,7 +701,8 @@ namespace JsonGoddess.Generator.Emit
             string? bodyName,
             string? discriminatorGuard,
             JsonGuard guards,
-            int maxDepth
+            int maxDepth,
+            JsonFeature features
             )
         {
             var members = subject.Members.Where(m => m.CanRead).ToList();
@@ -641,6 +725,15 @@ namespace JsonGoddess.Generator.Emit
             //месте структуры обязан кончиться отказом - ровно так ведёт себя
             //эталон, - и он кончается им сам, на Expect(OpenBrace) ниже.
             //Nullable<> над структурой разбирается на месте члена, до вызова.
+            //Самое первое обращение к сканеру во всём методе - комментарий
+            //перед значением целиком ("// hi\n{...}") ещё никем не пропущен.
+            //Для body-читателя (полиморфная пара) это место другое - см.
+            //ниже, перед проверкой запятой после дискриминатора.
+            if (!body)
+            {
+                EmitCommentSkip(builder, features);
+            }
+
             if (!body && !subject.IsValueType)
             {
                 builder.OpenBlock("if (" + Scan + ".TryReadNull(json, ref position))");
@@ -656,7 +749,7 @@ namespace JsonGoddess.Generator.Emit
             //параметров, а класть - только в саму коллекцию.
             if (subject.CollectionShape is not null)
             {
-                EmitCollectionSubjectReaderBody(builder, subject, guards, maxDepth);
+                EmitCollectionSubjectReaderBody(builder, subject, guards, maxDepth, features);
                 builder.CloseBlock();
                 builder.Line();
                 return;
@@ -709,9 +802,16 @@ namespace JsonGoddess.Generator.Emit
 
             if (subject.IsPolymorphic && !body)
             {
-                EmitDiscriminatorDispatch(builder, subject, guards);
+                EmitDiscriminatorDispatch(builder, subject, guards, features);
             }
 
+            //Фреш-точка: у не-body читателя дискриминатор (если был) откатил
+            //позицию обратно к discriminatorStart, а если полиморфизма нет
+            //вовсе, сюда ещё ничего не заходило после Expect(OpenBrace) - в
+            //обоих случаях комментарий сразу после '{' ещё не пропущен. У
+            //body-читателя это вообще первое обращение к сканеру в методе -
+            //комментарий между значением дискриминатора и запятой.
+            EmitCommentSkip(builder, features);
             builder.OpenBlock(
                 body
                     ? "if (!" + Scan + ".TryConsume(json, ref position, " + Scan + ".Comma))"
@@ -729,10 +829,20 @@ namespace JsonGoddess.Generator.Emit
 
             builder.OpenBlock("while (true)");
 
+            //комментарий перед именем следующего члена - после запятой,
+            //пропущенной TryConsume ниже в этом же цикле, ничего ещё не
+            //скользило по пробелам заново
+            EmitCommentSkip(builder, features);
             builder.Line(
                 "var name = " + ValueSourceProducer.StringReadCall(guards)
                 + "(json, ref position, out var nameEscaped);"
                 );
+
+            //Между именем свойства и двоеточием комментарий здесь НЕ
+            //пропускается никогда, даже при включённой JsonFeature.Comments:
+            //пробой (System.Text.Json 10.0, ReadCommentHandling.Skip) на
+            //{"Id" /* c */ : 1} показал отказ эталона именно в этой точке -
+            //единственной, где комментарий вокруг структуры объекта незаконен.
             builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".Colon);");
             builder.Line();
 
@@ -763,6 +873,7 @@ namespace JsonGoddess.Generator.Emit
                 NameDispatcher.Emit(
                     builder,
                     members,
+                    features,
                     member =>
                     {
                         //JsonGuard.DuplicateProperties: пробой подтверждено -
@@ -840,9 +951,17 @@ namespace JsonGoddess.Generator.Emit
             builder.Unindent();
             builder.Line("next:");
             builder.Indent();
+            EmitCommentSkip(builder, features);
             builder.OpenBlock("if (!" + Scan + ".TryConsume(json, ref position, " + Scan + ".Comma))");
             builder.Line("break;");
             builder.CloseBlock();
+
+            //JsonFeature.TrailingCommas: ровно одна запятая перед закрывающей
+            //скобкой - пробоем подтверждено, что System.Text.Json принимает
+            //только эту форму (не [,], не [1,,2], не [,1]), поэтому проверка
+            //стоит здесь, сразу после успешного потребления запятой, а не
+            //где-то ещё
+            EmitTrailingCommaCheck(builder, features, TokenKind + ".EndObject");
 
             builder.CloseBlock();
             builder.Line();
@@ -985,7 +1104,9 @@ namespace JsonGoddess.Generator.Emit
         /// имя из <c>[JsonStringEnumMemberName]</c> эталон принимает лишь в
         /// точности, и это проверено прогоном, а не выведено из его исходников.
         /// </summary>
-        private static void EmitEnumReader(SourceBuilder builder, EnumModel enumModel, string injector, JsonGuard guards)
+        private static void EmitEnumReader(
+            SourceBuilder builder, EnumModel enumModel, string injector, JsonGuard guards, JsonFeature features
+            )
         {
             var underlying = BuiltinTypes.GetTypeName(enumModel.Underlying);
 
@@ -999,6 +1120,7 @@ namespace JsonGoddess.Generator.Emit
             builder.Unindent();
             builder.OpenBlock();
 
+            EmitCommentSkip(builder, features);
             builder.OpenBlock(
                 "if (" + Scan + ".Peek(json, ref position) == " + TokenKind + ".String)"
                 );
@@ -1070,7 +1192,9 @@ namespace JsonGoddess.Generator.Emit
         /// же, что у читателя коллекции и субъекта, - к ветке диспетчера
         /// сводится одно присваивание.
         /// </summary>
-        private static void EmitScalarReader(SourceBuilder builder, ValueModel scalar, string injector, JsonGuard guards)
+        private static void EmitScalarReader(
+            SourceBuilder builder, ValueModel scalar, string injector, JsonGuard guards, JsonFeature features
+            )
         {
             builder.Line(Inline);
             builder.Line(
@@ -1085,7 +1209,8 @@ namespace JsonGoddess.Generator.Emit
             builder.Unindent();
             builder.OpenBlock();
 
-            ValueSourceProducer.ReadScalarBody(builder, scalar, guards);
+            EmitCommentSkip(builder, features);
+            ValueSourceProducer.ReadScalarBody(builder, scalar, guards, features);
 
             builder.CloseBlock();
             builder.Line();
@@ -1107,7 +1232,8 @@ namespace JsonGoddess.Generator.Emit
             SourceBuilder builder,
             ValueModel collection,
             string exhauster,
-            JsonNamingStyle keyNaming
+            JsonNamingStyle keyNaming,
+            JsonFeature features
             )
         {
             builder.OpenBlock(
@@ -1115,7 +1241,7 @@ namespace JsonGoddess.Generator.Emit
                 + exhauster + " exhauster, " + collection.TypeName + "? items)"
                 );
 
-            ValueSourceProducer.WriteCollectionBody(builder, collection, keyNaming);
+            ValueSourceProducer.WriteCollectionBody(builder, collection, keyNaming, features);
 
             builder.CloseBlock();
             builder.Line();
@@ -1132,7 +1258,8 @@ namespace JsonGoddess.Generator.Emit
         private static void EmitCollectionSubjectWriterBody(
             SourceBuilder builder,
             SubjectModel subject,
-            JsonNamingStyle keyNaming
+            JsonNamingStyle keyNaming,
+            JsonFeature features
             )
         {
             var shape = subject.CollectionShape!;
@@ -1152,11 +1279,11 @@ namespace JsonGoddess.Generator.Emit
             {
                 builder.Line("exhauster.Append(" + ValueSourceProducer.Key("pair.Key", keyNaming) + ");");
                 builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal(":") + ");");
-                ValueSourceProducer.WriteValue(builder, shape.Element, "pair.Value", keyNaming);
+                ValueSourceProducer.WriteValue(builder, shape.Element, "pair.Value", keyNaming, features);
             }
             else
             {
-                ValueSourceProducer.WriteValue(builder, shape.Element, "element", keyNaming);
+                ValueSourceProducer.WriteValue(builder, shape.Element, "element", keyNaming, features);
             }
 
             builder.CloseBlock();
@@ -1176,7 +1303,8 @@ namespace JsonGoddess.Generator.Emit
             SourceBuilder builder,
             SubjectModel subject,
             JsonGuard guards,
-            int maxDepth
+            int maxDepth,
+            JsonFeature features
             )
         {
             var shape = subject.CollectionShape!;
@@ -1186,10 +1314,16 @@ namespace JsonGoddess.Generator.Emit
             var open = Scan + (shape.IsDictionary ? ".OpenBrace" : ".OpenBracket");
             var close = Scan + (shape.IsDictionary ? ".CloseBrace" : ".CloseBracket");
 
+            //комментарий перед всей коллекцией пропущен ещё в EmitReader,
+            //перед TryReadNull - между тем пропуском и этим Expect ничего не
+            //стоит
             builder.Line(Scan + ".Expect(json, ref position, " + open + ");");
             EmitDepthCheckAndOpenTry(builder, guardsDepth, maxDepth);
             builder.Line();
 
+            //а вот комментарий сразу после открывающей скобки ещё никем не
+            //пропущен
+            EmitCommentSkip(builder, features);
             builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + close + "))");
             builder.Line("return new " + subject.FullName + "();");
             builder.CloseBlock();
@@ -1203,6 +1337,7 @@ namespace JsonGoddess.Generator.Emit
             {
                 //ключ приходится материализовать строкой - положить спан в
                 //чужую реализацию IDictionary<string,V> нечем
+                EmitCommentSkip(builder, features);
                 builder.Line(
                     "var rawKey = " + ValueSourceProducer.StringReadCall(guards)
                     + "(json, ref position, out var keyEscaped);"
@@ -1230,9 +1365,12 @@ namespace JsonGoddess.Generator.Emit
                 );
 
             builder.Line();
+            EmitCommentSkip(builder, features);
             builder.OpenBlock("if (!" + Scan + ".TryConsume(json, ref position, " + Scan + ".Comma))");
             builder.Line("break;");
             builder.CloseBlock();
+
+            EmitTrailingCommaCheck(builder, features, TokenKind + (shape.IsDictionary ? ".EndObject" : ".EndArray"));
 
             builder.CloseBlock();
             builder.Line();
@@ -1284,7 +1422,8 @@ namespace JsonGoddess.Generator.Emit
             ValueModel collection,
             string injector,
             JsonGuard guards,
-            int maxDepth
+            int maxDepth,
+            JsonFeature features
             )
         {
             var isArray = collection.Form == ValueForm.Array;
@@ -1307,6 +1446,9 @@ namespace JsonGoddess.Generator.Emit
             builder.Unindent();
             builder.OpenBlock();
 
+            //первое обращение к сканеру в методе - комментарий перед всей
+            //коллекцией ("// hi\n[...]") ещё не пропущен никем
+            EmitCommentSkip(builder, features);
             builder.OpenBlock("if (" + Scan + ".TryReadNull(json, ref position))");
             builder.Line("return null;");
             builder.CloseBlock();
@@ -1316,6 +1458,10 @@ namespace JsonGoddess.Generator.Emit
             EmitDepthCheckAndOpenTry(builder, guardsDepth, maxDepth);
             builder.Line();
 
+            //комментарий сразу после открывающей скобки - TryReadNull выше
+            //успел пропустить только то, что было ПЕРЕД коллекцией, не после
+            //неё открывшейся скобки
+            EmitCommentSkip(builder, features);
             builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + close + "))");
             builder.Line(
                 isArray
@@ -1350,6 +1496,7 @@ namespace JsonGoddess.Generator.Emit
                 //ключ словаря приходится материализовать строкой: с именем
                 //члена его не сравнить - членов тут нет, - и положить в словарь
                 //спан нельзя
+                EmitCommentSkip(builder, features);
                 builder.Line(
                     "var rawKey = " + ValueSourceProducer.StringReadCall(guards)
                     + "(json, ref position, out var keyEscaped);"
@@ -1390,9 +1537,12 @@ namespace JsonGoddess.Generator.Emit
             }
 
             builder.Line();
+            EmitCommentSkip(builder, features);
             builder.OpenBlock("if (!" + Scan + ".TryConsume(json, ref position, " + Scan + ".Comma))");
             builder.Line("break;");
             builder.CloseBlock();
+
+            EmitTrailingCommaCheck(builder, features, TokenKind + (isMap ? ".EndObject" : ".EndArray"));
 
             builder.CloseBlock();
             builder.Line();

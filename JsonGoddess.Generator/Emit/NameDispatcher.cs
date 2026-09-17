@@ -56,8 +56,30 @@ namespace JsonGoddess.Generator.Emit
         /// </summary>
         public const int KeySwitchThreshold = 4;
 
-        public static void Emit(SourceBuilder builder, IReadOnlyList<MemberModel> members, Action<MemberModel> emitBody)
+        private const string AsciiName = "global::JsonGoddess.Internal.JsonAsciiName";
+
+        public static void Emit(
+            SourceBuilder builder,
+            IReadOnlyList<MemberModel> members,
+            JsonFeature features,
+            Action<MemberModel> emitBody
+            )
         {
+            //JsonFeature.CaseInsensitiveNames: свёрнутый по ASCII байт даёт ту
+            //же длину, что и байт без свёртки (A..Z/a..z - однобайтовые), так
+            //что бакет по name.Length остаётся верным ориентиром и с фичей.
+            //Дальше - решение вопроса O5 (§15 плана): honest-компромисс, а не
+            //взлом диспетчера. Ключ (JsonNameKey.Compute) читает СЫРЫЕ байты
+            //имени, и одно и то же значение по ключу может означать разный
+            //регистр - то есть предвычисленный ключ здесь просто неверен, а
+            //не "дорог". Поэтому при включённой фиче печатается цепочка
+            //сравнений с регистронезависимым EqualsIgnoreCase - всегда, вне
+            //зависимости от размера корзины: заводить второй, отдельно
+            //свёрнутый ключ ради корзин с четырьмя и более членами - работа,
+            //цену которой некому было измерить в этой задаче (see
+            //docs/opt-in-json-features.md).
+            var caseInsensitive = (features & JsonFeature.CaseInsensitiveNames) != 0;
+
             var buckets = members
                 .GroupBy(m => m.JsonNameUtf8.Length)
                 .OrderBy(g => g.Key)
@@ -68,11 +90,11 @@ namespace JsonGoddess.Generator.Emit
             foreach (var bucket in buckets)
             {
                 var items = bucket.ToList();
-                var useKey = items.Count >= KeySwitchThreshold;
+                var useKey = !caseInsensitive && items.Count >= KeySwitchThreshold;
 
                 builder.Line(
                     "case " + bucket.Key + ": //членов: " + items.Count + ", "
-                    + (useKey ? "switch по ключу" : "цепочка сравнений")
+                    + (useKey ? "switch по ключу" : caseInsensitive ? "цепочка сравнений без учёта регистра" : "цепочка сравнений")
                     );
                 builder.OpenBlock();
 
@@ -82,7 +104,7 @@ namespace JsonGoddess.Generator.Emit
                 }
                 else
                 {
-                    EmitByChain(builder, items, emitBody);
+                    EmitByChain(builder, items, emitBody, caseInsensitive);
                 }
 
                 builder.Line("break;");
@@ -96,12 +118,17 @@ namespace JsonGoddess.Generator.Emit
         private static void EmitByChain(
             SourceBuilder builder,
             IReadOnlyList<MemberModel> members,
-            Action<MemberModel> emitBody
+            Action<MemberModel> emitBody,
+            bool caseInsensitive
             )
         {
             foreach (var member in members)
             {
-                builder.OpenBlock("if (" + Mem + ".SequenceEqual(name, " + SourceBuilder.Utf8Literal(member.JsonName) + "))");
+                var comparison = caseInsensitive
+                    ? AsciiName + ".EqualsIgnoreCase(name, " + SourceBuilder.Utf8Literal(member.JsonName) + ")"
+                    : Mem + ".SequenceEqual(name, " + SourceBuilder.Utf8Literal(member.JsonName) + ")";
+
+                builder.OpenBlock("if (" + comparison + ")");
                 emitBody(member);
                 builder.Line("goto next;");
                 builder.CloseBlock();

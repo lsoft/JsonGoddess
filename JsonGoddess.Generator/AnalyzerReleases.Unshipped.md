@@ -16,3 +16,4 @@ JGD026 | JsonGoddess | Error | Project language version is below C# 11
 JGD027 | JsonGoddess | Error | JSON property name requires escaping
 JGD028 | JsonGoddess | Error | Option on [JsonSourceGenerationOptions] is not supported
 JGD029 | JsonGoddess | Error | [JsonGuard] MaxDepth value is less than 1
+JGD030 | JsonGoddess | Error | [JsonFeature] CaseInsensitiveNames cannot serve a non-ASCII or colliding member name

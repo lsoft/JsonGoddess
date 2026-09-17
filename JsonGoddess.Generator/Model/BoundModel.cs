@@ -30,6 +30,22 @@ namespace JsonGoddess.Generator.Model
     }
 
     /// <summary>
+    /// Зеркало <c>JsonGoddess.JsonFeature</c> (§6.2 плана) - той же природы,
+    /// что и <see cref="JsonGuard"/> выше, и по той же причине своя копия, а
+    /// не ссылка на рантайм-тип.
+    /// </summary>
+    [Flags]
+    public enum JsonFeature
+    {
+        None = 0,
+        Comments = 1 << 0,
+        TrailingCommas = 1 << 1,
+        NamedFloatingPointLiterals = 1 << 2,
+        NumbersFromStrings = 1 << 3,
+        CaseInsensitiveNames = 1 << 4,
+    }
+
+    /// <summary>
     /// Builtin-типы, которые генератор умеет. Набор равен не списку из §7.1
     /// плана, а тому, что <b>есть у sink'ов</b>: <c>IExhauster</c> и
     /// <c>IInjector</c> - единственный источник истины о том, какую лексему
@@ -655,6 +671,14 @@ namespace JsonGoddess.Generator.Model
         /// </summary>
         public int MaxDepth { get; }
 
+        /// <summary>
+        /// Фичи, включённые <c>[JsonFeature]</c> на хосте (§6.2 плана).
+        /// <c>JsonFeature.None</c> - хост не упомянул атрибут вовсе, и это
+        /// главный инвариант всей конструкции: текст порождаемого кода тогда
+        /// обязан остаться ровно таким же, как до <c>JsonFeature</c>.
+        /// </summary>
+        public JsonFeature Features { get; }
+
         public HostModel(
             string? ns,
             string typeName,
@@ -667,7 +691,8 @@ namespace JsonGoddess.Generator.Model
             IReadOnlyList<ValueModel> scalars,
             JsonNamingStyle dictionaryKeyNaming,
             JsonGuard guards = JsonGuard.None,
-            int maxDepth = 64
+            int maxDepth = 64,
+            JsonFeature features = JsonFeature.None
             )
         {
             Scalars = scalars;
@@ -682,6 +707,7 @@ namespace JsonGoddess.Generator.Model
             Collections = collections;
             Guards = guards;
             MaxDepth = maxDepth;
+            Features = features;
         }
     }
 }

@@ -1172,5 +1172,63 @@ namespace Demo
 
             Assert.Contains("JGD029", run.DiagnosticIds);
         }
+
+        /// <summary>
+        /// <c>JsonFeature.CaseInsensitiveNames</c> (вопрос O5, §15 плана):
+        /// мы сворачиваем регистр по ASCII, эталон - по Unicode (пробоем
+        /// подтверждено на кириллице), и на не-ASCII имени совпадение
+        /// зависело бы от алфавита - это молчаливое расхождение, запрещённое
+        /// принципом 1, поэтому отказ, а не приблизительная поддержка.
+        /// </summary>
+        [Fact]
+        public void Case_insensitive_names_refuses_a_non_ascii_property_name()
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(
+                    "        [JsonPropertyName(\"Имя\")]\n        public string? Name { get; set; }",
+                    "[JsonFeature(JsonFeature.CaseInsensitiveNames)]"
+                    )
+                );
+
+            Assert.Contains("JGD030", run.DiagnosticIds);
+        }
+
+        /// <summary>
+        /// Второй отказ той же фичи: два имени, совпадающие после ASCII-свёртки,
+        /// - диспетчер не может завести две ветки на один и тот же случай, и
+        /// эталон в этой ситуации тоже отказывает (проверено пробой), хоть и в
+        /// рантайме при первом обращении, а не на компиляции.
+        /// </summary>
+        [Fact]
+        public void Case_insensitive_names_refuses_two_members_colliding_after_ascii_fold()
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(
+                    "        public int Alpha { get; set; }\n        public int alpha { get; set; }",
+                    "[JsonFeature(JsonFeature.CaseInsensitiveNames)]"
+                    )
+                );
+
+            Assert.Contains("JGD030", run.DiagnosticIds);
+        }
+
+        /// <summary>
+        /// ASCII-имя без коллизий фича обслуживает как обычно - отказы выше
+        /// про конкретные формы, которые честно не совпали бы с эталоном, а
+        /// не про фичу целиком.
+        /// </summary>
+        [Fact]
+        public void Case_insensitive_names_accepts_an_ordinary_ascii_only_subject()
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(
+                    "        public int Id { get; set; }\n        public string? Name { get; set; }",
+                    "[JsonFeature(JsonFeature.CaseInsensitiveNames)]"
+                    )
+                );
+
+            Assert.Empty(run.CompilationErrors);
+            Assert.DoesNotContain("JGD030", run.DiagnosticIds);
+        }
     }
 }

@@ -26,6 +26,7 @@ namespace JsonGoddess.Generator.Diagnostics
         public const string JsonNameRequiresEscapingId = "JGD027";
         public const string SerializationOptionIsNotSupportedId = "JGD028";
         public const string InvalidMaxDepthId = "JGD029";
+        public const string CaseInsensitiveNameIsNotSupportedId = "JGD030";
 
         public static readonly DiagnosticDescriptor SinkIsNotSealed = new DiagnosticDescriptor(
             SinkIsNotSealedId,
@@ -154,6 +155,20 @@ namespace JsonGoddess.Generator.Diagnostics
                 + "поэтому предел меньше единицы не может принять ни один документ вовсе."
             );
 
+        public static readonly DiagnosticDescriptor CaseInsensitiveNameIsNotSupported = new DiagnosticDescriptor(
+            CaseInsensitiveNameIsNotSupportedId,
+            "JsonFeature.CaseInsensitiveNames cannot serve this name",
+            "Type '{0}' cannot serve JsonFeature.CaseInsensitiveNames for member '{1}': {2}",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            description:
+                "CaseInsensitiveNames сворачивает регистр по ASCII (см. JsonAsciiName), а эталон - по "
+                + "Unicode; на не-ASCII имени совпадение зависело бы от алфавита, а не от документа. "
+                + "Честнее отказать на компиляции, чем обслужить документ, который эталон прочитал бы "
+                + "иначе."
+            );
+
         private static readonly Dictionary<string, DiagnosticDescriptor> _all =
             new Dictionary<string, DiagnosticDescriptor>
             {
@@ -168,6 +183,7 @@ namespace JsonGoddess.Generator.Diagnostics
                 { JsonNameRequiresEscapingId, JsonNameRequiresEscaping },
                 { SerializationOptionIsNotSupportedId, SerializationOptionIsNotSupported },
                 { InvalidMaxDepthId, InvalidMaxDepth },
+                { CaseInsensitiveNameIsNotSupportedId, CaseInsensitiveNameIsNotSupported },
             };
 
         public static DiagnosticDescriptor Get(string id) => _all[id];

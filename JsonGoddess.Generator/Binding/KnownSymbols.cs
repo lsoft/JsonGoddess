@@ -16,6 +16,7 @@ namespace JsonGoddess.Generator.Binding
         public const string ExhausterAttribute = "JsonGoddess.JsonExhausterAttribute";
         public const string InjectorAttribute = "JsonGoddess.JsonInjectorAttribute";
         public const string GuardAttribute = "JsonGoddess.JsonGuardAttribute";
+        public const string FeatureAttribute = "JsonGoddess.JsonFeatureAttribute";
         public const string ExhausterBaseName = "JsonGoddess.ExhausterBase";
         public const string InjectorBaseName = "JsonGoddess.InjectorBase";
 
@@ -39,6 +40,7 @@ namespace JsonGoddess.Generator.Binding
         public readonly INamedTypeSymbol? Exhauster;
         public readonly INamedTypeSymbol? Injector;
         public readonly INamedTypeSymbol? Guard;
+        public readonly INamedTypeSymbol? Feature;
         public readonly INamedTypeSymbol? ExhausterBase;
         public readonly INamedTypeSymbol? InjectorBase;
         public readonly INamedTypeSymbol? JsonIgnore;
@@ -63,6 +65,7 @@ namespace JsonGoddess.Generator.Binding
             Exhauster = compilation.GetTypeByMetadataName(ExhausterAttribute);
             Injector = compilation.GetTypeByMetadataName(InjectorAttribute);
             Guard = compilation.GetTypeByMetadataName(GuardAttribute);
+            Feature = compilation.GetTypeByMetadataName(FeatureAttribute);
             ExhausterBase = compilation.GetTypeByMetadataName(ExhausterBaseName);
             InjectorBase = compilation.GetTypeByMetadataName(InjectorBaseName);
             JsonIgnore = compilation.GetTypeByMetadataName(JsonIgnoreAttributeName);

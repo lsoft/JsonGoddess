@@ -68,6 +68,76 @@ namespace JsonGoddess.Internal
         }
 
         /// <summary>
+        /// То же, что <see cref="SkipWhitespace"/>, плюс <c>JsonFeature.Comments</c>
+        /// (JSONC): <c>//</c> до конца строки (или конца ввода) и <c>/* */</c>.
+        /// Печатается вместо <see cref="SkipWhitespace"/> только там, где хост
+        /// включил фичу, и только как <b>первое</b> действие метода/участка
+        /// кода, читающего значение или структурный токен, - выключенная
+        /// фича не платит ни одной проверки на счастливом пути (её здесь
+        /// попросту не вызывают).
+        ///
+        /// Единственное место, где этот метод не печатается, даже когда фича
+        /// включена, - между именем свойства и двоеточием: пробой
+        /// (<c>System.Text.Json</c> 10.0, <c>ReadCommentHandling.Skip</c>)
+        /// показал, что сам эталон отказывает на <c>{"Id" /* c */ : 1}</c>,
+        /// хотя комментарий легален буквально везде вокруг этого места -
+        /// до имени, после двоеточия, перед запятой, перед закрывающей
+        /// скобкой. Решение об этом принимает эмиттер (см.
+        /// <c>ClassSourceProducer</c>), а не этот метод: он всего лишь не
+        /// печатается в этой одной точке.
+        /// </summary>
+        public static void SkipWhitespaceAndComments(ReadOnlySpan<byte> json, scoped ref int position)
+        {
+            while (true)
+            {
+                SkipWhitespace(json, ref position);
+
+                //меньше двух байт впереди - комментарию просто неоткуда
+                //начаться; одиночный '/' без второго символа комментарием не
+                //является нигде дальше по методу, поэтому оба случая уходят
+                //одной проверкой
+                if (position + 1 >= json.Length || json[position] != (byte)'/')
+                {
+                    return;
+                }
+
+                if (json[position + 1] == (byte)'/')
+                {
+                    //строчный комментарий: до конца строки или до конца
+                    //ввода, что раньше - оба варианта пробоем подтверждены
+                    position += 2;
+                    while (position < json.Length && json[position] != (byte)'\n' && json[position] != (byte)'\r')
+                    {
+                        position++;
+                    }
+
+                    continue;
+                }
+
+                if (json[position + 1] == (byte)'*')
+                {
+                    position += 2;
+                    var closing = json.Slice(position).IndexOf(BlockCommentEnd);
+                    if (closing < 0)
+                    {
+                        throw new JsonDocumentException("Expected end of comment, but instead reached end of data.", position);
+                    }
+
+                    position += closing + 2;
+                    continue;
+                }
+
+                //одиночный '/' - не комментарий; позиция не трогается, и
+                //дальнейший отказ печатает свою собственную, более точную
+                //диагностику тот, кто позвал этот метод (Expect/ReadNumberRaw
+                //и так далее), а не он сам
+                return;
+            }
+        }
+
+        private static readonly byte[] BlockCommentEnd = { (byte)'*', (byte)'/' };
+
+        /// <summary>
         /// Пропускает пробелы и сообщает, что стоит дальше, не потребляя токен.
         /// </summary>
         public static JsonTokenKind Peek(ReadOnlySpan<byte> json, scoped ref int position)

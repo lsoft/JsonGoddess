@@ -133,4 +133,28 @@ namespace JsonGoddess
             Guards = guards;
         }
     }
+
+    /// <summary>
+    /// Включает opt-in фичи чтения/записи на хосте (§6.2 плана). Зеркало
+    /// <see cref="JsonGuardAttribute"/> по устройству: атрибут ставится рядом
+    /// с <see cref="JsonSubjectAttribute"/>, на хосте, и действует на все его
+    /// субъекты разом.
+    ///
+    /// Выключенная (не упомянутая) фича не стоит ни одной ветки в
+    /// порождённом коде - утверждение проверено тестом на текст
+    /// (<c>JsonGoddess.GeneratorTests</c>), а не обещанием в комментарии.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+    public sealed class JsonFeatureAttribute : Attribute
+    {
+        public JsonFeature Features
+        {
+            get;
+        }
+
+        public JsonFeatureAttribute(JsonFeature features)
+        {
+            Features = features;
+        }
+    }
 }
