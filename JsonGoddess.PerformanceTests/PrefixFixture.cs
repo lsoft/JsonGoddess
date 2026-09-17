@@ -46,7 +46,7 @@ namespace JsonGoddess.PerformanceTests
         }
 
         /// <summary>
-        /// Все пять форм обязаны прочитать один документ в один объект. Без
+        /// Все шесть форм обязаны прочитать один документ в один объект. Без
         /// этого сравнивать их время бессмысленно: быстрее всех окажется та,
         /// что читает меньше всего.
         /// </summary>
@@ -56,6 +56,7 @@ namespace JsonGoddess.PerformanceTests
             PrefixSerializer.DeserializeChainWords(DefaultInjector.Instance, _utf8, out var chainWords);
             PrefixSerializer.DeserializeWindowEqual(DefaultInjector.Instance, _utf8, out var windowEqual);
             PrefixSerializer.DeserializeWindowWord(DefaultInjector.Instance, _utf8, out var windowWord);
+            PrefixSerializer.DeserializeWindowRaw(DefaultInjector.Instance, _utf8, out var windowRaw);
             PrefixGenerated.Deserialize(DefaultInjector.Instance, _utf8, out var generated);
 
             var expected = Checksum(_prefix);
@@ -64,6 +65,7 @@ namespace JsonGoddess.PerformanceTests
             Expect("chain/two ulong", chainWords, expected);
             Expect("window/SequenceEqual", windowEqual, expected);
             Expect("window/one ulong", windowWord, expected);
+            Expect("window/raw + byte", windowRaw, expected);
             Expect("generated", generated, expected);
 
             //и отдельно - что документ вообще наш: PREFIX пишется и нами тоже
@@ -149,6 +151,23 @@ namespace JsonGoddess.PerformanceTests
         public Prefix? WindowWord()
         {
             PrefixSerializer.DeserializeWindowWord(DefaultInjector.Instance, _utf8, out var result);
+            return result;
+        }
+
+        /// <summary>
+        /// Окно, которое читается одной инструкцией. Первый замер (§12.3
+        /// плана) показал, что оконные формы проигрывают дешёвой цепочке, но
+        /// в них было смешано две вещи: сам <c>switch</c> по окну и <b>сборка</b>
+        /// окна из трёх чтений со сдвигами - копия <c>JsonNameKey.Compute</c>,
+        /// которой окну не требовалось. Здесь окно - один
+        /// <c>ReadUInt64LittleEndian</c> по смещению, выбранному на компиляции,
+        /// а доказывать после метки остаётся один байт.
+        /// </summary>
+        [BenchmarkCategory("deserialize")]
+        [Benchmark(Description = "window: сырой ulong по смещению + байт")]
+        public Prefix? WindowRaw()
+        {
+            PrefixSerializer.DeserializeWindowRaw(DefaultInjector.Instance, _utf8, out var result);
             return result;
         }
 

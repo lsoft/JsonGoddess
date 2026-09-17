@@ -9,7 +9,7 @@ namespace JsonGoddess.PerformanceTests.Generated
     /// <b>Макет, порождённый скриптом</b> (scratchpad/GenPrefix) - руками
     /// такое не пишут и глазами не вычитывают: сто двадцать веток.
     ///
-    /// Четыре формы конфликтной ветки диспетчера для вопроса O7 (§15 плана).
+    /// Пять форм конфликтной ветки диспетчера для вопроса O7 (§15 плана).
     /// Все тридцать имён PREFIX дают <b>один</b> ключ по первым семи байтам,
     /// то есть сегодняшний диспетчер вырождается здесь в цепочку из тридцати
     /// сравнений, и именно её тут и сравнивают с альтернативами:
@@ -22,6 +22,14 @@ namespace JsonGoddess.PerformanceTests.Generated
     /// нет вовсе, но остаётся одно <c>SequenceEqual</c>;</item>
     /// <item><c>WindowWord</c> - то же окно плюс одно сравнение <c>ulong</c>
     /// по байтам 0..7. Окно доказывает 2..8, слово - 0..7, вместе это всё имя.</item>
+    /// <item><c>WindowRaw</c> - окно, которое читается ОДНОЙ инструкцией:
+    /// восемь сырых байт по смещению, выбранному на компиляции, без длины в
+    /// старшем байте и без сборки из трёх чтений. Смещение ищет генератор
+    /// (<c>PickWindow</c>), а доказать остаётся лишь то, чего окно не
+    /// накрыло, - для девятибайтового имени при смещении 1 это один байт.
+    /// Форма заведена после первого замера: три предыдущих проиграли не
+    /// потому, что окно бесполезно, а потому, что оно было собрано дорого,
+    /// и это надо было разделить.</item>
     /// </list>
     /// Сравнение после окна <b>обязательно</b> в обеих оконных формах, и это
     /// не перестраховка: окно доказывает совпадение окна, а не имени. Имя в
@@ -1122,6 +1130,331 @@ namespace JsonGoddess.PerformanceTests.Generated
 
                             case 0x09393264616F6C79UL: //Payload29
                                 if (BinaryPrimitives.ReadUInt64LittleEndian(name) == 0x3264616F6C796150UL)
+                                {
+                                    result.Payload29 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                        }
+
+                        break;
+                }
+
+                JsonScan.SkipValue(json, ref position);
+
+            next:
+                if (!JsonScan.TryConsume(json, ref position, JsonScan.Comma))
+                {
+                    break;
+                }
+            }
+
+            JsonScan.Expect(json, ref position, JsonScan.CloseBrace);
+            return result;
+        }
+
+        public static void DeserializeWindowRaw(DefaultInjector injector, ReadOnlySpan<byte> json, out Prefix? result)
+        {
+            var position = 0;
+            var context = new JsonParseContext(json);
+            result = ReadWindowRaw(injector, json, ref position, ref context);
+        }
+
+        private static Prefix? ReadWindowRaw(
+            DefaultInjector injector,
+            scoped ReadOnlySpan<byte> json,
+            scoped ref int position,
+            scoped ref JsonParseContext context
+            )
+        {
+            if (JsonScan.TryReadNull(json, ref position))
+            {
+                return null;
+            }
+
+            JsonScan.Expect(json, ref position, JsonScan.OpenBrace);
+            var result = new Prefix();
+
+            if (JsonScan.TryConsume(json, ref position, JsonScan.CloseBrace))
+            {
+                return result;
+            }
+
+            while (true)
+            {
+                var name = JsonScan.ReadStringContent(json, ref position, out _);
+                JsonScan.Expect(json, ref position, JsonScan.Colon);
+
+                switch (name.Length)
+                {
+                    case 9:
+                        switch (BinaryPrimitives.ReadUInt64LittleEndian(name.Slice(1)))
+                        {
+                            case 0x303064616F6C7961UL: //Payload00
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload00 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x313064616F6C7961UL: //Payload01
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload01 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x323064616F6C7961UL: //Payload02
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload02 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x333064616F6C7961UL: //Payload03
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload03 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x343064616F6C7961UL: //Payload04
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload04 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x353064616F6C7961UL: //Payload05
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload05 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x363064616F6C7961UL: //Payload06
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload06 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x373064616F6C7961UL: //Payload07
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload07 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x383064616F6C7961UL: //Payload08
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload08 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x393064616F6C7961UL: //Payload09
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload09 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x303164616F6C7961UL: //Payload10
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload10 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x313164616F6C7961UL: //Payload11
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload11 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x323164616F6C7961UL: //Payload12
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload12 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x333164616F6C7961UL: //Payload13
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload13 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x343164616F6C7961UL: //Payload14
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload14 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x353164616F6C7961UL: //Payload15
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload15 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x363164616F6C7961UL: //Payload16
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload16 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x373164616F6C7961UL: //Payload17
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload17 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x383164616F6C7961UL: //Payload18
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload18 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x393164616F6C7961UL: //Payload19
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload19 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x303264616F6C7961UL: //Payload20
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload20 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x313264616F6C7961UL: //Payload21
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload21 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x323264616F6C7961UL: //Payload22
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload22 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x333264616F6C7961UL: //Payload23
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload23 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x343264616F6C7961UL: //Payload24
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload24 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x353264616F6C7961UL: //Payload25
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload25 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x363264616F6C7961UL: //Payload26
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload26 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x373264616F6C7961UL: //Payload27
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload27 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x383264616F6C7961UL: //Payload28
+                                if (name[0] == (byte)0x50)
+                                {
+                                    result.Payload28 = ReadInt32(injector, json, ref position, ref context);
+                                    goto next;
+                                }
+
+                                break;
+
+                            case 0x393264616F6C7961UL: //Payload29
+                                if (name[0] == (byte)0x50)
                                 {
                                     result.Payload29 = ReadInt32(injector, json, ref position, ref context);
                                     goto next;
