@@ -16,7 +16,16 @@ namespace JsonGoddess.PerformanceTests
                 var fixture = new RegularFixture();
                 fixture.Setup();
                 new WideFixture().Setup();
-                Console.WriteLine("verify: all serializers agree on both documents, and they read back.");
+
+                //формы под §8.2/O5/O7 и лестница флагов: у них проверка - это
+                //не формальность, а единственное, что отличает замер от
+                //бессмыслицы. Участник, который читает меньше остальных,
+                //окажется быстрее всех, и таблица покажет ровно это
+                new PrefixFixture().Setup();
+                new BucketFixture().Setup();
+                new FlagCostFixture().Setup();
+
+                Console.WriteLine("verify: all serializers agree on every document, and they read back.");
                 return;
             }
 
