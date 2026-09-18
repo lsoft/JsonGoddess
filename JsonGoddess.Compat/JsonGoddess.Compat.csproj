@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>JsonGoddess.Compat</PackageId>
+    <Title>JsonGoddess.Compat</Title>
+    <Description>Drop-in replacement for System.Text.Json.JsonSerializer backed by JsonGoddess source generators.</Description>
+  </PropertyGroup>
+
+  <!--
+    Эталон здесь - не эталон для сравнения, как в тестах, а настоящая
+    зависимость: фасад обязан уметь отдать ему работу, которую сам не тянет.
+    Версия закреплена на тех таргетах, где встроенная старше 9.0, - ровно по
+    той же причине, что и в тестах: зависимость, разная по таргетам, это три
+    разные библиотеки под одним именем.
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0' Or '$(TargetFramework)' == 'net8.0'">
+    <PackageReference Include="System.Text.Json" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Buffers" Version="4.5.1" />
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JsonGoddess.Common\JsonGoddess.Common.csproj" />
+    <ProjectReference Include="..\JsonGoddess.Components\JsonGoddess.Components.csproj" />
+  </ItemGroup>
+
+</Project>

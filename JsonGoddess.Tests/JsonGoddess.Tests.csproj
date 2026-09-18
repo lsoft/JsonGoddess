@@ -36,6 +36,7 @@
   <ItemGroup>
     <ProjectReference Include="..\JsonGoddess.Common\JsonGoddess.Common.csproj" />
     <ProjectReference Include="..\JsonGoddess.Components\JsonGoddess.Components.csproj" />
+    <ProjectReference Include="..\JsonGoddess.Compat\JsonGoddess.Compat.csproj" />
 
     <!--
       Генератор подключается так же, как его подключит потребитель пакета:
