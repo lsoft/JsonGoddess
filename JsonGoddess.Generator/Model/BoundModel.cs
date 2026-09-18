@@ -373,6 +373,21 @@ namespace JsonGoddess.Generator.Model
         /// </summary>
         public bool IsInitOnly { get; }
 
+        /// <summary>
+        /// Член обязан присутствовать в документе: ключевое слово
+        /// <c>required</c> или атрибут <c>[JsonRequired]</c>.
+        ///
+        /// Оба означают у эталона <b>ровно одно и то же</b> - проверено пробой
+        /// (scratchpad/ReqProbe): и то и другое даёт одно сообщение, один путь
+        /// и одну позицию. Поэтому здесь один флаг, а не два.
+        ///
+        /// Проверяется <b>присутствие имени</b>, а не осмысленность значения:
+        /// <c>null</c> засчитывается (у <c>required string</c> проходит),
+        /// повтор имени не мешает, отличие в регистре - мешает. Всё пробой
+        /// подтверждено.
+        /// </summary>
+        public bool IsRequired { get; }
+
         public MemberModel(
             string memberName,
             string jsonName,
@@ -383,11 +398,13 @@ namespace JsonGoddess.Generator.Model
             WriteCondition condition,
             int order,
             bool isConstructorParameter = false,
-            bool isInitOnly = false
+            bool isInitOnly = false,
+            bool isRequired = false
             )
         {
             IsConstructorParameter = isConstructorParameter;
             IsInitOnly = isInitOnly;
+            IsRequired = isRequired;
             MemberName = memberName;
             JsonName = jsonName;
             JsonNameUtf8 = jsonNameUtf8;
@@ -566,6 +583,21 @@ namespace JsonGoddess.Generator.Model
             Derived = derived;
             DiscriminatorName = discriminatorName;
             CollectionShape = collectionShape;
+
+            //считается один раз здесь, а не свойством: модель живёт в
+            //инкрементальном конвейере, и свойство, строящее список на каждое
+            //обращение, платило бы аллокацией за каждый взгляд эмиттера
+            var initialized = new List<MemberModel>();
+
+            foreach (var member in members)
+            {
+                if (member.IsRequired && member.CanRead && !member.IsConstructorParameter)
+                {
+                    initialized.Add(member);
+                }
+            }
+
+            RequiredInitialized = initialized;
         }
 
         public bool IsPolymorphic => Derived.Count > 0;
@@ -586,7 +618,29 @@ namespace JsonGoddess.Generator.Model
         /// <c>Beta = 5</c> превратится в ноль на документе, в котором
         /// <c>Beta</c> не было.
         /// </summary>
-        public bool NeedsDeferredConstruction => Parameters.Count > 0;
+        /// <remarks>
+        /// Обязательные члены (<c>required</c>/<c>[JsonRequired]</c>) тянут
+        /// сюда же, и не ради стройности: <c>new T()</c> у типа с
+        /// <c>required</c>-членом - <b>ошибка компиляции</b> CS9035, такой член
+        /// обязан быть присвоен в инициализаторе объекта. Значит объект
+        /// строится после того, как всё прочитано, - ровно как при
+        /// конструкторе с параметрами.
+        ///
+        /// Возражение, из-за которого одиночный <c>init</c>-член отвергается
+        /// (инициализатор не умеет сказать «не трогай, если имени не было»),
+        /// на обязательном члене не работает: имя там есть всегда, иначе
+        /// документ отвергнут раньше конструирования.
+        /// </remarks>
+        public bool NeedsDeferredConstruction =>
+            Parameters.Count > 0 || RequiredInitialized.Count > 0;
+
+        /// <summary>
+        /// Обязательные члены, которые присваиваются <b>инициализатором</b>, -
+        /// то есть все обязательные, кроме связанных с параметрами
+        /// конструктора (тех присваивает конструктор, и связыватель на такой
+        /// комбинации отказывает).
+        /// </summary>
+        public IReadOnlyList<MemberModel> RequiredInitialized { get; }
 
         /// <summary>Тип, каким он печатается в сигнатуру точки входа и писателя.</summary>
         public string Declaration => IsValueType ? FullName : FullName + "?";

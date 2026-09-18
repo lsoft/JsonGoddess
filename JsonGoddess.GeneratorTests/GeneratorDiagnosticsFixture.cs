@@ -275,18 +275,15 @@ namespace Demo
         /// <c>docs/stj-divergences.md</c>. Молчать здесь было нельзя:
         /// <c>[JsonNumberHandling(WriteAsString)]</c> у эталона даёт
         /// <c>{"Amount":"5"}</c>, а у нас давало <c>{"Amount":5}</c>, то есть
-        /// расходился сам документ; <c>[JsonRequired]</c> мягче - эталон
-        /// бросает на отсутствующем имени, мы молча оставляли умолчание.
-        /// Проверено прогоном эталона, оба случая.
+        /// расходился сам документ. Проверено прогоном эталона.
         ///
-        /// <c>[JsonRequired]</c> - не то же самое, что ключевое слово
-        /// <c>required</c>: то ловится по <c>property.IsRequired</c> и своим
-        /// отказом, а атрибут до этой правки не ловился ничем.
+        /// Второй из тех двух, <c>[JsonRequired]</c>, больше не отказ:
+        /// присутствие отслеживается, см.
+        /// <c>Required_member_is_served_and_its_absence_refuses_the_document</c>.
         /// </summary>
         [Theory]
         [InlineData("        [JsonNumberHandling(JsonNumberHandling.WriteAsString)] public int Amount { get; set; }", "JsonNumberHandling")]
         [InlineData("        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)] public int Amount { get; set; }", "JsonNumberHandling")]
-        [InlineData("        [JsonRequired] public int Amount { get; set; }", "JsonRequired")]
         public void Attribute_we_do_not_reproduce_is_refused_instead_of_ignored(string member, string named)
         {
             var run = GeneratorHarness.Run(Sources.Host(member));
@@ -441,14 +438,128 @@ namespace Demo
             Assert.Contains("JGD027", run.DiagnosticIds);
         }
 
-        [Fact]
-        public void Required_members_are_refused_until_presence_is_tracked()
+        /// <summary>
+        /// Обязательный член обслуживается: присутствие отслеживается маской,
+        /// объект собирается инициализатором (<c>new T()</c> у типа с
+        /// <c>required</c>-членом - ошибка компиляции CS9035).
+        /// </summary>
+        [Theory]
+        [InlineData("        public required int Id { get; set; }")]
+        [InlineData("        [JsonRequired] public int Id { get; set; }")]
+        [InlineData("        public required int Id { get; init; }")]
+        public void Required_member_is_served_and_its_absence_refuses_the_document(string member)
         {
-            var required = GeneratorHarness.Run(
-                Sources.Host(@"        public required int Id { get; set; }")
+            var run = GeneratorHarness.Run(Sources.Host(member));
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+            Assert.Contains("was missing required properties including", run.SingleGeneratedFile, System.StringComparison.Ordinal);
+            Assert.Contains("new global::Demo.Subject() { Id = set_Id, }", run.SingleGeneratedFile, System.StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Обязательный член у структуры и у полиморфной пары. Обе формы
+        /// строят объект не так, как обычный класс - у структуры нет ссылки,
+        /// у наследника читатель вызывается изнутри чужого, - и обе обязаны
+        /// напечатать инициализатор, иначе компилятор откажет (CS9035).
+        /// </summary>
+        [Fact]
+        public void Required_member_compiles_in_a_struct_and_in_a_polymorphic_pair()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    public struct Point
+    {
+        public required int X { get; set; }
+    }
+
+    [JsonDerivedType(typeof(Dog), ""dog"")]
+    public class Animal
+    {
+        public required string Name { get; set; }
+    }
+
+    public class Dog : Animal
+    {
+        public required int Legs { get; set; }
+    }
+
+    [JsonSubject(typeof(Point), true)]
+    [JsonSubject(typeof(Animal), true)]
+    [JsonSubject(typeof(Dog), false)]
+    public partial class ShapeSerializer
+    {
+    }
+}
+");
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+        }
+
+        /// <summary>
+        /// Обязательный член, связанный с параметром конструктора, - отказ, и
+        /// причина не в трудности. Компилятор требует присвоить такой член в
+        /// инициализаторе объекта (CS9035), а эталон setter члена-параметра не
+        /// вызывает вовсе (§9.8). Законный код тут можно напечатать только
+        /// ценой другого значения в объекте.
+        /// </summary>
+        [Fact]
+        public void Required_member_bound_to_a_constructor_parameter_is_refused()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Order
+    {
+        public Order(int id)
+        {
+            Id = id;
+        }
+
+        public required int Id { get; set; }
+    }
+
+    [JsonSubject(typeof(Order), true)]
+    public partial class OrderSerializer
+    {
+    }
+}
+");
+
+            Assert.NotEmpty(run.GeneratorDiagnostics);
+            Assert.Contains(
+                "never calls its setter",
+                string.Join("\n", run.GeneratorDiagnostics.Select(d => d.GetMessage())),
+                System.StringComparison.Ordinal
+                );
+        }
+
+        /// <summary>
+        /// <c>[JsonIgnore]</c> + <c>required</c> - у эталона не документ, а
+        /// ошибка настройки: <c>InvalidOperationException</c> на любом
+        /// обращении к типу, включая запись (проверено пробой). Мы отказываем
+        /// на компиляции - раньше и громче.
+        /// </summary>
+        [Fact]
+        public void Required_member_marked_ignored_is_refused()
+        {
+            var run = GeneratorHarness.Run(
+                Sources.Host(@"        [JsonIgnore] public required int Id { get; set; }")
                 );
 
-            Assert.Contains("JGD022", required.DiagnosticIds);
+            Assert.Contains("JGD022", run.DiagnosticIds);
+            Assert.Contains(
+                "configuration error",
+                string.Join("\n", run.GeneratorDiagnostics.Select(d => d.GetMessage())),
+                System.StringComparison.Ordinal
+                );
         }
 
         /// <summary>

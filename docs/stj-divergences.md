@@ -162,7 +162,28 @@ opt-in, а не безусловная правка, и хост, ничего �
 (`Strict_numbers_guard_switches_the_number_lexer` — страж печатает `ReadNumberRawStrict` вместо
 `ReadNumberRaw` только под атрибутом).
 
-### 2.3. `[JsonRequired]` не реализован
+### 2.3. `[JsonRequired]` не реализован — **закрыто, расхождения больше нет**
+
+**Реализовано.** Ключевое слово `required` и атрибут `[JsonRequired]` обслуживаются и означают
+у нас ровно то же, что у эталона: присутствие имени в документе обязательно, иначе отказ.
+Сообщение повторяет эталонное дословно — `JSON deserialization for type 'T' was missing required
+properties including: 'a'; 'b'.` — и перечисляет **JSON-имена**, а не имена членов.
+
+Спецификация снята пробой (`scratchpad/ReqProbe`), а не выведена рассуждением. Из неё же —
+три вещи, которые легко было бы сделать неправильно: обязательность про **имя**, а не про
+значение (`null` засчитывается), повтор имени не мешает, отличие в регистре — мешает.
+
+Осталось два случая, где мы отказываем на компиляции, а эталон падает в рантайме; они перечислены
+в разделе 3.
+
+**Чем закреплено.** `JsonGoddess.Tests/Generated/GeneratedRoundTripFixture.cs`:
+`Missing_required_name_is_refused_with_the_reference_wording` (сообщение сверяется с эталонным
+в том же тесте), `Presence_is_about_the_name_not_the_value`,
+`Demanding_document_is_read_the_way_system_text_json_reads_it`.
+
+Ниже — как этот пункт выглядел до починки.
+
+#### Как было
 
 **Что делает эталон.** Член, помеченный `[JsonRequired]`, обязан присутствовать в документе; если
 его нет, `Deserialize` бросает `JsonException` — независимо от того, есть у члена значение по
@@ -207,7 +228,9 @@ opt-in, а не безусловная правка, и хост, ничего �
 | `[Flags]`-enum, non-ASCII имя члена или два имени на одно значение в строковой форме enum'а | Комбинирует (`"Read, Write"`), сворачивает регистр по Unicode, либо пишет то имя, что даст `Enum.GetName` (не гарантировано) | `JGD022` на всех трёх | да, `GeneratorDiagnosticsFixture.String_enum_refuses_what_cannot_be_matched_exactly` |
 | Произвольный `[JsonConverter]` на типе/enum'е | Исполняет конвертер в рантайме | `JGD022`/`JGD028` — воспроизвести чужой код нельзя, притвориться — хуже отказа | да, `GeneratorDiagnosticsFixture.Unknown_converter_on_a_type_is_refused` |
 | Свойства `[JsonSourceGenerationOptions]`, которые мы не реализуем (`WriteIndented`, `DefaultIgnoreCondition=WhenWritingNull`, `IncludeFields`, `PropertyNameCaseInsensitive`, `UseStringEnumConverter`, `AllowTrailingCommas`, `MaxDepth`) | Их собственный source-генератор их исполняет | `JGD028` | да, `GeneratorDiagnosticsFixture.Option_we_do_not_implement_is_refused` |
-| `required`-член и «одинокий» `init`-член без параметра конструктора | Оба поддержаны (первый — с рантайм-отказом при реальном отсутствии, второй — оставляет инициализированное значение) | `JGD022`/`JGD021` | да, `Required_members_are_refused_until_presence_is_tracked`, `Standalone_init_only_member_is_refused_with_the_reason_named` |
+| «Одинокий» `init`-член без параметра конструктора и **не** обязательный | Оставляет инициализированное значение, если имени в документе не было | `JGD021` — инициализатор объекта не умеет сказать «не трогай» | да, `Standalone_init_only_member_is_refused_with_the_reason_named` |
+| `[JsonIgnore]` на обязательном члене | `InvalidOperationException` на **любом** обращении к типу, включая запись | `JGD022` на компиляции — раньше и громче | да, `Required_member_marked_ignored_is_refused` |
+| Обязательный член, связанный с параметром конструктора | Читает конструктором; setter не вызывает | `JGD022`: C# требует присвоить такой член в инициализаторе объекта (CS9035), а это означало бы вызвать setter после конструктора — то есть положить в объект другое значение | да, `Required_member_bound_to_a_constructor_parameter_is_refused` |
 | Приватный конструктор с `[JsonConstructor]` | Вызывает рефлексией | `JGD021` — порождённый код лежит в чужом классе и такого хода не имеет | да, `Private_json_constructor_is_refused_because_generated_code_cannot_call_it` |
 | Имя свойства, чья JSON-форма сама требует экранирования (например, содержит `"`) | Пишет и читает без вопросов | `JGD027` | да, `GeneratorDiagnosticsFixture.Name_that_requires_json_escaping_is_refused` |
 

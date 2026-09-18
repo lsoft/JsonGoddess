@@ -83,6 +83,26 @@ namespace JsonGoddess.Generator.Binding
                     return null;
                 }
 
+                //Обязательный член, связанный с параметром конструктора, -
+                //отказ, и вот почему. Компилятор требует присвоить такой член
+                //в инициализаторе объекта (CS9035), если только у конструктора
+                //нет [SetsRequiredMembers]. Но присвоить его там значило бы
+                //отработать setter'ом ПОСЛЕ конструктора, а эталон этого не
+                //делает: прогоном §9.8 подтверждено, что у члена-параметра
+                //setter не вызывается вовсе (конструктор, умножающий на десять,
+                //даёт 10, а не 1). То есть законный код мы можем напечатать
+                //только ценой другого значения в объекте - худший исход по §1.
+                if (member.IsRequired)
+                {
+                    Refuse(subject, location, diagnostics, ref failed,
+                        "member '" + member.MemberName + "' is required and is bound to constructor parameter '"
+                        + parameter.Name + "'; C# demands that a required member be assigned in an object "
+                        + "initializer, but System.Text.Json leaves such a member to the constructor and never "
+                        + "calls its setter, so the only legal code JsonGoddess could emit would put a different "
+                        + "value in the object");
+                    return null;
+                }
+
                 members[index] = WithConstructorParameter(member);
 
                 result.Add(new ParameterModel(member.MemberName, Default(parameter, member)));
@@ -117,6 +137,15 @@ namespace JsonGoddess.Generator.Binding
             foreach (var member in members)
             {
                 if (!member.IsInitOnly || !member.CanRead || member.IsConstructorParameter)
+                {
+                    continue;
+                }
+
+                //Обязательному члену это возражение не адресовано: «оставить
+                //как было» ему не понадобится никогда - документ без его
+                //имени отвергается до конструирования, - значит инициализатор
+                //выражает его присваивание полностью.
+                if (member.IsRequired)
                 {
                     continue;
                 }
@@ -181,7 +210,8 @@ namespace JsonGoddess.Generator.Binding
                 member.Condition,
                 member.Order,
                 isConstructorParameter: true,
-                isInitOnly: member.IsInitOnly
+                isInitOnly: member.IsInitOnly,
+                isRequired: member.IsRequired
                 );
         }
 

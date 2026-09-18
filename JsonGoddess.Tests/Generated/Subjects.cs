@@ -1049,4 +1049,47 @@ namespace JsonGoddess.Tests.Generated
     public partial class WordEdgesSerializer
     {
     }
+
+    /// <summary>
+    /// Обязательные члены во всех формах, которые эталон различает
+    /// (проверено пробой, scratchpad/ReqProbe): ключевое слово, атрибут
+    /// <c>[JsonRequired]</c>, <c>init</c>-setter и переименованный член.
+    ///
+    /// Необязательный <c>Note</c> тут же не для полноты, а по делу: он
+    /// доказывает, что маска присутствия считает только обязательных, а не
+    /// «все имена подряд».
+    /// </summary>
+    public class Demanding
+    {
+        public required int Amount { get; set; }
+
+        [JsonRequired]
+        public int Count { get; set; }
+
+        public required string Label { get; init; }
+
+        [JsonPropertyName("amt")]
+        public required int Renamed { get; set; }
+
+        public string? Note { get; set; }
+
+        public static Demanding CreateSample()
+        {
+            return new Demanding
+            {
+                Amount = 1,
+                Count = 2,
+                Label = "L",
+                Renamed = 3,
+                Note = "n",
+            };
+        }
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Demanding), true)]
+    public partial class DemandingSerializer
+    {
+    }
 }

@@ -1116,6 +1116,16 @@ namespace JsonGoddess.Generator.Binding
             ref bool failed
             )
         {
+            //required и [JsonRequired] - одно и то же, проверено пробой
+            //(scratchpad/ReqProbe): оба дают одно сообщение, один путь и одну
+            //позицию. Считается это здесь, до всех проверок, потому что
+            //дальше член может быть отброшен, а отброшенный required - повод
+            //отказать, а не промолчать.
+            var isRequired =
+                member is IPropertySymbol { IsRequired: true }
+                || member is IFieldSymbol { IsRequired: true }
+                || known.Has(member, known.JsonRequired);
+
             //[JsonIgnore] без Condition означает Always, то есть член исчезает в
             //обе стороны. Condition = Never - наоборот, «писать всегда», и это
             //не то же самое, что отсутствие атрибута только на вид: смысл тот
@@ -1137,6 +1147,22 @@ namespace JsonGoddess.Generator.Binding
                         break;
 
                     default:
+                        //[JsonIgnore] + required - у эталона это не документ, а
+                        //ошибка настройки: InvalidOperationException
+                        //«marked required but does not specify a setter», и
+                        //бросает он её на ЛЮБОМ обращении к типу, включая
+                        //запись (проверено пробой). Мы отказываем на
+                        //компиляции: молча прочитать документ там, где эталон
+                        //падает, - расхождение в строгости, а отказ раньше и
+                        //громче падения позже.
+                        if (isRequired)
+                        {
+                            Refuse(subject, member, MemberType(member), location, diagnostics, ref failed,
+                                "the member is required and carries [JsonIgnore]; System.Text.Json treats this "
+                                + "combination as a configuration error and throws InvalidOperationException on "
+                                + "every use of the type, so accepting it here would be a divergence in strictness");
+                        }
+
                         return null;
                 }
             }
@@ -1166,13 +1192,6 @@ namespace JsonGoddess.Generator.Binding
                                 "non-public members marked [JsonInclude] are not supported yet");
                         }
 
-                        return null;
-                    }
-
-                    if (property.IsRequired)
-                    {
-                        Refuse(subject, member, property.Type, location, diagnostics, ref failed,
-                            "'required' members are not supported yet: the generated code builds the object with new T()");
                         return null;
                     }
 
@@ -1254,17 +1273,17 @@ namespace JsonGoddess.Generator.Binding
                 return null;
             }
 
-            //[JsonRequired] - не то же самое, что ключевое слово required: оно
-            //ловится выше по property.IsRequired, а атрибут до сих пор не
-            //ловился ничем. Расходится здесь не документ, а строгость чтения:
-            //эталон бросает на отсутствующем имени, мы молча оставляли
-            //умолчание.
-            if (known.Has(member, known.JsonRequired))
+            //Член обязателен, но прочитать его нечем: имя в документе будет,
+            //а положить значение некуда. Эталон на такой комбинации падает
+            //InvalidOperationException'ом на любом обращении к типу, мы
+            //отказываем на компиляции - по той же причине, что и с
+            //[JsonIgnore] выше.
+            if (isRequired && !canRead)
             {
                 Refuse(subject, member, memberType, location, diagnostics, ref failed,
-                    "the member carries [JsonRequired], and System.Text.Json refuses a document in which the "
-                    + "name is absent; JsonGoddess does not track presence yet, so accepting such a document "
-                    + "silently would be a divergence in strictness");
+                    "the member is required but has no public setter reachable by the generated code, so its "
+                    + "presence could never be satisfied; System.Text.Json refuses this combination too, only "
+                    + "at run time");
                 return null;
             }
 
@@ -1315,8 +1334,20 @@ namespace JsonGoddess.Generator.Binding
                 canRead,
                 condition,
                 known.ReadInt32Argument(member, known.JsonPropertyOrder, 0),
-                isInitOnly: isInitOnly
+                isInitOnly: isInitOnly,
+                isRequired: isRequired
                 );
+        }
+
+        /// <summary>
+        /// Тип члена там, где до <c>memberType</c> дело ещё не дошло, - нужен
+        /// одному сообщению об отказе и больше никому. Приведение безопасно:
+        /// сюда попадают только свойства и поля, ничего другого перечисление
+        /// членов не отдаёт.
+        /// </summary>
+        private static ITypeSymbol MemberType(ISymbol member)
+        {
+            return member is IPropertySymbol property ? property.Type : ((IFieldSymbol)member).Type;
         }
 
         private static void Refuse(

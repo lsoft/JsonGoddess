@@ -800,6 +800,18 @@ namespace JsonGoddess.Generator.Emit
                 }
             }
 
+            //required/[JsonRequired]: одна битовая маска на всех обязательных
+            //членов, а не флаг на каждого. Считать нельзя - эталон разрешает
+            //повтор имени (проверено пробой), и счётчик от повтора одного
+            //члена закрыл бы отсутствие другого.
+            var required = members.Where(m => m.IsRequired).ToList();
+
+            if (required.Count > 0)
+            {
+                builder.Line("var " + RequiredSeen + " = 0UL;");
+                builder.Line();
+            }
+
             if (subject.IsPolymorphic && !body)
             {
                 EmitDiscriminatorDispatch(builder, subject, guards, features);
@@ -823,6 +835,12 @@ namespace JsonGoddess.Generator.Emit
                 builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".CloseBrace);");
             }
 
+            //Выходов из читателя два - пустой объект здесь и конец цикла ниже,
+            //- и проверка обязана стоять на обоих. На этом ни один
+            //обязательный член не мог быть виден ни разу, но печатается та же
+            //проверка, а не безусловный throw: так у обоих выходов одна форма,
+            //и сообщение собирается одним и тем же кодом.
+            EmitRequiredCheck(builder, subject, required);
             builder.Line(deferred ? "return " + Construct(subject, members) + ";" : "return result;");
             builder.CloseBlock();
             builder.Line();
@@ -891,6 +909,17 @@ namespace JsonGoddess.Generator.Emit
                                 );
                             builder.CloseBlock();
                             builder.Line(DupSeen(member) + " = true;");
+                        }
+
+                        //Отметка присутствия стои́т ДО чтения значения, и это
+                        //не вкусовщина: у эталона обязательность - про имя, а
+                        //не про значение, поэтому {"Amount":null} на
+                        //required string проходит, а на required int падает
+                        //разбором значения, а не отсутствием (проверено
+                        //пробой). Порядок строк это и воспроизводит.
+                        if (member.IsRequired)
+                        {
+                            builder.Line(RequiredSeen + " |= 0x" + RequiredBit(required, member).ToString("X") + "UL;");
                         }
 
                         ValueSourceProducer.ReadValue(builder, member.Value, Target(member, deferred));
@@ -968,12 +997,22 @@ namespace JsonGoddess.Generator.Emit
 
             builder.Line(Scan + ".Expect(json, ref position, " + Scan + ".CloseBrace);");
 
+            //Проверка стои́т ПОСЛЕ закрывающей скобки, и это поведение эталона,
+            //а не наше удобство: позиция в его исключении указывает на конец
+            //объекта, то есть отказ случается, когда объект дочитан, а не в
+            //тот момент, когда стало ясно, что имени не будет.
+            builder.Line();
+            EmitRequiredCheck(builder, subject, required);
+
             if (deferred)
             {
                 builder.Line();
                 builder.Line("var result = " + Construct(subject, members) + ";");
 
-                foreach (var member in members.Where(m => !m.IsConstructorParameter))
+                //обязательные уже присвоены инициализатором внутри Construct -
+                //повторное присваивание было бы лишним, а для init-члена ещё
+                //и незаконным
+                foreach (var member in members.Where(m => !m.IsConstructorParameter && !m.IsRequired))
                 {
                     builder.OpenBlock("if (" + Seen(member) + ")");
                     builder.Line("result." + member.MemberName + " = " + Assigned(member) + ";");
@@ -993,9 +1032,128 @@ namespace JsonGoddess.Generator.Emit
 
             builder.CloseBlock();
             builder.Line();
+
+            //Помощник печатается один раз на субъект, а не на читатель: у
+            //полиморфной пары читателей два, а имя у метода одно.
+            if (!body)
+            {
+                EmitMissingRequired(builder, subject, members);
+            }
         }
 
         private static string DupSeen(MemberModel member) => "dup_" + member.MemberName;
+
+        /// <summary>
+        /// Маска присутствия обязательных членов. Имя без префикса члена:
+        /// она одна на читатель, а не по одной на член.
+        /// </summary>
+        private const string RequiredSeen = "required";
+
+        private static ulong RequiredBit(IReadOnlyList<MemberModel> required, MemberModel member)
+        {
+            for (var i = 0; i < required.Count; i++)
+            {
+                if (ReferenceEquals(required[i], member))
+                {
+                    return 1UL << i;
+                }
+            }
+
+            return 0UL;
+        }
+
+        private static ulong RequiredMask(IReadOnlyList<MemberModel> required)
+        {
+            //не (1 << N) - 1: при N = 64 сдвиг на 64 в C# берётся по модулю
+            //разрядности, то есть даёт 1, а маска - ноль. Ошибка, которая
+            //проявилась бы ровно на одном размере типа
+            var mask = 0UL;
+
+            for (var i = 0; i < required.Count; i++)
+            {
+                mask |= 1UL << i;
+            }
+
+            return mask;
+        }
+
+        /// <summary>
+        /// Отказ на документе, в котором не было имени обязательного члена.
+        ///
+        /// Сообщение повторяет эталонное дословно (проверено пробой,
+        /// scratchpad/ReqProbe): <c>JSON deserialization for type 'T' was
+        /// missing required properties including: 'a'; 'b'.</c> Повторяет не из
+        /// почтения, а из расчёта на compat-слой (§10): там наше исключение
+        /// увидит чужой код, написанный под эталон.
+        ///
+        /// Перечисляются <b>JSON-имена</b>, а не имена членов: у эталона в
+        /// списке стои́т <c>'amt'</c>, когда член назван
+        /// <c>[JsonPropertyName("amt")] Amount</c>.
+        /// </summary>
+        private static void EmitRequiredCheck(
+            SourceBuilder builder,
+            SubjectModel subject,
+            IReadOnlyList<MemberModel> required
+            )
+        {
+            if (required.Count == 0)
+            {
+                return;
+            }
+
+            builder.OpenBlock("if (" + RequiredSeen + " != 0x" + RequiredMask(required).ToString("X") + "UL)");
+            builder.Line(
+                "throw new " + DocumentException
+                + "(\"JSON deserialization for type '" + subject.FullName.Replace("global::", string.Empty)
+                + "' was missing required properties including: \" + "
+                + MissingName(subject) + "(" + RequiredSeen + ") + \".\", position);"
+                );
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Сборка списка недостающих имён - отдельным методом, а не на месте:
+        /// это путь отказа, и ему нечего делать в теле читателя, где каждая
+        /// лишняя сотня байт машинного кода мешает JIT'у (§12.6.1).
+        /// </summary>
+        private static void EmitMissingRequired(
+            SourceBuilder builder,
+            SubjectModel subject,
+            IReadOnlyList<MemberModel> members
+            )
+        {
+            var required = members.Where(m => m.IsRequired).ToList();
+
+            if (required.Count == 0)
+            {
+                return;
+            }
+
+            builder.OpenBlock("private static string " + MissingName(subject) + "(ulong seen)");
+            builder.Line(
+                "var names = new string[] { "
+                + string.Join(", ", required.Select(m => SourceBuilder.Literal(m.JsonName)))
+                + ", };"
+                );
+            builder.Line("var missing = new global::System.Text.StringBuilder();");
+            builder.Line();
+            builder.OpenBlock("for (var i = 0; i < names.Length; i++)");
+            builder.OpenBlock("if ((seen & (1UL << i)) == 0UL)");
+            builder.OpenBlock("if (missing.Length > 0)");
+            builder.Line("missing.Append(\"; \");");
+            builder.CloseBlock();
+            builder.Line();
+            builder.Line("missing.Append('\\'').Append(names[i]).Append('\\'');");
+            builder.CloseBlock();
+            builder.CloseBlock();
+            builder.Line();
+            builder.Line("return missing.ToString();");
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        private static string MissingName(SubjectModel subject) => "MissingRequired_" + subject.MethodSuffix;
 
         /// <summary>
         /// Локальные отложенной формы: по одной на каждый читаемый член, плюс
@@ -1027,12 +1185,32 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
         }
 
+        /// <summary>
+        /// Выражение, строящее объект.
+        ///
+        /// Обязательные члены идут <b>инициализатором</b>, и не по выбору:
+        /// <c>new T()</c> у типа с <c>required</c>-членом компилятор не
+        /// принимает (CS9035). Условности вроде <c>if (has_X)</c> здесь не
+        /// нужно и не может быть - имя обязательного члена в документе было,
+        /// иначе досюда бы не дошли.
+        /// </summary>
         private static string Construct(SubjectModel subject, IReadOnlyList<MemberModel> members)
         {
             var arguments = subject.Parameters
                 .Select(p => Argument(members.First(m => m.MemberName == p.MemberName)));
 
-            return "new " + subject.FullName + "(" + string.Join(", ", arguments) + ")";
+            var expression = "new " + subject.FullName + "(" + string.Join(", ", arguments) + ")";
+
+            var initialized = subject.RequiredInitialized;
+
+            if (initialized.Count == 0)
+            {
+                return expression;
+            }
+
+            return expression + " { "
+                + string.Join(", ", initialized.Select(m => m.MemberName + " = " + Assigned(m)))
+                + ", }";
         }
 
         private static string Target(MemberModel member, bool deferred)

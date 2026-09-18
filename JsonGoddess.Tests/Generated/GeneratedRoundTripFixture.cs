@@ -933,6 +933,82 @@ namespace JsonGoddess.Tests.Generated
             return Encoding.UTF8.GetString(exhauster.ToArray());
         }
 
+        [Fact]
+        public void Demanding_document_matches_system_text_json_byte_for_byte()
+        {
+            var value = Demanding.CreateSample();
+
+            using var exhauster = new PooledUtf8Exhauster();
+            DemandingSerializer.Serialize(exhauster, value);
+
+            Assert.Equal(Reference.Write(value), Encoding.UTF8.GetString(exhauster.ToArray()));
+        }
+
+        [Fact]
+        public void Demanding_document_is_read_the_way_system_text_json_reads_it()
+        {
+            var utf8 = Encoding.UTF8.GetBytes(Reference.Write(Demanding.CreateSample()));
+
+            var theirs = JsonSerializer.Deserialize<Demanding>(utf8, Reference.Relaxed);
+            DemandingSerializer.Deserialize(DefaultInjector.Instance, utf8, out var ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+        }
+
+        /// <summary>
+        /// Отсутствие имени обязательного члена - отказ, и сообщение об отказе
+        /// повторяет эталонное дословно. Повторяет не из почтения: это
+        /// сообщение увидит чужой код в compat-слое (§10).
+        ///
+        /// Ожидание получено пробой эталона, а не написано рукой: в списке
+        /// стоят <b>JSON-имена</b> (<c>'amt'</c>, не <c>'Renamed'</c>),
+        /// разделены <c>"; "</c>, порядок - объявления.
+        /// </summary>
+        [Theory]
+        [InlineData("{}", "'Amount'; 'Count'; 'Label'; 'amt'")]
+        [InlineData("{\"Amount\":1}", "'Count'; 'Label'; 'amt'")]
+        [InlineData("{\"Amount\":1,\"Count\":2,\"Label\":\"L\"}", "'amt'")]
+        [InlineData("{\"Amount\":1,\"Count\":2,\"Label\":\"L\",\"Renamed\":3}", "'amt'")]
+        [InlineData("{\"amount\":1,\"Count\":2,\"Label\":\"L\",\"amt\":3}", "'Amount'")]
+        public void Missing_required_name_is_refused_with_the_reference_wording(string json, string expected)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(json);
+
+            var theirs = Assert.Throws<JsonException>(
+                () => JsonSerializer.Deserialize<Demanding>(utf8, Reference.Relaxed)
+                );
+
+            var ours = Assert.Throws<JsonDocumentException>(
+                () =>
+                {
+                    DemandingSerializer.Deserialize(DefaultInjector.Instance, utf8, out _);
+                }
+                );
+
+            Assert.Contains(expected, theirs.Message, StringComparison.Ordinal);
+            Assert.Contains(expected, ours.Message, StringComparison.Ordinal);
+            Assert.Contains("was missing required properties including", ours.Message, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Обязательность - про <b>имя</b>, а не про значение. Все три случая
+        /// подтверждены пробой эталона: <c>null</c> засчитывается, повтор
+        /// имени не мешает, лишнее незнакомое имя не мешает тоже.
+        /// </summary>
+        [Theory]
+        [InlineData("{\"Amount\":1,\"Count\":2,\"Label\":null,\"amt\":3}")]
+        [InlineData("{\"Amount\":1,\"Amount\":9,\"Count\":2,\"Label\":\"L\",\"amt\":3}")]
+        [InlineData("{\"Unknown\":0,\"Amount\":1,\"Count\":2,\"Label\":\"L\",\"amt\":3}")]
+        public void Presence_is_about_the_name_not_the_value(string json)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(json);
+
+            var theirs = JsonSerializer.Deserialize<Demanding>(utf8, Reference.Relaxed);
+            DemandingSerializer.Deserialize(DefaultInjector.Instance, utf8, out var ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+        }
+
         /// <summary>
         /// Словесная форма диспетчера (§12.6.1 плана) читает имя как одно-два
         /// числа. Здесь проверяется, что она читает документ так же, как
