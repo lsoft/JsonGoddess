@@ -97,6 +97,7 @@ namespace JsonGoddess.Generator.Binding
         public static GenerationResult Bind(
             Compilation compilation,
             ImmutableArray<CompatCallSite> sites,
+            CompatSettings settings,
             CancellationToken token
             )
         {
@@ -161,6 +162,9 @@ namespace JsonGoddess.Generator.Binding
                         new DiagnosticInfo(
                             JsonGoddessDiagnostics.CompatTypeFallsBackId,
                             roots[root],
+                            //JsonGoddessCompatStrict меняет только громкость:
+                            //тип всё равно уходит эталону и всё равно работает
+                            settings.Raise(DiagnosticSeverity.Info),
                             root.ToDisplayString(),
                             Explain(trial)
                             )
@@ -202,6 +206,7 @@ namespace JsonGoddess.Generator.Binding
                     new DiagnosticInfo(
                         JsonGoddessDiagnostics.CompatGenerationFailedId,
                         roots[served[0]],
+                        settings.Raise(DiagnosticSeverity.Warning),
                         served[0].ToDisplayString(),
                         Explain(final)
                         )

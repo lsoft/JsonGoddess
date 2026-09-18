@@ -18,8 +18,25 @@
     <JsonGoddessCompat>enable</JsonGoddessCompat>
   </PropertyGroup>
 
+  <!--
+    Громкость отступления. Тип, который обслужить нельзя, уходит эталону и
+    продолжает работать - это объявленное поведение, и по умолчанию о нём
+    сообщается подсказкой (JGD001, severity Info). Проекту, которому важно,
+    чтобы ускорилось ВСЁ, этого мало:
+
+      <PropertyGroup>
+        <JsonGoddessCompatStrict>warning</JsonGoddessCompatStrict>
+      </PropertyGroup>
+
+    Значения: info (умолчание), warning, error. Свойство меняет только
+    громкость: решение - уйти эталону - остаётся тем же, и собирается проект
+    ровно так же. Умолчания здесь нет намеренно: пустое значение и есть
+    "ничего не менять", а выставь мы info явно, отличить "не просили" от
+    "просили умолчание" стало бы нечем.
+  -->
   <ItemGroup>
     <CompilerVisibleProperty Include="JsonGoddessCompat" />
+    <CompilerVisibleProperty Include="JsonGoddessCompatStrict" />
   </ItemGroup>
 
 </Project>

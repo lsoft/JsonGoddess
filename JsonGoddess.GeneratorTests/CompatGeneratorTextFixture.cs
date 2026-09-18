@@ -546,6 +546,156 @@ namespace Sample
             Assert.DoesNotContain("\\\\u0422", text);
         }
 
+        /// <summary>
+        /// <c>JsonGoddessCompatStrict</c> поднимает громкость, <b>не меняя
+        /// решения</b> (§10 плана).
+        ///
+        /// <para>
+        /// Второе проверяется наравне с первым и важнее его: свойство заводится
+        /// затем, чтобы отступление к эталону не проходило незамеченным, - а не
+        /// затем, чтобы отступлений стало меньше. Тип, который обслужить
+        /// нельзя, обязан уйти эталону при любом значении.
+        /// </para>
+        /// </summary>
+        [Theory]
+        [InlineData(null, DiagnosticSeverity.Info)]
+        [InlineData("info", DiagnosticSeverity.Info)]
+        [InlineData("warning", DiagnosticSeverity.Warning)]
+        [InlineData("Warning", DiagnosticSeverity.Warning)]
+        [InlineData("error", DiagnosticSeverity.Error)]
+        public void The_strictness_property_changes_the_volume_of_JGD001(string? strict, DiagnosticSeverity expected)
+        {
+            var run = Strict(Refusing, strict);
+
+            var fallback = run.GeneratorDiagnostics.Single(d => d.Id == "JGD001");
+
+            Assert.Equal(expected, fallback.Severity);
+
+            //решение то же самое: тип по-прежнему уходит эталону, и кода по
+            //нему по-прежнему нет
+            Assert.Empty(run.GeneratedFiles);
+            Assert.Contains("Sample.Weird", fallback.GetMessage());
+        }
+
+        /// <summary>
+        /// Строгость - это <b>нижняя граница</b>, а не точное значение.
+        /// <c>JGD002</c> объявлен <c>Warning</c>, потому что это дыра в
+        /// генераторе, и <c>JsonGoddessCompatStrict=info</c> не имеет права
+        /// сделать его тише.
+        /// </summary>
+        [Theory]
+        [InlineData("info")]
+        [InlineData("warning")]
+        public void The_strictness_property_never_makes_a_diagnostic_quieter(string strict)
+        {
+            //JGD002 руками не воспроизвести - это расхождение двух наших же
+            //шагов. Проверяется само правило, на нём же и построенное
+            Assert.Null(Settings(strict).Raise(DiagnosticSeverity.Warning));
+            Assert.Null(Settings(strict).Raise(DiagnosticSeverity.Error));
+        }
+
+        /// <summary>
+        /// Опечатка в значении - предупреждение, а не молчание. Человек просил
+        /// строгости, не получил её, и узнать об этом он должен от компилятора.
+        /// </summary>
+        [Fact]
+        public void An_unrecognized_strictness_value_is_reported_instead_of_ignored()
+        {
+            var run = Strict(Refusing, "wraning");
+
+            var complaint = run.GeneratorDiagnostics.Single(d => d.Id == "JGD003");
+
+            Assert.Equal(DiagnosticSeverity.Warning, complaint.Severity);
+            Assert.Contains("wraning", complaint.GetMessage());
+
+            //а решение и громкость остались прежними: непонятое значение
+            //игнорируется, но не подменяется догадкой
+            Assert.Equal(
+                DiagnosticSeverity.Info,
+                run.GeneratorDiagnostics.Single(d => d.Id == "JGD001").Severity
+                );
+        }
+
+        /// <summary>
+        /// Свойство, которого нет, не порождает ни диагностики, ни разницы в
+        /// тексте - тот же инвариант, что у <c>JsonGuard</c> и
+        /// <c>JsonFeature</c>.
+        /// </summary>
+        [Fact]
+        public void A_project_that_never_heard_of_the_property_sees_nothing_new()
+        {
+            var run = GeneratorHarness.Run(Graph);
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Equal(Host(Strict(Graph, null)), Host(run));
+        }
+
+        private const string Refusing = @"
+using JsonGoddess.Compat;
+using System.Text.Json.Serialization;
+
+namespace Sample
+{
+    public class Weird
+    {
+        [JsonNumberHandling(JsonNumberHandling.WriteAsString)]
+        public int Amount { get; set; }
+    }
+
+    public static class Caller
+    {
+        public static string Write(Weird value) => JsonSerializer.Serialize(value);
+    }
+}
+";
+
+        private static GeneratorRun Strict(string source, string? strict)
+        {
+            var properties = new Dictionary<string, string>();
+            if (strict is not null)
+            {
+                properties.Add("JsonGoddessCompatStrict", strict);
+            }
+
+            return GeneratorHarness.Run(new[] { new SourceFile("Subject.cs", source), }, properties);
+        }
+
+        private static JsonGoddess.Generator.Binding.CompatSettings Settings(string strict)
+        {
+            return JsonGoddess.Generator.Binding.CompatSettings.Read(
+                new SingleProperty(JsonGoddess.Generator.Binding.CompatSettings.StrictProperty, strict)
+                );
+        }
+
+        /// <summary>
+        /// Одно свойство вместо провайдера: <see cref="JsonGoddess.Generator.Binding.CompatSettings.Raise"/>
+        /// проверяется как правило, а не через прогон генератора, потому что
+        /// <c>JGD002</c> руками не воспроизвести.
+        /// </summary>
+        private sealed class SingleProperty : Microsoft.CodeAnalysis.Diagnostics.AnalyzerConfigOptions
+        {
+            private readonly string _key;
+            private readonly string _value;
+
+            public SingleProperty(string key, string value)
+            {
+                _key = key;
+                _value = value;
+            }
+
+            public override bool TryGetValue(string key, out string value)
+            {
+                if (key == _key)
+                {
+                    value = _value;
+                    return true;
+                }
+
+                value = null!;
+                return false;
+            }
+        }
+
         private static int Occurrences(string text, string needle)
         {
             var count = 0;

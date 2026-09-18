@@ -17,6 +17,7 @@ namespace JsonGoddess.Generator.Diagnostics
 
         public const string CompatTypeFallsBackId = "JGD001";
         public const string CompatGenerationFailedId = "JGD002";
+        public const string CompatStrictValueIsNotRecognizedId = "JGD003";
         public const string SinkIsNotSealedId = "JGD010";
         public const string HostIsNotPartialId = "JGD020";
         public const string SubjectIsNotSupportedId = "JGD021";
@@ -213,6 +214,19 @@ namespace JsonGoddess.Generator.Diagnostics
                 + "багрепорта: два наших же шага разошлись во мнении об одном и том же типе."
             );
 
+        public static readonly DiagnosticDescriptor CompatStrictValueIsNotRecognized = new DiagnosticDescriptor(
+            CompatStrictValueIsNotRecognizedId,
+            "JsonGoddessCompatStrict has an unrecognized value",
+            "JsonGoddessCompatStrict is set to '{0}', which JsonGoddess does not understand; expected 'info', 'warning' or 'error'. The property is ignored and JGD001/JGD002 keep their declared severity.",
+            Category,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            description:
+                "Молчать об опечатке нельзя: человек попросил строгости, не получил её и не узнал "
+                + "об этом - а просят её ровно затем, чтобы отступление к эталону не проходило "
+                + "незамеченным."
+            );
+
         private static readonly Dictionary<string, DiagnosticDescriptor> _all =
             new Dictionary<string, DiagnosticDescriptor>
             {
@@ -231,6 +245,7 @@ namespace JsonGoddess.Generator.Diagnostics
                 { InvalidFactoryId, InvalidFactory },
                 { CompatTypeFallsBackId, CompatTypeFallsBack },
                 { CompatGenerationFailedId, CompatGenerationFailed },
+                { CompatStrictValueIsNotRecognizedId, CompatStrictValueIsNotRecognized },
             };
 
         public static DiagnosticDescriptor Get(string id) => _all[id];

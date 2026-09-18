@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Threading;
 using JsonGoddess.Generator.Binding;
+using JsonGoddess.Generator.Diagnostics;
 using JsonGoddess.Generator.Model;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -78,10 +79,29 @@ namespace JsonGoddess.Generator
         /// </summary>
         private static void InitializeCompat(IncrementalGeneratorInitializationContext context)
         {
-            var enabled = context.AnalyzerConfigOptionsProvider
-                .Select(static (provider, _) =>
-                    !provider.GlobalOptions.TryGetValue("build_property.JsonGoddessCompat", out var value)
-                    || !string.Equals(value, "disable", System.StringComparison.OrdinalIgnoreCase));
+            var settings = context.AnalyzerConfigOptionsProvider
+                .Select(static (provider, _) => CompatSettings.Read(provider.GlobalOptions));
+
+            //про непонятое значение JsonGoddessCompatStrict говорится отдельно
+            //от связывания и раньше него: оно не зависит ни от одного вызова
+            //фасада, а сказать о нём надо и проекту, где таких вызовов пока нет
+            context.RegisterSourceOutput(
+                settings,
+                static (productionContext, value) =>
+                {
+                    if (value.UnrecognizedStrictValue is null)
+                    {
+                        return;
+                    }
+
+                    productionContext.ReportDiagnostic(
+                        new DiagnosticInfo(
+                            JsonGoddessDiagnostics.CompatStrictValueIsNotRecognizedId,
+                            null,
+                            value.UnrecognizedStrictValue
+                            ).ToDiagnostic()
+                        );
+                });
 
             var sites = context.SyntaxProvider
                 .CreateSyntaxProvider(
@@ -92,10 +112,10 @@ namespace JsonGoddess.Generator
                 .Collect();
 
             var compat = sites
-                .Combine(enabled)
+                .Combine(settings)
                 .Combine(context.CompilationProvider)
-                .Select(static (pair, token) => pair.Left.Right
-                    ? CompatBinder.Bind(pair.Right, pair.Left.Left, token)
+                .Select(static (pair, token) => pair.Left.Right.Enabled
+                    ? CompatBinder.Bind(pair.Right, pair.Left.Left, pair.Left.Right, token)
                     : GenerationResult.Empty);
 
             context.RegisterSourceOutput(compat, static (productionContext, result) => Emit(productionContext, result));
