@@ -206,6 +206,38 @@ namespace Demo
 }
 ";
 
+        /// <summary>
+        /// Хост с <c>[JsonFactory]</c>: субъект, пул рядом и фабричное
+        /// выражение, которое эмиттер обязан напечатать дословно.
+        /// </summary>
+        public static string Factory(string invocation)
+        {
+            return @"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Subject
+    {
+        public int Id { get; set; }
+    }
+
+    public static class Pool
+    {
+        private static readonly Subject _one = new Subject();
+
+        public static Subject Reuse() => _one;
+    }
+
+    [JsonFactory(typeof(Demo.Subject), """ + invocation + @""")]
+    [JsonSubject(typeof(Subject), true)]
+    public partial class SubjectSerializer
+    {
+    }
+}
+";
+        }
+
         public static string Host(string subjectMembers, string hostAttributes = "")
         {
             return @"

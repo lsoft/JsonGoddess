@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using JsonGoddess.Generator.Binding;
 using JsonGoddess.Generator.Model;
@@ -778,7 +778,7 @@ namespace JsonGoddess.Generator.Emit
             }
             else
             {
-                builder.Line("var result = new " + subject.FullName + "();");
+                builder.Line("var result = " + subject.NewExpression + ";");
                 builder.Line();
             }
 
@@ -1199,7 +1199,11 @@ namespace JsonGoddess.Generator.Emit
             var arguments = subject.Parameters
                 .Select(p => Argument(members.First(m => m.MemberName == p.MemberName)));
 
-            var expression = "new " + subject.FullName + "(" + string.Join(", ", arguments) + ")";
+            //с фабрикой сюда не приходят: она и конструктор с параметрами -
+            //отказ на связывании, а обязательные члены при фабрике
+            //присваиваются на месте и отложенной формы не требуют
+            var expression = subject.FactoryInvocation
+                ?? "new " + subject.FullName + "(" + string.Join(", ", arguments) + ")";
 
             var initialized = subject.RequiredInitialized;
 
@@ -1503,11 +1507,11 @@ namespace JsonGoddess.Generator.Emit
             //пропущен
             EmitCommentSkip(builder, features);
             builder.OpenBlock("if (" + Scan + ".TryConsume(json, ref position, " + close + "))");
-            builder.Line("return new " + subject.FullName + "();");
+            builder.Line("return " + subject.NewExpression + ";");
             builder.CloseBlock();
             builder.Line();
 
-            builder.Line("var result = new " + subject.FullName + "();");
+            builder.Line("var result = " + subject.NewExpression + ";");
             builder.Line();
             builder.OpenBlock("while (true)");
 

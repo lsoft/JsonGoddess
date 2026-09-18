@@ -458,6 +458,159 @@ namespace Demo
         }
 
         /// <summary>
+        /// <c>[JsonFactory]</c> заменяет <c>new T()</c> в читателе - и только
+        /// там. Запись объект не создаёт, значит фабрике в ней делать нечего.
+        /// </summary>
+        [Fact]
+        public void Factory_replaces_the_new_expression_in_the_reader_only()
+        {
+            var run = GeneratorHarness.Run(Sources.Factory("global::Demo.Pool.Reuse()"));
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+
+            var text = run.SingleGeneratedFile;
+
+            Assert.Contains("var result = global::Demo.Pool.Reuse();", text, System.StringComparison.Ordinal);
+            Assert.DoesNotContain("new global::Demo.Subject()", text, System.StringComparison.Ordinal);
+            Assert.Equal(
+                1,
+                text.Split('\n').Count(l => l.Contains("global::Demo.Pool.Reuse()"))
+                );
+        }
+
+        /// <summary>
+        /// Выражение фабрики печатается дословно, поэтому всё, что генератор
+        /// способен проверить вокруг него, он проверяет на компиляции.
+        /// </summary>
+        [Theory]
+        //тип этому хосту не субъект - фабрику никто никогда не позовёт
+        [InlineData("[JsonFactory(typeof(Demo.Other), \"null\")]", "not registered")]
+        //две фабрики на один тип: оба выражения заменить одно new нельзя
+        [InlineData("[JsonFactory(typeof(Demo.Subject), \"null\")] [JsonFactory(typeof(Demo.Subject), \"null\")]", "already has a factory")]
+        //пустое выражение
+        [InlineData("[JsonFactory(typeof(Demo.Subject), \"   \")]", "empty")]
+        public void Factory_that_cannot_work_is_refused(string attributes, string expected)
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Subject
+    {
+        public int Id { get; set; }
+    }
+
+    public class Other
+    {
+        public int Id { get; set; }
+    }
+
+    " + attributes + @"
+    [JsonSubject(typeof(Subject), true)]
+    public partial class SubjectSerializer
+    {
+    }
+}
+");
+
+            Assert.Contains("JGD031", run.DiagnosticIds);
+            Assert.Contains(
+                expected,
+                string.Join("\n", run.GeneratorDiagnostics.Select(d => d.GetMessage())),
+                System.StringComparison.Ordinal
+                );
+        }
+
+        /// <summary>
+        /// Фабрика и конструктор десериализации спорят за одно место: первая
+        /// отдаёт готовый объект, второй требует передать ему аргументы.
+        /// Выбрать за автора нельзя - оба он написал сам.
+        /// </summary>
+        [Fact]
+        public void Factory_and_a_parameterised_constructor_are_refused_together()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Subject
+    {
+        public Subject(int id)
+        {
+            Id = id;
+        }
+
+        public int Id { get; set; }
+    }
+
+    public static class Pool
+    {
+        public static Subject Reuse() => new Subject(0);
+    }
+
+    [JsonFactory(typeof(Demo.Subject), ""global::Demo.Pool.Reuse()"")]
+    [JsonSubject(typeof(Subject), true)]
+    public partial class SubjectSerializer
+    {
+    }
+}
+");
+
+            Assert.Contains("JGD031", run.DiagnosticIds);
+            Assert.Contains(
+                "nowhere to pass them",
+                string.Join("\n", run.GeneratorDiagnostics.Select(d => d.GetMessage())),
+                System.StringComparison.Ordinal
+                );
+        }
+
+        /// <summary>
+        /// Фабрика снимает с обязательного члена отложенную сборку: запрет
+        /// CS9035 адресован выражению <c>new T()</c>, которого с фабрикой в
+        /// коде нет вовсе, а присвоить <c>required</c>-член после создания
+        /// объекта язык позволяет всегда. Проверка присутствия при этом
+        /// остаётся.
+        /// </summary>
+        [Fact]
+        public void Factory_lets_a_required_member_be_assigned_in_place()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Subject
+    {
+        public required int Id { get; set; }
+    }
+
+    public static class Pool
+    {
+        public static Subject Reuse() => new Subject { Id = 0, };
+    }
+
+    [JsonFactory(typeof(Demo.Subject), ""global::Demo.Pool.Reuse()"")]
+    [JsonSubject(typeof(Subject), true)]
+    public partial class SubjectSerializer
+    {
+    }
+}
+");
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+
+            var text = run.SingleGeneratedFile;
+
+            Assert.Contains("result.Id = ", text, System.StringComparison.Ordinal);
+            Assert.DoesNotContain("var set_Id", text, System.StringComparison.Ordinal);
+            Assert.Contains("was missing required properties including", text, System.StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Обязательный член у структуры и у полиморфной пары. Обе формы
         /// строят объект не так, как обычный класс - у структуры нет ссылки,
         /// у наследника читатель вызывается изнутри чужого, - и обе обязаны

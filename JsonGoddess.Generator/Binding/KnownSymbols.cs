@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
 
 namespace JsonGoddess.Generator.Binding
@@ -15,6 +15,7 @@ namespace JsonGoddess.Generator.Binding
         public const string SubjectAttribute = "JsonGoddess.JsonSubjectAttribute";
         public const string ExhausterAttribute = "JsonGoddess.JsonExhausterAttribute";
         public const string InjectorAttribute = "JsonGoddess.JsonInjectorAttribute";
+        public const string FactoryAttribute = "JsonGoddess.JsonFactoryAttribute";
         public const string GuardAttribute = "JsonGoddess.JsonGuardAttribute";
         public const string FeatureAttribute = "JsonGoddess.JsonFeatureAttribute";
         public const string ExhausterBaseName = "JsonGoddess.ExhausterBase";
@@ -39,6 +40,7 @@ namespace JsonGoddess.Generator.Binding
         public readonly INamedTypeSymbol? Subject;
         public readonly INamedTypeSymbol? Exhauster;
         public readonly INamedTypeSymbol? Injector;
+        public readonly INamedTypeSymbol? Factory;
         public readonly INamedTypeSymbol? Guard;
         public readonly INamedTypeSymbol? Feature;
         public readonly INamedTypeSymbol? ExhausterBase;
@@ -64,6 +66,7 @@ namespace JsonGoddess.Generator.Binding
             Subject = compilation.GetTypeByMetadataName(SubjectAttribute);
             Exhauster = compilation.GetTypeByMetadataName(ExhausterAttribute);
             Injector = compilation.GetTypeByMetadataName(InjectorAttribute);
+            Factory = compilation.GetTypeByMetadataName(FactoryAttribute);
             Guard = compilation.GetTypeByMetadataName(GuardAttribute);
             Feature = compilation.GetTypeByMetadataName(FeatureAttribute);
             ExhausterBase = compilation.GetTypeByMetadataName(ExhausterBaseName);

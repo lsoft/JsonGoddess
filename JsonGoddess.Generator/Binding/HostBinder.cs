@@ -163,6 +163,7 @@ namespace JsonGoddess.Generator.Binding
             var options = SerializationOptions.Read(host, known, diagnostics, ref failed);
             var guardOptions = GuardOptions.Read(host, known, diagnostics, ref failed);
             var featureOptions = FeatureOptions.Read(host, known);
+            var factories = CollectFactories(host, known, registered, hostLocation, diagnostics, ref failed);
 
             foreach (var registration in accepted)
             {
@@ -198,6 +199,20 @@ namespace JsonGoddess.Generator.Binding
                     continue;
                 }
 
+                factories.TryGetValue(registration.Type, out var factory);
+
+                //Фабрика и конструктор десериализации спорят за одно место:
+                //первая отдаёт готовый объект, второй требует передать ему
+                //аргументы. Выбрать за автора нельзя - оба варианта он написал
+                //сам и оба имел в виду, - поэтому отказ с названной причиной.
+                if (factory is not null && parameters.Count > 0)
+                {
+                    RefuseFactory(host, registration.Type.ToDisplayString(), hostLocation, diagnostics, ref failed,
+                        "the type is deserialized through a constructor with parameters, and a factory would "
+                        + "have nowhere to pass them; drop one of the two");
+                    continue;
+                }
+
                 if (!PolymorphismBinder.TryBind(
                         registration.Type, byType, known, hostLocation, diagnostics,
                         out var derived, out var discriminatorName))
@@ -220,7 +235,8 @@ namespace JsonGoddess.Generator.Binding
                         members,
                         parameters,
                         derived,
-                        discriminatorName
+                        discriminatorName,
+                        factoryInvocation: factory
                         )
                     );
             }
@@ -318,6 +334,106 @@ namespace JsonGoddess.Generator.Binding
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// <c>[JsonFactory(typeof(T), "выражение")]</c> - чем заменить
+        /// <c>new T()</c> в читателе. Нужно под пулы и переиспользование уже
+        /// размещённых объектов; на запись не влияет никак.
+        ///
+        /// Выражение печатается в порождённый код <b>дословно</b>, и потому
+        /// всё, что о нём можно узнать на компиляции, проверяется здесь:
+        /// пустое выражение, повтор типа и тип, который этому хосту не
+        /// субъект. Ошибку в самом выражении поймает компилятор - в
+        /// порождённом файле, с указанием на строку.
+        /// </summary>
+        private static Dictionary<ISymbol, string> CollectFactories(
+            INamedTypeSymbol host,
+            KnownSymbols known,
+            IReadOnlyList<Registration> registered,
+            LocationInfo? location,
+            List<DiagnosticInfo> diagnostics,
+            ref bool failed
+            )
+        {
+            var result = new Dictionary<ISymbol, string>(SymbolEqualityComparer.Default);
+
+            if (known.Factory is null)
+            {
+                return result;
+            }
+
+            var subjects = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+
+            foreach (var registration in registered)
+            {
+                subjects.Add(registration.Type);
+            }
+
+            foreach (var attribute in host.GetAttributes())
+            {
+                if (!SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, known.Factory))
+                {
+                    continue;
+                }
+
+                if (attribute.ConstructorArguments.Length < 2
+                    || attribute.ConstructorArguments[0].Value is not INamedTypeSymbol subjectType)
+                {
+                    continue;
+                }
+
+                var invocation = attribute.ConstructorArguments[1].Value as string;
+                var name = subjectType.ToDisplayString();
+
+                if (string.IsNullOrWhiteSpace(invocation))
+                {
+                    RefuseFactory(host, name, location, diagnostics, ref failed,
+                        "the invocation expression is empty");
+                    continue;
+                }
+
+                if (!subjects.Contains(subjectType))
+                {
+                    RefuseFactory(host, name, location, diagnostics, ref failed,
+                        "the type is not registered on this host with [JsonSubject], so nothing would ever "
+                        + "call the factory");
+                    continue;
+                }
+
+                if (result.ContainsKey(subjectType))
+                {
+                    RefuseFactory(host, name, location, diagnostics, ref failed,
+                        "the type already has a factory on this host, and two expressions cannot both "
+                        + "replace one 'new'");
+                    continue;
+                }
+
+                result.Add(subjectType, invocation!);
+            }
+
+            return result;
+        }
+
+        private static void RefuseFactory(
+            INamedTypeSymbol host,
+            string subjectName,
+            LocationInfo? location,
+            List<DiagnosticInfo> diagnostics,
+            ref bool failed,
+            string reason
+            )
+        {
+            diagnostics.Add(
+                new DiagnosticInfo(
+                    JsonGoddessDiagnostics.InvalidFactoryId,
+                    location,
+                    host.ToDisplayString(),
+                    subjectName,
+                    reason
+                    )
+                );
+            failed = true;
         }
 
         private static string MethodSuffix(INamedTypeSymbol subject) => subject.ToDisplayString().Replace('.', '_');

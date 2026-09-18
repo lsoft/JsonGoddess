@@ -1092,4 +1092,61 @@ namespace JsonGoddess.Tests.Generated
     public partial class DemandingSerializer
     {
     }
+
+    /// <summary>
+    /// Субъект под <c>[JsonFactory]</c>: читатель не создаёт его, а берёт у
+    /// пула.
+    /// </summary>
+    public class Recycled
+    {
+        public int Id { get; set; }
+
+        public string? Name { get; set; }
+    }
+
+    /// <summary>
+    /// Фабрика плюс обязательный член. Комбинация не случайная: <c>new T()</c>
+    /// у типа с <c>required</c>-членом - ошибка компиляции CS9035, а с
+    /// фабрикой этого выражения в порождённом коде нет вовсе, значит и запрета
+    /// нет. Проверка присутствия при этом обязана остаться.
+    /// </summary>
+    public class RecycledDemanding
+    {
+        public required int Id { get; set; }
+    }
+
+    /// <summary>
+    /// Пул на два типа. Счётчик нужен тесту: он доказывает, что читатель
+    /// действительно зовёт фабрику, а не создаёт объект сам.
+    /// </summary>
+    public static class RecyclePool
+    {
+        private static readonly Recycled _one = new Recycled();
+
+        private static readonly RecycledDemanding _two = new RecycledDemanding { Id = 0, };
+
+        public static int Calls
+        {
+            get;
+            private set;
+        }
+
+        public static Recycled Reuse()
+        {
+            Calls++;
+            return _one;
+        }
+
+        public static RecycledDemanding ReuseDemanding() => _two;
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(Recycled), true)]
+    [JsonSubject(typeof(RecycledDemanding), true)]
+    [JsonFactory(typeof(Recycled), "global::JsonGoddess.Tests.Generated.RecyclePool.Reuse()")]
+    [JsonFactory(typeof(RecycledDemanding), "global::JsonGoddess.Tests.Generated.RecyclePool.ReuseDemanding()")]
+    public partial class RecycledSerializer
+    {
+    }
 }

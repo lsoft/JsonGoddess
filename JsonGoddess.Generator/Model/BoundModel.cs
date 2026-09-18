@@ -571,9 +571,11 @@ namespace JsonGoddess.Generator.Model
             IReadOnlyList<ParameterModel> parameters,
             IReadOnlyList<DerivedTypeModel> derived,
             string discriminatorName,
-            CollectionShapeModel? collectionShape = null
+            CollectionShapeModel? collectionShape = null,
+            string? factoryInvocation = null
             )
         {
+            FactoryInvocation = factoryInvocation;
             FullName = fullName;
             MethodSuffix = methodSuffix;
             IsRoot = isRoot;
@@ -601,6 +603,20 @@ namespace JsonGoddess.Generator.Model
         }
 
         public bool IsPolymorphic => Derived.Count > 0;
+
+        /// <summary>
+        /// Выражение, которым читатель добывает объект вместо <c>new T()</c>, -
+        /// <c>[JsonFactory]</c>. <c>null</c> означает обычное создание.
+        ///
+        /// Печатается дословно: это код автора хоста, а не наш. Проверить
+        /// генератор может лишь то, что вокруг него, - что тип этому хосту
+        /// субъект, что фабрика на тип одна и что она не спорит с
+        /// конструктором десериализации.
+        /// </summary>
+        public string? FactoryInvocation { get; }
+
+        /// <summary>Как читатель добывает объект: фабрикой или <c>new</c>.</summary>
+        public string NewExpression => FactoryInvocation ?? "new " + FullName + "()";
 
         /// <summary>
         /// Читатель обязан сложить всё в локальные и собрать объект в конце:
@@ -631,8 +647,16 @@ namespace JsonGoddess.Generator.Model
         /// на обязательном члене не работает: имя там есть всегда, иначе
         /// документ отвергнут раньше конструирования.
         /// </remarks>
+        /// <remarks>
+        /// <c>[JsonFactory]</c> снимает вторую половину условия: запрет
+        /// CS9035 адресован выражению <c>new T()</c>, которого с фабрикой в
+        /// коде нет вовсе, а присвоить <c>required</c>-член после создания
+        /// объекта язык позволяет всегда. Значит обязательные члены при
+        /// фабрике присваиваются на месте, как обычные, и остаётся только
+        /// проверка присутствия.
+        /// </remarks>
         public bool NeedsDeferredConstruction =>
-            Parameters.Count > 0 || RequiredInitialized.Count > 0;
+            Parameters.Count > 0 || (RequiredInitialized.Count > 0 && FactoryInvocation is null);
 
         /// <summary>
         /// Обязательные члены, которые присваиваются <b>инициализатором</b>, -

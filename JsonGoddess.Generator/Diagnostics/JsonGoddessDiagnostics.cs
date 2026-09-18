@@ -27,6 +27,7 @@ namespace JsonGoddess.Generator.Diagnostics
         public const string SerializationOptionIsNotSupportedId = "JGD028";
         public const string InvalidMaxDepthId = "JGD029";
         public const string CaseInsensitiveNameIsNotSupportedId = "JGD030";
+        public const string InvalidFactoryId = "JGD031";
 
         public static readonly DiagnosticDescriptor SinkIsNotSealed = new DiagnosticDescriptor(
             SinkIsNotSealedId,
@@ -169,6 +170,20 @@ namespace JsonGoddess.Generator.Diagnostics
                 + "иначе."
             );
 
+        public static readonly DiagnosticDescriptor InvalidFactory = new DiagnosticDescriptor(
+            InvalidFactoryId,
+            "JsonFactory cannot be used this way",
+            "[JsonFactory] on '{0}' for type '{1}' cannot be used: {2}",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            description:
+                "Выражение фабрики печатается в порождённый код дословно, на место new T(). "
+                + "Поэтому всё, что генератор может проверить про него на компиляции, он обязан "
+                + "проверить здесь: молча напечатать код, который не собирается или собирает не тот "
+                + "объект, - худший исход по §1 плана."
+            );
+
         private static readonly Dictionary<string, DiagnosticDescriptor> _all =
             new Dictionary<string, DiagnosticDescriptor>
             {
@@ -184,6 +199,7 @@ namespace JsonGoddess.Generator.Diagnostics
                 { SerializationOptionIsNotSupportedId, SerializationOptionIsNotSupported },
                 { InvalidMaxDepthId, InvalidMaxDepth },
                 { CaseInsensitiveNameIsNotSupportedId, CaseInsensitiveNameIsNotSupported },
+                { InvalidFactoryId, InvalidFactory },
             };
 
         public static DiagnosticDescriptor Get(string id) => _all[id];

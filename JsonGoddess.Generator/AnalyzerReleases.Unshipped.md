@@ -17,3 +17,4 @@ JGD027 | JsonGoddess | Error | JSON property name requires escaping
 JGD028 | JsonGoddess | Error | Option on [JsonSourceGenerationOptions] is not supported
 JGD029 | JsonGoddess | Error | [JsonGuard] MaxDepth value is less than 1
 JGD030 | JsonGoddess | Error | [JsonFeature] CaseInsensitiveNames cannot serve a non-ASCII or colliding member name
+JGD031 | JsonGoddess | Error | [JsonFactory] names a type that is not a subject of this host, repeats a type, carries an empty expression, or collides with a deserialization constructor

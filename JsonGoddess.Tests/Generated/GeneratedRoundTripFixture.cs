@@ -933,6 +933,67 @@ namespace JsonGoddess.Tests.Generated
             return Encoding.UTF8.GetString(exhauster.ToArray());
         }
 
+        /// <summary>
+        /// <c>[JsonFactory]</c> - то, ради чего он существует: объект не
+        /// создаётся, а берётся у пула, и два чтения подряд дают <b>один и тот
+        /// же</b> экземпляр.
+        ///
+        /// Своего эталона у этого атрибута нет - он наш, а не из
+        /// <c>System.Text.Json</c>, - поэтому и сверяться тут не с чем.
+        /// Проверяется ровно обещание: экземпляр один, поля перезаписаны
+        /// вторым документом.
+        /// </summary>
+        [Fact]
+        public void Factory_hands_the_reader_the_same_instance_every_time()
+        {
+            var before = RecyclePool.Calls;
+
+            RecycledSerializer.Deserialize(
+                DefaultInjector.Instance,
+                Encoding.UTF8.GetBytes("{\"Id\":7,\"Name\":\"a\"}"),
+                out Recycled? first
+                );
+
+            RecycledSerializer.Deserialize(
+                DefaultInjector.Instance,
+                Encoding.UTF8.GetBytes("{\"Id\":9,\"Name\":\"b\"}"),
+                out Recycled? second
+                );
+
+            Assert.Equal(before + 2, RecyclePool.Calls);
+            Assert.Same(first, second);
+
+            //второй документ переписал поля того же объекта, а не завёл новый
+            Assert.Equal(9, first!.Id);
+            Assert.Equal("b", first.Name);
+        }
+
+        /// <summary>
+        /// Фабрика снимает с обязательного члена отложенную сборку, но не
+        /// снимает саму обязательность: имени нет - документ отвергнут.
+        /// </summary>
+        [Fact]
+        public void Factory_does_not_excuse_a_missing_required_name()
+        {
+            RecycledSerializer.Deserialize(
+                DefaultInjector.Instance,
+                Encoding.UTF8.GetBytes("{\"Id\":11}"),
+                out RecycledDemanding? present
+                );
+
+            Assert.Equal(11, present!.Id);
+
+            var ours = Assert.Throws<JsonDocumentException>(
+                () =>
+                {
+                    RecycledSerializer.Deserialize(
+                        DefaultInjector.Instance, Encoding.UTF8.GetBytes("{}"), out RecycledDemanding? _);
+                }
+                );
+
+            Assert.Contains("'Id'", ours.Message, StringComparison.Ordinal);
+        }
+
         [Fact]
         public void Demanding_document_matches_system_text_json_byte_for_byte()
         {
