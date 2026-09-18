@@ -129,6 +129,17 @@ namespace JsonGoddess.Generator
                 return null;
             }
 
+            //перехватывается не всякая перегрузка, а та, у которой быстрый путь
+            //есть, - фасад помечает их сам (CompatFastPathAttribute). Из ста
+            //трёх методов таких восемь; у остальных T известен ровно так же, но
+            //работа уходит эталону безусловно, и порождать для них код значило
+            //бы печатать заведомо мёртвый - а на несвязавшемся типе ещё и
+            //жаловаться на вызов, которому быстрый путь всё равно не достался бы
+            if (!HasFastPath(method))
+            {
+                return null;
+            }
+
             //«T известен статически» - это буквально: у обобщённого метода в
             //пользовательском коде аргументом приедет его собственный параметр
             //типа, и обслуживать там нечего
@@ -147,6 +158,19 @@ namespace JsonGoddess.Generator
             }
 
             return new CompatCallSite(referenceId, LocationInfo.From(context.Node.GetLocation()));
+        }
+
+        private static bool HasFastPath(IMethodSymbol method)
+        {
+            foreach (var attribute in method.GetAttributes())
+            {
+                if (attribute.AttributeClass?.ToDisplayString() == CompatBinder.FastPathAttributeName)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static void Emit(SourceProductionContext context, GenerationResult result)

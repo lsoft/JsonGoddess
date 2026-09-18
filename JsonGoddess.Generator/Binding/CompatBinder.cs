@@ -36,6 +36,14 @@ namespace JsonGoddess.Generator.Binding
     public static class CompatBinder
     {
         public const string FacadeMetadataName = "JsonGoddess.Compat.JsonSerializer";
+
+        /// <summary>
+        /// Метка, которой фасад сам называет перегрузки с быстрым путём.
+        /// Список имён здесь был бы вторым списком - а два списка, разъехавшись,
+        /// дают не отказ, а тихое расхождение.
+        /// </summary>
+        public const string FastPathAttributeName = "JsonGoddess.Compat.CompatFastPathAttribute";
+
         private const string BindingTypeName = "global::JsonGoddess.Compat.CompatBinding";
         private const string ReaderDelegateName = "global::JsonGoddess.Compat.Utf8Reader";
         private const string Exhauster = "global::JsonGoddess.PooledUtf8Exhauster";

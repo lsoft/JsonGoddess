@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using JsonGoddess.GeneratorTests.Harness;
 using Microsoft.CodeAnalysis;
@@ -219,6 +219,84 @@ namespace Sample
             Assert.Empty(run.CompilationErrors);
             Assert.Empty(run.GeneratedFiles);
             Assert.Empty(run.GeneratorDiagnostics);
+        }
+
+        /// <summary>
+        /// Перегрузка без быстрого пути не повод порождать код. <c>T</c> у неё
+        /// известен ровно так же, но работа уходит эталону безусловно - значит,
+        /// порождённый хост был бы мёртвым, а <c>JGD001</c> на несвязавшемся
+        /// типе - жалобой на вызов, которому быстрый путь всё равно не достался
+        /// бы.
+        /// </summary>
+        [Fact]
+        public void A_call_to_an_overload_without_a_fast_path_generates_nothing()
+        {
+            const string source = @"
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using JsonSerializer = JsonGoddess.Compat.JsonSerializer;
+
+namespace Sample
+{
+    public class Order
+    {
+        public int Id { get; set; }
+    }
+
+    public static class Caller
+    {
+        //контракт назван явно - фасад обязан уйти к эталону, а генератор молчать
+        public static Order? A(JsonElement element) => JsonSerializer.Deserialize<Order>(element);
+
+        //модель эталона на выходе - быстрого пути нет
+        public static JsonNode? B(Order order) => JsonSerializer.SerializeToNode(order);
+
+        //тип назван не параметром, а значением
+        public static string C(Order order) => JsonSerializer.Serialize(order, typeof(Order));
+    }
+}
+";
+            var run = GeneratorHarness.Run(source);
+
+            Assert.Empty(run.CompilationErrors);
+            Assert.Empty(run.GeneratedFiles);
+            Assert.Empty(run.GeneratorDiagnostics);
+        }
+
+        [Fact]
+        public void A_type_reached_only_through_a_slow_overload_is_not_registered()
+        {
+            const string source = @"
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using JsonSerializer = JsonGoddess.Compat.JsonSerializer;
+
+namespace Sample
+{
+    public class Fast
+    {
+        public int Id { get; set; }
+    }
+
+    public class Slow
+    {
+        public int Id { get; set; }
+    }
+
+    public static class Caller
+    {
+        public static string A(Fast value) => JsonSerializer.Serialize(value);
+        public static Slow? B(JsonElement element) => JsonSerializer.Deserialize<Slow>(element);
+    }
+}
+";
+            var run = GeneratorHarness.Run(source);
+
+            Assert.Empty(run.CompilationErrors);
+
+            var host = Host(run);
+            Assert.Contains("Read_Sample_Fast", host);
+            Assert.DoesNotContain("Sample_Slow", host);
         }
 
         [Fact]
