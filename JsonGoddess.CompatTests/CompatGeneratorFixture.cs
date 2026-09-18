@@ -18,6 +18,14 @@ namespace JsonGoddess.CompatTests
     /// эталон: ожидание берётся из его ответа, а не из литерала. Литерал
     /// заморозил бы то, что мы сегодня делаем, а не то, что делает он.
     /// </para>
+    ///
+    /// <para>
+    /// Эталон зовётся <b>с настройками по умолчанию</b>. Раньше здесь стояли
+    /// опции с <c>UnsafeRelaxedJsonEscaping</c> - под наш набор экранируемого,
+    /// - и это было неправдой о фасаде: его потребитель энкодер не выбирал,
+    /// он поменял пакет, а не код. Теперь набор совпадает и без подстройки
+    /// (<c>CompatUtf8Exhauster</c>), и подстраивать нечего.
+    /// </para>
     /// </summary>
     public class CompatGeneratorFixture
     {
@@ -37,7 +45,7 @@ namespace JsonGoddess.CompatTests
             var order = Order.CreateSample();
 
             Assert.Equal(
-                Reference.Serialize(order, ReferenceOptions.Relaxed),
+                Reference.Serialize(order),
                 JsonSerializer.Serialize(order)
                 );
         }
@@ -57,7 +65,7 @@ namespace JsonGoddess.CompatTests
         [Fact]
         public void A_document_written_by_the_reference_reads_back_through_the_facade()
         {
-            var json = Reference.Serialize(Order.CreateSample(), ReferenceOptions.Relaxed);
+            var json = Reference.Serialize(Order.CreateSample());
             var ours = JsonSerializer.Deserialize<Order>(json);
 
             Assert.Equal(42, ours!.Id);
@@ -72,9 +80,51 @@ namespace JsonGoddess.CompatTests
             var order = Order.CreateSample();
 
             Assert.Equal(
-                Reference.SerializeToUtf8Bytes(order, ReferenceOptions.Relaxed),
+                Reference.SerializeToUtf8Bytes(order),
                 JsonSerializer.SerializeToUtf8Bytes(order)
                 );
+        }
+
+        /// <summary>
+        /// Пять дорог до документа, на каждой из которых набор экранируемого
+        /// у нас и у эталона свой: имя свойства не-ASCII, имя из
+        /// <c>[JsonPropertyName]</c> с HTML-значимыми символами, имя члена
+        /// строкового enum'а (все три - константы, печатаемые генератором),
+        /// ключ словаря и строковое значение (обе - работа sink'а в рантайме).
+        ///
+        /// <para>
+        /// Сравнение с эталоном <b>по умолчанию</b> и байт в байт: ради этого
+        /// весь <c>CompatUtf8Exhauster</c> и заведён.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Everything_that_needs_escaping_is_escaped_the_way_the_reference_escapes_it()
+        {
+            var tricky = Tricky.CreateSample();
+
+            Assert.True(CompatBinding<Tricky>.IsBound);
+
+            Assert.Equal(
+                Reference.SerializeToUtf8Bytes(tricky),
+                JsonSerializer.SerializeToUtf8Bytes(tricky)
+                );
+        }
+
+        /// <summary>
+        /// И обратно: документ эталона, где экранировано всё, читается нами в
+        /// то же самое, что читает он. Одного направления мало - имена в таком
+        /// документе приезжают в виде <c>\uXXXX</c>, и узнать их надо ещё до
+        /// того, как станет ясно, чьё это свойство.
+        /// </summary>
+        [Fact]
+        public void An_escaped_document_from_the_reference_reads_back_the_same_way()
+        {
+            var json = Reference.Serialize(Tricky.CreateSample());
+
+            var ours = JsonSerializer.Deserialize<Tricky>(json);
+            var theirs = Reference.Deserialize<Tricky>(json);
+
+            Assert.Equal(Reference.Serialize(theirs), Reference.Serialize(ours));
         }
 
         /// <summary>
@@ -172,19 +222,5 @@ namespace JsonGoddess.CompatTests
             }
         }
 
-        private static class ReferenceOptions
-        {
-            /// <summary>
-            /// Опции, в которых набор экранируемого совпадает с нашим. Наш
-            /// энкодер намеренно расходится с их умолчанием
-            /// (docs/stj-divergences.md §1.1), и здесь это не проверяется - это
-            /// проверяет другой тест в другом проекте.
-            /// </summary>
-            public static readonly System.Text.Json.JsonSerializerOptions Relaxed =
-                new System.Text.Json.JsonSerializerOptions
-                {
-                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-                };
-        }
     }
 }

@@ -456,6 +456,96 @@ namespace Sample
             Assert.Contains("MapOf_Int32_OrNull(", host);
         }
 
+        /// <summary>
+        /// Compat-хост печатается под свой sink, а имена - экранированными
+        /// по-эталонному.
+        ///
+        /// <para>
+        /// Проверяется здесь <b>устройство</b>, а не результат: что документ
+        /// совпадает с эталонным байт в байт, проверяет
+        /// <c>CompatTests/CompatGeneratorFixture</c> исполнением, и это
+        /// утверждение сильнее. Но оно не отличает «имя напечатано
+        /// экранированным» от «имя экранировал sink», а разница тут в цене:
+        /// имена - константы, и платить за них в рантайме не надо.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_compat_host_writes_through_its_own_sink_and_bakes_escaped_names()
+        {
+            const string source = @"
+using JsonGoddess.Compat;
+
+namespace Sample
+{
+    public class Письмо
+    {
+        public string? Текст { get; set; }
+    }
+
+    public static class Caller
+    {
+        public static string Write(Письмо value) => JsonSerializer.Serialize(value);
+    }
+}
+";
+            var run = GeneratorHarness.Run(source);
+
+            Assert.Empty(run.CompilationErrors);
+
+            var host = Host(run);
+
+            //sink свой - у обычного хоста здесь стоял бы PooledUtf8Exhauster
+            Assert.Contains("global::JsonGoddess.CompatUtf8Exhauster", host);
+            Assert.DoesNotContain("PooledUtf8Exhauster", host);
+
+            //Различает формы ДВОЙНОЙ слэш, и это не придирка к тексту.
+            //SourceBuilder печатает любой не-ASCII символ C#-escape'ом, поэтому
+            //одиночный \u0422 стоит в обоих хостах и ничего не доказывает. У compat'а
+            //в документ уезжает сам JSON-escape, то есть строка из символов
+            //'\', 'u', '0', '4', '2', '2', - и её обратный слэш C#-литерал удваивает.
+            Assert.Contains("\\\\u0422\\\\u0435\\\\u043A\\\\u0441\\\\u0442", host);
+
+            //а на чтении - сырое имя: диспетчер сличает его уже
+            //разэкранированным, и JSON-escape там не подошёл бы ни к чему
+            Assert.Contains("\"\\u0422\\u0435\\u043A\\u0441\\u0442\"u8", host);
+        }
+
+        /// <summary>
+        /// Обычный хост от появления экранирования не изменился ни на байт.
+        /// Это тот же инвариант, что у <c>JsonGuard</c> и <c>JsonFeature</c>:
+        /// выключенное решение обязано не оставлять следа в тексте.
+        /// </summary>
+        [Fact]
+        public void An_ordinary_host_is_untouched_by_the_compat_escaping()
+        {
+            const string source = @"
+namespace Sample
+{
+    [global::JsonGoddess.JsonExhauster(typeof(global::JsonGoddess.PooledUtf8Exhauster))]
+    [global::JsonGoddess.JsonInjector(typeof(global::JsonGoddess.DefaultInjector))]
+    [global::JsonGoddess.JsonSubject(typeof(Письмо), true)]
+    public partial class Host
+    {
+    }
+
+    public class Письмо
+    {
+        public string? Текст { get; set; }
+    }
+}
+";
+            var run = GeneratorHarness.Run(source);
+
+            Assert.Empty(run.CompilationErrors);
+
+            var text = run.SingleGeneratedFile;
+
+            //имя уезжает в документ как есть; Т в тексте - это C#-escape
+            //от SourceBuilder, а не JSON-escape, и потому одиночный
+            Assert.Contains("\\u0422\\u0435\\u043A\\u0441\\u0442", text);
+            Assert.DoesNotContain("\\\\u0422", text);
+        }
+
         private static int Occurrences(string text, string needle)
         {
             var count = 0;

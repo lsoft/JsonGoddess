@@ -64,15 +64,15 @@ namespace JsonGoddess.GeneratorTests.Stj
         /// отменить молча.
         /// </para>
         /// </summary>
+        /// <remarks>
+        /// Пуст, и это результат, а не упущение. Единственная запись, которая
+        /// здесь была, - набор экранируемого на их
+        /// <c>ClassWithUnicodeProperty</c>; она закрыта
+        /// <c>CompatUtf8Exhauster</c>'ом и экранированием имён на печати, и
+        /// снята отсюда тем же прогоном, который её сюда и поставил.
+        /// </remarks>
         private static readonly IReadOnlyDictionary<string, string> Declared =
-            new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["ClassWithUnicodeProperty|" + Write] =
-                    "набор экранируемого: энкодер эталона по умолчанию разворачивает весь не-ASCII в "
-                    + "`\\uXXXX`, включая имена свойств; мы пишем минимум RFC 8259 §7 (§8.4)",
-                ["ClassWithUnicodeProperty|" + WriteUtf8] =
-                    "то же расхождение на UTF-8-выходе",
-            };
+            new Dictionary<string, string>(StringComparer.Ordinal);
 
         public static IEnumerable<object[]> Served =>
             StjFacade.Specimens.Where(s => s.IsBound).Select(s => new object[] { s, });

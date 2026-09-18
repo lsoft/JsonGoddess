@@ -46,7 +46,14 @@ namespace JsonGoddess.Generator.Binding
 
         private const string BindingTypeName = "global::JsonGoddess.Compat.CompatBinding";
         private const string ReaderDelegateName = "global::JsonGoddess.Compat.Utf8Reader";
-        private const string Exhauster = "global::JsonGoddess.PooledUtf8Exhauster";
+        /// <summary>
+        /// Свой sink, а не общий <c>PooledUtf8Exhauster</c>: отличается он
+        /// ровно набором экранируемого. Наш набор - минимум RFC 8259 §7 - верен
+        /// для того, кто позвал JsonGoddess по имени; потребитель фасада не
+        /// выбирал ничего, и байты его документа меняться не должны (PLAN.md
+        /// §11.1, маршрут B).
+        /// </summary>
+        private const string Exhauster = "global::JsonGoddess.CompatUtf8Exhauster";
         private const string Injector = "global::JsonGoddess.DefaultInjector";
         private const string ModuleInitializerName = "System.Runtime.CompilerServices.ModuleInitializerAttribute";
 
@@ -235,7 +242,10 @@ namespace JsonGoddess.Generator.Binding
             return HostBinder.BuildModel(
                 registrations,
                 known,
-                SerializationOptions.Default,
+                //имена свойств, enum'ов и дискриминатора - константы, и
+                //экранировать их по-эталонному не стоит ничего; строки
+                //значений закрывает sink
+                new SerializationOptions(JsonNamingStyle.None, JsonNamingStyle.None, escapeLikeReference: true),
                 GuardOptions.For(CompatGuards, CompatMaxDepth),
                 FeatureOptions.Default,
                 new Dictionary<ISymbol, string>(SymbolEqualityComparer.Default),

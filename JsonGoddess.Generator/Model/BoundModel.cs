@@ -757,6 +757,22 @@ namespace JsonGoddess.Generator.Model
         /// </summary>
         public JsonFeature Features { get; }
 
+        /// <summary>
+        /// Имена, печатаемые в документ константами (свойства, строковые
+        /// enum'ы, дискриминатор), экранируются так, как их экранирует энкодер
+        /// <c>System.Text.Json</c> по умолчанию.
+        ///
+        /// <para>
+        /// Включает это только Compat-слой, и по той же причине, по какой он
+        /// берёт себе <c>CompatUtf8Exhauster</c>: его потребитель поменял
+        /// пакет, а не код, и байты у него меняться не должны. У обычного
+        /// хоста флаг <c>false</c>, и текст порождаемого кода остаётся ровно
+        /// таким же, как до этого флага, - тот же инвариант, что у
+        /// <see cref="Guards"/> и <see cref="Features"/>.
+        /// </para>
+        /// </summary>
+        public bool EscapesLikeReference { get; }
+
         public HostModel(
             string? ns,
             string typeName,
@@ -770,9 +786,11 @@ namespace JsonGoddess.Generator.Model
             JsonNamingStyle dictionaryKeyNaming,
             JsonGuard guards = JsonGuard.None,
             int maxDepth = 64,
-            JsonFeature features = JsonFeature.None
+            JsonFeature features = JsonFeature.None,
+            bool escapesLikeReference = false
             )
         {
+            EscapesLikeReference = escapesLikeReference;
             Scalars = scalars;
             StringEnums = stringEnums;
             DictionaryKeyNaming = dictionaryKeyNaming;

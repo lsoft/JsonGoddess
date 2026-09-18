@@ -73,6 +73,77 @@ namespace JsonGoddess.PerformanceTests.Generated
             exhauster.AppendRaw("}"u8);
         }
 
+        /// <summary>
+        /// Та же запись под второй sink. Дословная копия - и это не
+        /// небрежность макета, а то, что делает генератор: перегрузка
+        /// печатается на каждый объявленный тип sink'а, потому что запечатанный
+        /// конкретный тип девиртуализует вызов, а общий базовый - нет.
+        /// </summary>
+        public static void Serialize(CompatUtf8Exhauster exhauster, Order? value)
+        {
+            if (value is null)
+            {
+                exhauster.AppendNull();
+                return;
+            }
+
+            exhauster.AppendRaw("{\"Id\":"u8);
+            exhauster.Append(value.Id);
+            exhauster.AppendRaw(",\"Customer\":"u8);
+            exhauster.Append(value.Customer);
+            exhauster.AppendRaw(",\"Created\":"u8);
+            exhauster.Append(value.Created);
+            exhauster.AppendRaw(",\"Total\":"u8);
+            exhauster.Append(value.Total);
+            exhauster.AppendRaw(",\"Paid\":"u8);
+            exhauster.Append(value.Paid);
+            exhauster.AppendRaw(",\"Reference\":"u8);
+            exhauster.Append(value.Reference);
+            exhauster.AppendRaw(",\"Lines\":"u8);
+
+            var lines = value.Lines;
+            if (lines is null)
+            {
+                exhauster.AppendNull();
+            }
+            else
+            {
+                exhauster.AppendRaw("["u8);
+                for (var i = 0; i < lines.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        exhauster.AppendRaw(","u8);
+                    }
+
+                    SerializeLine(exhauster, lines[i]);
+                }
+
+                exhauster.AppendRaw("]"u8);
+            }
+
+            exhauster.AppendRaw("}"u8);
+        }
+
+        private static void SerializeLine(CompatUtf8Exhauster exhauster, OrderLine? value)
+        {
+            if (value is null)
+            {
+                exhauster.AppendNull();
+                return;
+            }
+
+            exhauster.AppendRaw("{\"Sku\":"u8);
+            exhauster.Append(value.Sku);
+            exhauster.AppendRaw(",\"Quantity\":"u8);
+            exhauster.Append(value.Quantity);
+            exhauster.AppendRaw(",\"Price\":"u8);
+            exhauster.Append(value.Price);
+            exhauster.AppendRaw(",\"Note\":"u8);
+            exhauster.Append(value.Note);
+            exhauster.AppendRaw("}"u8);
+        }
+
         private static void SerializeLine(PooledUtf8Exhauster exhauster, OrderLine? value)
         {
             if (value is null)

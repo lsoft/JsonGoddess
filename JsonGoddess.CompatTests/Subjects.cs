@@ -107,6 +107,75 @@ namespace JsonGoddess.CompatTests
     }
 
     /// <summary>
+    /// Всё, что экранируется по-разному у нас и у эталона, - в одном типе.
+    ///
+    /// <para>
+    /// Имя свойства не-ASCII, имя из <c>[JsonPropertyName]</c> с
+    /// HTML-значимыми символами, имя члена строкового enum'а, ключ словаря,
+    /// значения со всем сразу - включая символ вне BMP и непарный суррогат.
+    /// Каждая из этих пяти дорог до документа своя: три первых - константы,
+    /// печатаемые генератором, две последних - работа sink'а в рантайме.
+    /// </para>
+    /// </summary>
+    public class Tricky
+    {
+        public string? Обычное
+        {
+            get;
+            set;
+        }
+
+        [JsonPropertyName("a<b>c&d'e+f`g")]
+        public string? Html
+        {
+            get;
+            set;
+        }
+
+        public Mood Mood
+        {
+            get;
+            set;
+        }
+
+        public Dictionary<string, string>? Keys
+        {
+            get;
+            set;
+        }
+
+        public static Tricky CreateSample()
+        {
+            return new Tricky
+            {
+                Обычное = "Привет, мир",
+                Html = "<b>жирный</b> & 'кавычки' + плюс",
+                Mood = Mood.Delight,
+                Keys = new Dictionary<string, string>
+                {
+                    { "ключ", "значение" },
+                    { "эмодзи", "\U0001F600 и обрывок \uD800 после него" },
+                },
+            };
+        }
+    }
+
+    /// <summary>
+    /// Имя члена строкового enum'а взято ASCII-шное, но с экранируемыми
+    /// символами: не-ASCII имя enum'а у нас и так отказ (эталон сличает такие
+    /// имена без учёта регистра по Unicode, мы - по ASCII), и проверять на нём
+    /// экранирование было бы проверкой отказа.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum Mood
+    {
+        [JsonStringEnumMemberName("a<b>&c")]
+        Delight = 0,
+
+        Sorrow = 1,
+    }
+
+    /// <summary>
     /// Тип, который обслужить нельзя: член несёт чужой конвертер, и
     /// воспроизвести его мы не можем. Обход графа обязан отступить именно
     /// здесь и именно с <c>JGD001</c>, а не уронить сборку.

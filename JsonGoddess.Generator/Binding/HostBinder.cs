@@ -327,7 +327,8 @@ namespace JsonGoddess.Generator.Binding
                 options.DictionaryKeyNaming,
                 guardOptions.Guards,
                 guardOptions.MaxDepth,
-                featureOptions.Features
+                featureOptions.Features,
+                options.EscapeLikeReference
                 );
         }
 

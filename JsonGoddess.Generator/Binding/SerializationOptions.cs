@@ -37,10 +37,25 @@ namespace JsonGoddess.Generator.Binding
 
         public JsonNamingStyle DictionaryKeyNaming { get; }
 
-        public SerializationOptions(JsonNamingStyle propertyNaming, JsonNamingStyle dictionaryKeyNaming)
+        /// <summary>
+        /// Экранировать имена так, как энкодер эталона по умолчанию.
+        ///
+        /// Из атрибута не читается никогда: это не настройка автора хоста, а
+        /// решение Compat-слоя, единственного, кто его и включает (PLAN.md
+        /// §11.1, маршрут B). Живёт здесь, потому что здесь уже живут остальные
+        /// решения о том, как выглядит документ.
+        /// </summary>
+        public bool EscapeLikeReference { get; }
+
+        public SerializationOptions(
+            JsonNamingStyle propertyNaming,
+            JsonNamingStyle dictionaryKeyNaming,
+            bool escapeLikeReference = false
+            )
         {
             PropertyNaming = propertyNaming;
             DictionaryKeyNaming = dictionaryKeyNaming;
+            EscapeLikeReference = escapeLikeReference;
         }
 
         /// <summary>

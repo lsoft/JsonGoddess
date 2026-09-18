@@ -123,7 +123,20 @@ namespace JsonGoddess
             Advance(JsonValueFormatter.WriteQuoted(value, GetSpan(JsonValueFormatter.MaxGuidBytes)));
         }
 
-        public sealed override void Append(char value)
+        /// <summary>
+        /// Не <c>sealed</c>, в отличие от всех остальных: набор экранируемого -
+        /// единственное, чем sink'и между собой различаются. Compat-слой пишет
+        /// строки так, как их пишет энкодер эталона по умолчанию
+        /// (<see cref="CompatUtf8Exhauster"/>), потому что его потребитель
+        /// поменял пакет, а не код, и байты у него меняться не должны.
+        ///
+        /// <para>
+        /// Ценой это не оборачивается: генератор печатает вызовы по
+        /// <b>конкретному</b> типу sink'а, а конкретные типы запечатаны, и
+        /// вызов девиртуализуется независимо от того, запечатан ли метод здесь.
+        /// </para>
+        /// </summary>
+        public override void Append(char value)
         {
             var span = GetSpan(JsonStringEncoder.MaxBytesPerEscape + 6);
             span[0] = (byte)'"';
@@ -146,7 +159,8 @@ namespace JsonGoddess
             Advance(written + 2);
         }
 
-        public sealed override void Append(string? value)
+        /// <inheritdoc cref="Append(char)"/>
+        public override void Append(string? value)
         {
             if (value is null)
             {

@@ -75,6 +75,40 @@ namespace JsonGoddess.Tests.Stj
             Assert.True(ours.Length < Reference.Write(value).Length);
         }
 
+        /// <summary>
+        /// Третье расхождение, и до сих пор оно было незаписанным: U+007F
+        /// (DEL) расслабленный энкодер экранирует, а мы нет.
+        ///
+        /// <para>
+        /// Утверждение «наш набор совпадает с
+        /// <c>UnsafeRelaxedJsonEscaping</c>» верно с точностью до этого одного
+        /// символа, и оно стояло и в PLAN.md §8.4, и в
+        /// <c>docs/stj-divergences.md</c> 1.1. Нашлось перебором всего BMP,
+        /// затеянным ради Compat-слоя (PLAN.md §15 O9), - то есть тем же
+        /// способом, каким вообще положено узнавать про эталон.
+        /// </para>
+        ///
+        /// <para>
+        /// Ни одна форма дифференциального харнесса U+007F не содержит,
+        /// поэтому направление <c>=</c> зелено и без этого знания. Тест стоит
+        /// здесь ровно затем, чтобы знание перестало быть неписаным.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void DelIsEscapedByTheRelaxedEncoderAndNotByUs()
+        {
+            const string value = "ab";
+
+            var ours = Write(value);
+
+            Assert.Equal("\"ab\"", ours);
+            Assert.Equal("\"a\\u007Fb\"", Reference.Write(value));
+            Assert.Equal("\"a\\u007Fb\"", Reference.WriteDefaultEncoder(value));
+
+            //документ тот же по смыслу - расходятся только байты
+            Assert.Equal(value, JsonSerializer.Deserialize<string>(ours));
+        }
+
         [Theory]
         [InlineData("plain text")]
         [InlineData("with \\ backslash")]

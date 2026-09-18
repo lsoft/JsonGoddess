@@ -152,7 +152,7 @@ namespace JsonGoddess.Generator.Emit
                     {
                         EmitWriter(
                             builder, subject, exhauster, host.DictionaryKeyNaming, features,
-                            "Write_" + subject.MethodSuffix, null
+                            host.EscapesLikeReference, "Write_" + subject.MethodSuffix, null
                             );
                     }
                 }
@@ -164,7 +164,7 @@ namespace JsonGoddess.Generator.Emit
 
                 foreach (var enumModel in host.StringEnums)
                 {
-                    EmitEnumWriter(builder, enumModel, exhauster);
+                    EmitEnumWriter(builder, enumModel, exhauster, host.EscapesLikeReference);
                 }
             }
 
@@ -406,7 +406,8 @@ namespace JsonGoddess.Generator.Emit
                 //объект - проверено прогоном: у эталона он появляется только
                 //тогда, когда база объявлена производной от самой себя
                 EmitWriter(
-                    builder, subject, exhauster, keyNaming, features, "WriteSelf_" + subject.MethodSuffix, null
+                    builder, subject, exhauster, keyNaming, features, host.EscapesLikeReference,
+                    "WriteSelf_" + subject.MethodSuffix, null
                     );
             }
 
@@ -418,13 +419,29 @@ namespace JsonGoddess.Generator.Emit
                     exhauster,
                     keyNaming,
                     features,
+                    host.EscapesLikeReference,
                     PairWriterName(subject, derived),
                     derived.DiscriminatorLiteral is null
                         ? null
-                        : "\"" + subject.DiscriminatorName + "\":" + derived.DiscriminatorLiteral
+                        : "\"" + Name(subject.DiscriminatorName, host.EscapesLikeReference) + "\":"
+                            + Value(derived.DiscriminatorLiteral, host.EscapesLikeReference)
                     );
             }
         }
+
+        /// <summary>
+        /// Имя, печатаемое в документ константой. Compat-слой экранирует его
+        /// по-эталонному; обычный хост - нет, и тогда это тождество.
+        /// </summary>
+        private static string Name(string name, bool escapeNames) =>
+            escapeNames ? ReferenceEscaping.Body(name) : name;
+
+        /// <summary>
+        /// Готовый JSON-литерал (значение дискриминатора): у строки
+        /// экранируется тело, число остаётся числом.
+        /// </summary>
+        private static string Value(string literal, bool escapeNames) =>
+            escapeNames ? ReferenceEscaping.Literal(literal) : literal;
 
         private static string PairWriterName(SubjectModel subject, DerivedTypeModel derived) =>
             "Write_" + derived.MethodSuffix + "_As_" + subject.MethodSuffix;
@@ -439,12 +456,19 @@ namespace JsonGoddess.Generator.Emit
                 + "'\")";
         }
 
+        /// <param name="escapeNames">
+        /// Имена свойств печатать экранированными по-эталонному. Включено
+        /// только у Compat-слоя (<see cref="HostModel.EscapesLikeReference"/>);
+        /// у обычного хоста имя приезжает сюда как есть, и текст порождаемого
+        /// кода от появления этого параметра не изменился ни на байт.
+        /// </param>
         private static void EmitWriter(
             SourceBuilder builder,
             SubjectModel subject,
             string exhauster,
             JsonNamingStyle keyNaming,
             JsonFeature features,
+            bool escapeNames,
             string methodName,
             string? discriminator
             )
@@ -522,7 +546,7 @@ namespace JsonGoddess.Generator.Emit
                     //условного члена она обязана быть напечатана снаружи его
                     //ветки, иначе объект без членов остался бы без скобки
                     var literal = (pendingOpen ? "{" : commaIsCertain ? "," : string.Empty)
-                        + "\"" + member.JsonName + "\":";
+                        + "\"" + Name(member.JsonName, escapeNames) + "\":";
 
                     if (!pendingOpen && !commaIsCertain && needCommaDeclared)
                     {
@@ -556,7 +580,7 @@ namespace JsonGoddess.Generator.Emit
 
                 var candidate = "candidate" + i;
                 var conditionalLiteral = (commaIsCertain ? "," : string.Empty)
-                    + "\"" + member.JsonName + "\":";
+                    + "\"" + Name(member.JsonName, escapeNames) + "\":";
 
                 builder.OpenBlock();
                 builder.Line("var " + candidate + " = value." + member.MemberName + ";");
@@ -1275,7 +1299,9 @@ namespace JsonGoddess.Generator.Emit
         /// послабление, а поведение эталона: <c>(Named)77</c> он пишет как
         /// <c>77</c>, а не отказывает.
         /// </summary>
-        private static void EmitEnumWriter(SourceBuilder builder, EnumModel enumModel, string exhauster)
+        private static void EmitEnumWriter(
+            SourceBuilder builder, EnumModel enumModel, string exhauster, bool escapeNames
+            )
         {
             builder.OpenBlock(
                 "private static void WriteEnum_" + enumModel.MethodSuffix + "("
@@ -1288,7 +1314,10 @@ namespace JsonGoddess.Generator.Emit
             {
                 builder.Line("case " + enumModel.FullName + "." + member.MemberName + ":");
                 builder.Indent();
-                builder.Line("exhauster.AppendRaw(" + SourceBuilder.Utf8Literal("\"" + member.JsonName + "\"") + ");");
+                builder.Line(
+                    "exhauster.AppendRaw("
+                    + SourceBuilder.Utf8Literal("\"" + Name(member.JsonName, escapeNames) + "\"") + ");"
+                    );
                 builder.Line("return;");
                 builder.Unindent();
                 builder.Line();
