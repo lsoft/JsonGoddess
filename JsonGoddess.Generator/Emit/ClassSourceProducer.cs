@@ -25,6 +25,8 @@ namespace JsonGoddess.Generator.Emit
         private const string Span = "global::System.ReadOnlySpan<byte>";
         private const string EqualityComparer = "global::System.Collections.Generic.EqualityComparer";
         private const string DocumentException = "global::JsonGoddess.JsonDocumentException";
+        private const string PathBuilder = "global::JsonGoddess.Internal.JsonPath";
+        private const string PathAnchor = "global::JsonGoddess.JsonPathAnchor";
 
         /// <summary>
         /// Просьба к JIT'у вставить тело по месту. Ставится только на читатель
@@ -290,6 +292,28 @@ namespace JsonGoddess.Generator.Emit
             }
 
             builder.CloseBlock();
+
+            //§6.4: путь в сообщении достаётся хосту с любым стражем, и только
+            //ему. Стоит он ровно этих двух ветвей: порождённые читатели о
+            //путях не знают вовсе, а собирается путь холодным проходом по
+            //документу - см. JsonPath, там же о том, почему не раскруткой.
+            //
+            //Смещение отказа берётся из двух разных мест, и это не небрежность.
+            //Сканер знает, на каком байте споткнулся, и кладёт его в само
+            //исключение. Инжектор не знает ничего - лексема к тому моменту
+            //прочитана, - зато position точки входа уже стоит за её концом:
+            //все читатели правят по ref именно эту переменную.
+            if (guards != JsonGuard.None)
+            {
+                builder.OpenBlock("catch (" + DocumentException + " __failure)");
+                builder.Line("throw " + PathBuilder + ".Decorate(__failure, json);");
+                builder.CloseBlock();
+
+                builder.OpenBlock("catch (global::System.FormatException __failure)");
+                builder.Line("throw " + PathBuilder + ".Decorate(__failure, json, position);");
+                builder.CloseBlock();
+            }
+
             builder.OpenBlock("finally");
             builder.Line("context.Release();");
             builder.CloseBlock();
@@ -1106,7 +1130,8 @@ namespace JsonGoddess.Generator.Emit
                 "throw new " + DocumentException
                 + "(\"JSON deserialization for type '" + subject.FullName.Replace("global::", string.Empty)
                 + "' was missing required properties including: \" + "
-                + MissingName(subject) + "(" + RequiredSeen + ") + \".\", position);"
+                + MissingName(subject) + "(" + RequiredSeen + ") + \".\", position, "
+                + PathAnchor + ".EnclosingObject);"
                 );
             builder.CloseBlock();
             builder.Line();

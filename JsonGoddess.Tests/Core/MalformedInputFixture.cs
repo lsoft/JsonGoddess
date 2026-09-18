@@ -92,6 +92,38 @@ namespace JsonGoddess.Tests.Core
         }
 
         /// <summary>
+        /// Хост со стражами: тот же корпус, но каждый отказ вдобавок проходит
+        /// через построитель пути (§6.4). Построитель работает поверх заведомо
+        /// битого документа, и исключение из него подменило бы настоящую
+        /// причину отказа - а обнаружилось бы это как чужое исключение,
+        /// которое <see cref="Check"/> и ловит.
+        /// </summary>
+        [Fact]
+        public void No_mutation_escapes_the_path_builder_of_a_guarded_host()
+        {
+            var json = Encoding.UTF8.GetBytes(
+                Reference.Write(
+                    new PathRoot
+                    {
+                        Head = new PathItem { Qty = 7, Inner = new PathInner { Deep = 8, }, },
+                        Orders = new List<PathOrder>
+                        {
+                            new PathOrder { Id = 1, Name = "первый", },
+                            new PathOrder
+                            {
+                                Id = 2,
+                                Name = "второй",
+                                Items = new List<PathItem> { new PathItem { Qty = 3, }, },
+                            },
+                        },
+                    }
+                    )
+                );
+
+            Check(json, utf8 => PathRootSerializer.Deserialize(DefaultInjector.Instance, utf8, out PathRoot? _));
+        }
+
+        /// <summary>
         /// Мутации по одному байту не создают <b>сочетаний</b>: испорченная
         /// кавычка плюс испорченная скобка - это другой путь разбора, чем
         /// каждая из них по отдельности. Здесь портится сразу по нескольку
