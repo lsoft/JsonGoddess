@@ -15,9 +15,11 @@ namespace JsonGoddess.PerformanceTests
     /// Семь байт выбраны затем, что при такой длине ключ <b>полон</b>: форма
     /// «по ключу» обходится вовсе без сравнения байтов, и порог меряется в
     /// самом чистом виде - таблица переходов против цепочки, без хвостов.
-    /// Известны две точки по краям (при двух членах выигрывает цепочка, при
-    /// тридцати - ключ), четвёрка выбрана между ними наугад, и это
-    /// единственное неизмеренное место диспетчера.
+    /// Замер (§12.3 и §12.4 плана) показал, что цепочка выигрывает на всех
+    /// трёх корзинах - 1.28, 1.53 и 2.09, - и что прежний порог в четыре члена
+    /// заставлял эмиттер печатать ключ там, где он вдвое хуже. Порог поднят до
+    /// 24; сам перелом (где-то между 9 и 29) по-прежнему не измерен, и эта
+    /// фикстура остаётся местом, где его будут искать.
     ///
     /// Восьмичленная корзина несёт вторую пару - под O5: цепочка
     /// <c>EqualsIgnoreCase</c> (то, что эмиттер печатает сегодня при
@@ -162,7 +164,7 @@ namespace JsonGoddess.PerformanceTests
         }
 
         [BenchmarkCategory("bucket-4")]
-        [Benchmark(Description = "4 члена: порождённый (порог печатает ключ)")]
+        [Benchmark(Description = "4 члена: порождённый (порог печатает цепочку)")]
         public Bucket4? Generated4()
         {
             Bucket4Generated.Deserialize(DefaultInjector.Instance, _four, out var result);
@@ -202,7 +204,7 @@ namespace JsonGoddess.PerformanceTests
         }
 
         [BenchmarkCategory("bucket-8")]
-        [Benchmark(Description = "8 членов: порождённый")]
+        [Benchmark(Description = "8 членов: порождённый (порог печатает цепочку)")]
         public Bucket8? Generated8()
         {
             Bucket8Generated.Deserialize(DefaultInjector.Instance, _eight, out var result);
