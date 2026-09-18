@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
@@ -1077,6 +1077,11 @@ namespace JsonGoddess.Generator.Binding
             List<DiagnosticInfo> diagnostics
             )
         {
+            //[SetsRequiredMembers] спрашивается ДО связывания членов, а не
+            //после: отказы на обязательных членах выдаёт BindMember, и узнать
+            //об обещании конструктора позже значило бы выдать их зря
+            var setsRequired = ConstructorBinder.SetsRequiredMembers(subject, known);
+
             var chain = new List<INamedTypeSymbol>();
             for (var current = subject; current is not null && current.SpecialType != SpecialType.System_Object; current = current.BaseType)
             {
@@ -1092,7 +1097,7 @@ namespace JsonGoddess.Generator.Binding
             {
                 foreach (var member in Ordered(type))
                 {
-                    var bound = BindMember(subject, member, byType, known, options, location, diagnostics, ref failed);
+                    var bound = BindMember(subject, member, byType, known, options, setsRequired, location, diagnostics, ref failed);
                     if (bound is null)
                     {
                         continue;
@@ -1227,6 +1232,7 @@ namespace JsonGoddess.Generator.Binding
             Dictionary<ISymbol, string> byType,
             KnownSymbols known,
             SerializationOptions options,
+            bool setsRequiredMembers,
             LocationInfo? location,
             List<DiagnosticInfo> diagnostics,
             ref bool failed
@@ -1238,9 +1244,10 @@ namespace JsonGoddess.Generator.Binding
             //дальше член может быть отброшен, а отброшенный required - повод
             //отказать, а не промолчать.
             var isRequired =
-                member is IPropertySymbol { IsRequired: true }
-                || member is IFieldSymbol { IsRequired: true }
-                || known.Has(member, known.JsonRequired);
+                !setsRequiredMembers
+                && (member is IPropertySymbol { IsRequired: true }
+                    || member is IFieldSymbol { IsRequired: true }
+                    || known.Has(member, known.JsonRequired));
 
             //[JsonIgnore] без Condition означает Always, то есть член исчезает в
             //обе стороны. Condition = Never - наоборот, «писать всегда», и это
@@ -1276,7 +1283,9 @@ namespace JsonGoddess.Generator.Binding
                             Refuse(subject, member, MemberType(member), location, diagnostics, ref failed,
                                 "the member is required and carries [JsonIgnore]; System.Text.Json treats this "
                                 + "combination as a configuration error and throws InvalidOperationException on "
-                                + "every use of the type, so accepting it here would be a divergence in strictness");
+                                + "every use of the type, so accepting it here would be a divergence in strictness. "
+                                + "Mark the constructor with [SetsRequiredMembers] if the type sets the member "
+                                + "itself: System.Text.Json then accepts the type, and so do we (probed)");
                         }
 
                         return null;
@@ -1399,7 +1408,8 @@ namespace JsonGoddess.Generator.Binding
                 Refuse(subject, member, memberType, location, diagnostics, ref failed,
                     "the member is required but has no public setter reachable by the generated code, so its "
                     + "presence could never be satisfied; System.Text.Json refuses this combination too, only "
-                    + "at run time");
+                    + "at run time. Mark the constructor with [SetsRequiredMembers] if the type sets the member "
+                    + "itself (probed)");
                 return null;
             }
 

@@ -34,6 +34,7 @@ namespace JsonGoddess.Generator.Binding
         private const string JsonPolymorphicAttributeName = "System.Text.Json.Serialization.JsonPolymorphicAttribute";
         private const string JsonNumberHandlingAttributeName = "System.Text.Json.Serialization.JsonNumberHandlingAttribute";
         private const string JsonRequiredAttributeName = "System.Text.Json.Serialization.JsonRequiredAttribute";
+        private const string SetsRequiredMembersAttributeName = "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute";
         private const string JsonSourceGenerationOptionsAttributeName = "System.Text.Json.Serialization.JsonSourceGenerationOptionsAttribute";
         private const string FlagsAttributeName = "System.FlagsAttribute";
 
@@ -58,6 +59,7 @@ namespace JsonGoddess.Generator.Binding
         public readonly INamedTypeSymbol? JsonPolymorphic;
         public readonly INamedTypeSymbol? JsonNumberHandling;
         public readonly INamedTypeSymbol? JsonRequired;
+        public readonly INamedTypeSymbol? SetsRequiredMembers;
         public readonly INamedTypeSymbol? JsonSourceGenerationOptions;
         public readonly INamedTypeSymbol? Flags;
 
@@ -84,6 +86,7 @@ namespace JsonGoddess.Generator.Binding
             JsonPolymorphic = compilation.GetTypeByMetadataName(JsonPolymorphicAttributeName);
             JsonNumberHandling = compilation.GetTypeByMetadataName(JsonNumberHandlingAttributeName);
             JsonRequired = compilation.GetTypeByMetadataName(JsonRequiredAttributeName);
+            SetsRequiredMembers = compilation.GetTypeByMetadataName(SetsRequiredMembersAttributeName);
             JsonSourceGenerationOptions = compilation.GetTypeByMetadataName(JsonSourceGenerationOptionsAttributeName);
             Flags = compilation.GetTypeByMetadataName(FlagsAttributeName);
         }

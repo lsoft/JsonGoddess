@@ -99,7 +99,9 @@ namespace JsonGoddess.Generator.Binding
                         + parameter.Name + "'; C# demands that a required member be assigned in an object "
                         + "initializer, but System.Text.Json leaves such a member to the constructor and never "
                         + "calls its setter, so the only legal code JsonGoddess could emit would put a different "
-                        + "value in the object");
+                        + "value in the object. Mark the constructor with [SetsRequiredMembers]: that is exactly "
+                        + "the promise this case needs, and System.Text.Json then stops treating the member as "
+                        + "required at all (probed)");
                     return null;
                 }
 
@@ -195,6 +197,37 @@ namespace JsonGoddess.Generator.Binding
             return "(" + member.Value.Declaration + ")(" + literal + ")";
         }
 
+        /// <summary>
+        /// Ручается ли конструктор, которым будет собран субъект, за
+        /// обязательные члены - <c>[SetsRequiredMembers]</c>.
+        ///
+        /// Спрашивается <b>до</b> связывания членов, потому что ответ меняет
+        /// сам факт их обязательности, а отказы на обязательных членах
+        /// выдаются при связывании. Диагностики выбора конструктора здесь
+        /// отбрасываются: настоящие выдаст <see cref="Bind"/>, и удвоить их
+        /// нельзя.
+        ///
+        /// Обещание снимает обязательность <b>целиком</b> - со всех членов
+        /// субъекта, а не только с тех, что конструктор трогает. Это поведение
+        /// эталона, снятое пробой (scratchpad/ReqProbe): он не отказывает на
+        /// пустом документе ни при параметризованном конструкторе, ни при
+        /// конструкторе без параметров, ни даже когда обязательный член помечен
+        /// <c>[JsonIgnore]</c>.
+        /// </summary>
+        public static bool SetsRequiredMembers(INamedTypeSymbol subject, KnownSymbols known)
+        {
+            if (known.SetsRequiredMembers is null)
+            {
+                return false;
+            }
+
+            var ignored = new List<DiagnosticInfo>();
+            var failed = false;
+            var constructor = Choose(subject, known, null, ignored, ref failed);
+
+            return constructor is not null && known.Has(constructor, known.SetsRequiredMembers);
+        }
+
         private static MemberModel WithConstructorParameter(MemberModel member)
         {
             return new MemberModel(
@@ -259,9 +292,12 @@ namespace JsonGoddess.Generator.Binding
             var parameterless = subject.InstanceConstructors
                 .FirstOrDefault(c => c.Parameters.Length == 0 && IsAccessible(c));
 
+            //возвращается сам символ, а не null: вызывающему нужно спросить у
+            //него про [SetsRequiredMembers], а «конструктор без параметров»
+            //он и так узнаёт по пустому списку параметров
             if (parameterless is not null)
             {
-                return null;
+                return parameterless;
             }
 
             var candidates = subject.InstanceConstructors

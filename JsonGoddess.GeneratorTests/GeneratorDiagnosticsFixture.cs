@@ -458,6 +458,47 @@ namespace Demo
         }
 
         /// <summary>
+        /// <c>[SetsRequiredMembers]</c> на конструкторе снимает обязательность
+        /// <b>целиком</b> - со всех членов субъекта, а не только с тех, что
+        /// конструктор трогает. Это поведение эталона, снятое пробой: он не
+        /// отказывает на пустом документе ни при параметризованном
+        /// конструкторе, ни при конструкторе без параметров, ни даже когда
+        /// обязательный член помечен <c>[JsonIgnore]</c>.
+        ///
+        /// Для нас это снимает целый узел: компилятор перестаёт требовать
+        /// инициализатор (CS9035), значит отложенная сборка не нужна, а вместе
+        /// с ней уходят и оба отказа §9.13.
+        /// </summary>
+        [Theory]
+        [InlineData(@"
+        [System.Diagnostics.CodeAnalysis.SetsRequiredMembers]
+        public Subject() { Id = 1; }
+        public required int Id { get; set; }
+")]
+        [InlineData(@"
+        [System.Diagnostics.CodeAnalysis.SetsRequiredMembers]
+        public Subject(int id) { Id = id; }
+        public required int Id { get; set; }
+")]
+        [InlineData(@"
+        [System.Diagnostics.CodeAnalysis.SetsRequiredMembers]
+        public Subject() { Id = 1; }
+        [JsonIgnore] public required int Id { get; set; }
+        public int Other { get; set; }
+")]
+        public void Sets_required_members_turns_the_whole_requirement_off(string members)
+        {
+            var run = GeneratorHarness.Run(Sources.Host(members));
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Empty(run.CompilationErrors);
+
+            //ни маски присутствия, ни отказа по ней
+            Assert.DoesNotContain("was missing required properties", run.SingleGeneratedFile, System.StringComparison.Ordinal);
+            Assert.DoesNotContain("var required = 0UL;", run.SingleGeneratedFile, System.StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// <c>[JsonFactory]</c> заменяет <c>new T()</c> в читателе - и только
         /// там. Запись объект не создаёт, значит фабрике в ней делать нечего.
         /// </summary>
