@@ -132,7 +132,7 @@ namespace JsonGoddess.Generator.Binding
                     ValueForm.Array,
                     default,
                     known.FullName(type),
-                    "ArrayOf_" + arrayElement!.MethodSuffix,
+                    "ArrayOf_" + ElementSuffix(array.ElementType, arrayElement!),
                     arrayElement,
                     true
                     );
@@ -156,7 +156,7 @@ namespace JsonGoddess.Generator.Binding
                     ValueForm.Dictionary,
                     default,
                     known.FullName(type),
-                    "MapOf_" + dictionaryValue!.MethodSuffix,
+                    "MapOf_" + ElementSuffix(valueType!, dictionaryValue!),
                     dictionaryValue,
                     true
                     );
@@ -174,7 +174,7 @@ namespace JsonGoddess.Generator.Binding
                     ValueForm.List,
                     default,
                     known.FullName(type),
-                    "ListOf_" + listElement!.MethodSuffix,
+                    "ListOf_" + ElementSuffix(listElementType!, listElement!),
                     listElement,
                     true
                     );
@@ -205,6 +205,48 @@ namespace JsonGoddess.Generator.Binding
                     + "IDictionary<string, V> and IReadOnlyDictionary<string, V> are supported; other collections "
                     + "(sets, queues, stacks, non-string-keyed dictionaries, multidimensional arrays) are not";
             return false;
+        }
+
+        /// <summary>
+        /// Суффикс элемента в имени метода коллекции - с учётом
+        /// <c>Nullable&lt;&gt;</c>.
+        ///
+        /// <para>
+        /// Собственный <see cref="ValueModel.MethodSuffix"/> элемента о
+        /// nullability молчит: он именует <b>вид</b> значения
+        /// (<c>Int32</c>, <c>MyEnum</c>, субъект), а разрешён ли на его месте
+        /// <c>null</c> - свойство места, и живёт оно в
+        /// <see cref="ValueModel.IsNullable"/>. Для скаляра этого хватает:
+        /// читатель скаляра именуется отдельно и <c>_OrNull</c> к себе
+        /// приписывает сам. Для коллекции - нет: <c>int[]</c> и <c>int?[]</c>
+        /// это два разных типа с двумя разными методами, а имя у них выходило
+        /// одно - <c>ArrayOf_Int32</c>.
+        /// </para>
+        ///
+        /// <para>
+        /// Пока хост печатается на один граф, столкнуться им негде: два таких
+        /// члена редко живут в одном дереве типов. У Compat-слоя хост
+        /// <b>общий на всю сборку</b>, и там это случилось сразу - на чужом
+        /// корпусе, где <c>SimpleTestClass</c> с <c>int[]</c> и
+        /// <c>SimpleTestClassWithNullables</c> с <c>int?[]</c> приехали в один
+        /// файл. Нашлось компиляцией порождённого кода (CS1503), то есть самым
+        /// дешёвым из возможных способов; молча разойтись документы тут не
+        /// могли бы, но это везение, а не устройство.
+        /// </para>
+        ///
+        /// <para>
+        /// Различается ровно <c>Nullable&lt;T&gt;</c>, а не nullability вообще:
+        /// <c>string[]</c> и <c>string?[]</c> - один и тот же тип в рантайме,
+        /// и один и тот же метод. Приписывать суффикс и им значило бы
+        /// разделить то, что делить нечем.
+        /// </para>
+        /// </summary>
+        private static string ElementSuffix(ITypeSymbol element, ValueModel model)
+        {
+            return element is INamedTypeSymbol { IsGenericType: true, } named
+                && named.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T
+                    ? model.MethodSuffix + "_OrNull"
+                    : model.MethodSuffix;
         }
 
         /// <summary>
@@ -258,10 +300,10 @@ namespace JsonGoddess.Generator.Binding
                 ValueForm.Dictionary,
                 default,
                 known.FullName(type),
-                prefix + dictionaryValue!.MethodSuffix,
+                prefix + ElementSuffix(valueType, dictionaryValue!),
                 dictionaryValue,
                 true,
-                constructTypeName: "global::System.Collections.Generic.Dictionary<string, " + dictionaryValue.Declaration + ">"
+                constructTypeName: "global::System.Collections.Generic.Dictionary<string, " + dictionaryValue!.Declaration + ">"
                 );
             return true;
         }
@@ -335,10 +377,10 @@ namespace JsonGoddess.Generator.Binding
                 form,
                 default,
                 known.FullName(type),
-                prefix + element!.MethodSuffix,
+                prefix + ElementSuffix(named!.TypeArguments[0], element!),
                 element,
                 true,
-                constructTypeName: "global::System.Collections.Generic.List<" + element.Declaration + ">"
+                constructTypeName: "global::System.Collections.Generic.List<" + element!.Declaration + ">"
                 );
             return true;
         }

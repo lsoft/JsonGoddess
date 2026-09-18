@@ -645,8 +645,13 @@ namespace JsonGoddess.Generator.Binding
             List<DiagnosticInfo> diagnostics
             )
         {
-            string? refusal = null;
-            if (subject.TypeKind is not (TypeKind.Class or TypeKind.Struct))
+            string? refusal = DynamicShapeRefusal(subject);
+            if (refusal is not null)
+            {
+                //причина уже названа - самая частная из возможных, поэтому
+                //стоит первой
+            }
+            else if (subject.TypeKind is not (TypeKind.Class or TypeKind.Struct))
             {
                 refusal = "only classes and structs are supported";
             }
@@ -688,6 +693,56 @@ namespace JsonGoddess.Generator.Binding
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Типы, у которых строения документа <b>нет до запуска</b>.
+        ///
+        /// <para>
+        /// <c>object</c> эталон пишет по <b>рантаймовому</b> типу значения, а
+        /// не по объявленному; <c>JsonElement</c>, <c>JsonDocument</c> и
+        /// <c>JsonNode</c> он выкладывает тем документом, который они внутри
+        /// держат. Ни то, ни другое генератору недоступно: он видит объявление.
+        /// </para>
+        ///
+        /// <para>
+        /// Отказ нужен именно здесь, потому что по форме такой тип - обычный
+        /// класс или структура, и без этой проверки он связывался бы «успешно»:
+        /// у <c>object</c> публичных членов нет, и документ выходил бы
+        /// <c>{}</c>; у <c>JsonElement</c> публичное свойство одно, и выходило
+        /// бы <c>{"ValueKind":4}</c> там, где эталон пишет <c>1</c>. То есть
+        /// валидный код, дающий другой документ, молча, - худший из исходов по
+        /// §1 плана.
+        /// </para>
+        ///
+        /// <para>
+        /// Нашлось прогоном их корпуса поверх фасада (§11.1, маршрут B), и
+        /// найтись иначе почти не могло: у обычного хоста такой тип надо
+        /// зарегистрировать руками, а Compat-слой считает замыкание сам и
+        /// поэтому доходит до <c>object</c> на первом же чужом типе.
+        /// </para>
+        /// </summary>
+        private static string? DynamicShapeRefusal(INamedTypeSymbol subject)
+        {
+            if (subject.SpecialType == SpecialType.System_Object)
+            {
+                return "'object' has no shape known at compile time: System.Text.Json writes the run-time type "
+                    + "of the value, and the generated code sees only the declaration";
+            }
+
+            for (var current = subject; current is not null; current = current.BaseType)
+            {
+                switch (current.ToDisplayString())
+                {
+                    case "System.Text.Json.JsonElement":
+                    case "System.Text.Json.JsonDocument":
+                    case "System.Text.Json.Nodes.JsonNode":
+                        return "System.Text.Json writes the document this type carries verbatim, and the "
+                            + "generated code has no way to reproduce it";
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

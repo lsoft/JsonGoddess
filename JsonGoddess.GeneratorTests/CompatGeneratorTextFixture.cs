@@ -334,6 +334,128 @@ namespace Sample
             Assert.Empty(run.GeneratedFiles);
         }
 
+        /// <summary>
+        /// Член типа <c>object</c> или <c>JsonElement</c> уводит весь тип к
+        /// эталону.
+        ///
+        /// <para>
+        /// Отказ здесь важнее обычного. По форме это самый обычный класс или
+        /// структура, и без отдельной проверки он связывался бы <b>успешно</b>:
+        /// публичных членов у <c>object</c> нет, и документ выходил бы
+        /// <c>{}</c>; у <c>JsonElement</c> публичное свойство одно, и выходило
+        /// бы <c>{"ValueKind":4}</c> там, где эталон пишет <c>1</c>. То есть
+        /// валидный код, дающий другой документ, молча.
+        /// </para>
+        ///
+        /// <para>
+        /// Нашлось прогоном их корпуса поверх фасада (<c>StjFacadeFixture</c>),
+        /// и иначе найтись почти не могло: обычному хосту такой тип надо
+        /// зарегистрировать руками, а Compat-слой считает замыкание сам и
+        /// доходит до <c>object</c> на первом же чужом типе.
+        /// </para>
+        /// </summary>
+        [Theory]
+        [InlineData("object?", "object")]
+        [InlineData("global::System.Text.Json.JsonElement", "JsonElement")]
+        [InlineData("global::System.Text.Json.Nodes.JsonNode?", "JsonNode")]
+        public void A_member_whose_shape_is_known_only_at_run_time_sends_the_type_to_the_reference(
+            string declaration, string expected
+            )
+        {
+            var source = @"
+using JsonGoddess.Compat;
+
+namespace Sample
+{
+    public class Envelope
+    {
+        public int Id { get; set; }
+        public " + declaration + @" Payload { get; set; }
+    }
+
+    public static class Caller
+    {
+        public static string Write(Envelope value) => JsonSerializer.Serialize(value);
+    }
+}
+";
+            var run = GeneratorHarness.Run(source);
+
+            Assert.Empty(run.CompilationErrors);
+
+            var fallback = run.GeneratorDiagnostics.Single(d => d.Id == "JGD001");
+
+            Assert.Equal(DiagnosticSeverity.Info, fallback.Severity);
+            Assert.Contains("Sample.Envelope", fallback.GetMessage());
+            Assert.Contains(expected, fallback.GetMessage());
+
+            Assert.Empty(run.GeneratedFiles);
+        }
+
+        /// <summary>
+        /// <c>int[]</c> и <c>int?[]</c> в одной сборке - два метода, а не один.
+        ///
+        /// <para>
+        /// Имя метода коллекции строится по элементу, а собственный суффикс
+        /// элемента о nullability молчал: он именует вид значения, а не место.
+        /// Выходило <c>ArrayOf_Int32</c> на оба типа, и второй получал тело
+        /// первого.
+        /// </para>
+        ///
+        /// <para>
+        /// У обычного хоста столкнуться им негде - два таких члена редко живут
+        /// в одном дереве типов. У Compat-слоя хост <b>общий на всю сборку</b>,
+        /// и там это случилось сразу: их <c>SimpleTestClass</c> с <c>int[]</c>
+        /// и <c>SimpleTestClassWithNullables</c> с <c>int?[]</c> приехали в
+        /// один файл. Проверка тут и живёт, потому что беда компатовая.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void A_nullable_element_does_not_share_a_method_with_a_non_nullable_one()
+        {
+            const string source = @"
+using System.Collections.Generic;
+using JsonGoddess.Compat;
+
+namespace Sample
+{
+    public class Plain
+    {
+        public int[]? Values { get; set; }
+        public List<int>? More { get; set; }
+        public Dictionary<string, int>? Map { get; set; }
+    }
+
+    public class Maybe
+    {
+        public int?[]? Values { get; set; }
+        public List<int?>? More { get; set; }
+        public Dictionary<string, int?>? Map { get; set; }
+    }
+
+    public static class Caller
+    {
+        public static string Write(Plain value) => JsonSerializer.Serialize(value);
+        public static string WriteMaybe(Maybe value) => JsonSerializer.Serialize(value);
+    }
+}
+";
+            var run = GeneratorHarness.Run(source);
+
+            //главное утверждение - код собирается: разъехавшиеся имена дают
+            //не тихое расхождение, а CS1503 на порождённом файле
+            Assert.Empty(run.CompilationErrors);
+
+            var host = Host(run);
+
+            Assert.Contains("ArrayOf_Int32(", host);
+            Assert.Contains("ArrayOf_Int32_OrNull(", host);
+            Assert.Contains("ListOf_Int32(", host);
+            Assert.Contains("ListOf_Int32_OrNull(", host);
+            Assert.Contains("MapOf_Int32(", host);
+            Assert.Contains("MapOf_Int32_OrNull(", host);
+        }
+
         private static int Occurrences(string text, string needle)
         {
             var count = 0;
