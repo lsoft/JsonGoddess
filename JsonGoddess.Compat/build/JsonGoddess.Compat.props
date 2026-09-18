@@ -1,0 +1,25 @@
+<Project>
+
+  <!--
+    Перехват вызовов фасада (§10, маршрут A) включён по умолчанию: тот, кто
+    сослался на JsonGoddess.Compat, именно за этим и сослался.
+
+    Выключается в csproj потребителя:
+
+      <PropertyGroup>
+        <JsonGoddessCompat>disable</JsonGoddessCompat>
+      </PropertyGroup>
+
+    Свойство обязано быть видимо компилятору, иначе генератор его не прочтёт:
+    CompilerVisibleProperty ниже - не украшение, а единственный способ довезти
+    значение из MSBuild в анализатор.
+  -->
+  <PropertyGroup Condition="'$(JsonGoddessCompat)' == ''">
+    <JsonGoddessCompat>enable</JsonGoddessCompat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <CompilerVisibleProperty Include="JsonGoddessCompat" />
+  </ItemGroup>
+
+</Project>

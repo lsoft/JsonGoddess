@@ -32,4 +32,12 @@
     <ProjectReference Include="..\JsonGoddess.Components\JsonGoddess.Components.csproj" />
   </ItemGroup>
 
+  <!--
+    .props едет в пакет: без него потребитель не сможет ни выключить перехват,
+    ни даже включить его осознанно - генератор просто не увидит свойства.
+  -->
+  <ItemGroup>
+    <None Include="build\JsonGoddess.Compat.props" Pack="true" PackagePath="build\" />
+  </ItemGroup>
+
 </Project>

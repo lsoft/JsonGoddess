@@ -43,6 +43,13 @@
     <ProjectReference Include="..\JsonGoddess.Generator\JsonGoddess.Generator.csproj" />
     <ProjectReference Include="..\JsonGoddess.Common\JsonGoddess.Common.csproj" />
     <ProjectReference Include="..\JsonGoddess.Components\JsonGoddess.Components.csproj" />
+
+    <!--
+      Фасад нужен не как зависимость тестов, а как ссылка ДЛЯ проверяемой
+      компиляции: перехват вызовов (§10) срабатывает только тогда, когда тип
+      JsonGoddess.Compat.JsonSerializer в ней вообще есть.
+    -->
+    <ProjectReference Include="..\JsonGoddess.Compat\JsonGoddess.Compat.csproj" />
   </ItemGroup>
 
 </Project>

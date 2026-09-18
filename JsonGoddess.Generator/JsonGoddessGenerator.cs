@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Threading;
 using JsonGoddess.Generator.Binding;
 using JsonGoddess.Generator.Model;
 using Microsoft.CodeAnalysis;
@@ -52,20 +53,113 @@ namespace JsonGoddess.Generator
                 .Combine(context.CompilationProvider)
                 .Select(static (pair, token) => HostBinder.Bind(pair.Right, pair.Left, token));
 
-            context.RegisterSourceOutput(
-                results,
-                static (productionContext, result) =>
-                {
-                    foreach (var diagnostic in result.Diagnostics)
-                    {
-                        productionContext.ReportDiagnostic(diagnostic.ToDiagnostic());
-                    }
+            context.RegisterSourceOutput(results, static (productionContext, result) => Emit(productionContext, result));
 
-                    foreach (var file in result.Files)
-                    {
-                        productionContext.AddSource(file.HintName, file.Text);
-                    }
-                });
+            InitializeCompat(context);
+        }
+
+        /// <summary>
+        /// Маршрут A Compat-слоя (§10): перехват вызовов фасада.
+        ///
+        /// <para>
+        /// Отдельный конвейер, а не ветка в основном, потому что вход у него
+        /// другой: не размеченное объявление, а <b>вызов</b> в любом файле.
+        /// Триггер дешёвый и синтаксический - имя метода, - а решение «это
+        /// действительно наш фасад» принимается уже с семантикой.
+        /// </para>
+        ///
+        /// <para>
+        /// Выключатель <c>JsonGoddessCompat=disable</c> есть, потому что
+        /// перехват - это подмена поведения на всю сборку, и должен быть способ
+        /// от неё отказаться, не убирая ссылку. Пользуется им в первую очередь
+        /// наш же тест фасада: он проверяет <b>отступление</b> к эталону, а
+        /// генератор, обслуживший его типы, нечего было бы и проверять.
+        /// </para>
+        /// </summary>
+        private static void InitializeCompat(IncrementalGeneratorInitializationContext context)
+        {
+            var enabled = context.AnalyzerConfigOptionsProvider
+                .Select(static (provider, _) =>
+                    !provider.GlobalOptions.TryGetValue("build_property.JsonGoddessCompat", out var value)
+                    || !string.Equals(value, "disable", System.StringComparison.OrdinalIgnoreCase));
+
+            var sites = context.SyntaxProvider
+                .CreateSyntaxProvider(
+                    static (node, _) => IsFacadeCandidate(node),
+                    static (syntaxContext, token) => ReadCallSite(syntaxContext, token))
+                .Where(static site => site is not null)
+                .Select(static (site, _) => site!.Value)
+                .Collect();
+
+            var compat = sites
+                .Combine(enabled)
+                .Combine(context.CompilationProvider)
+                .Select(static (pair, token) => pair.Left.Right
+                    ? CompatBinder.Bind(pair.Right, pair.Left.Left, token)
+                    : GenerationResult.Empty);
+
+            context.RegisterSourceOutput(compat, static (productionContext, result) => Emit(productionContext, result));
+        }
+
+        /// <summary>
+        /// Дешёвый синтаксический отсев: имя вызванного метода. Предикат
+        /// исполняется на каждом узле каждого изменившегося дерева, поэтому
+        /// здесь нельзя ни семантики, ни аллокаций.
+        /// </summary>
+        private static bool IsFacadeCandidate(SyntaxNode node)
+        {
+            if (node is not InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax access })
+            {
+                return false;
+            }
+
+            var name = access.Name.Identifier.ValueText;
+            return name == "Serialize" || name == "SerializeToUtf8Bytes" || name == "Deserialize";
+        }
+
+        private static CompatCallSite? ReadCallSite(GeneratorSyntaxContext context, CancellationToken token)
+        {
+            if (context.SemanticModel.GetSymbolInfo(context.Node, token).Symbol is not IMethodSymbol method)
+            {
+                return null;
+            }
+
+            if (method.ContainingType?.ToDisplayString() != CompatBinder.FacadeMetadataName)
+            {
+                return null;
+            }
+
+            //«T известен статически» - это буквально: у обобщённого метода в
+            //пользовательском коде аргументом приедет его собственный параметр
+            //типа, и обслуживать там нечего
+            if (method.TypeArguments.Length != 1
+                || method.TypeArguments[0] is not INamedTypeSymbol argument
+                || argument.TypeKind == TypeKind.Error
+                || argument.IsUnboundGenericType)
+            {
+                return null;
+            }
+
+            var referenceId = DocumentationCommentId.CreateReferenceId(argument);
+            if (string.IsNullOrEmpty(referenceId))
+            {
+                return null;
+            }
+
+            return new CompatCallSite(referenceId, LocationInfo.From(context.Node.GetLocation()));
+        }
+
+        private static void Emit(SourceProductionContext context, GenerationResult result)
+        {
+            foreach (var diagnostic in result.Diagnostics)
+            {
+                context.ReportDiagnostic(diagnostic.ToDiagnostic());
+            }
+
+            foreach (var file in result.Files)
+            {
+                context.AddSource(file.HintName, file.Text);
+            }
         }
 
         private static string BuildMetadataName(INamedTypeSymbol symbol)

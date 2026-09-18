@@ -140,6 +140,64 @@ namespace JsonGoddess.Generator.Binding
                 return null;
             }
 
+            var failedBeforeSubjects = false;
+            var options = SerializationOptions.Read(host, known, diagnostics, ref failedBeforeSubjects);
+            var guardOptions = GuardOptions.Read(host, known, diagnostics, ref failedBeforeSubjects);
+            var featureOptions = FeatureOptions.Read(host, known);
+            var factories = CollectFactories(
+                host, known, registered, hostLocation, diagnostics, ref failedBeforeSubjects
+                );
+
+            var ns = host.ContainingNamespace.IsGlobalNamespace
+                ? null
+                : host.ContainingNamespace.ToDisplayString();
+
+            return BuildModel(
+                registered,
+                known,
+                options,
+                guardOptions,
+                featureOptions,
+                factories,
+                hostLocation,
+                ns,
+                BuildHostDeclaration(host),
+                host.ToDisplayString(),
+                exhausters.Count > 0 ? exhausters : new List<string> { "global::" + ExhausterBase },
+                injectors.Count > 0 ? injectors : new List<string> { "global::" + InjectorBase },
+                diagnostics,
+                failedBeforeSubjects
+                );
+        }
+
+        /// <summary>
+        /// Связывание всего, что уже не зависит от того, <b>откуда</b> взялся
+        /// список субъектов.
+        ///
+        /// <para>
+        /// Вынесено из <c>BindHost</c> ради Compat-слоя (§10): там хоста нет
+        /// вовсе - список субъектов приезжает из найденных вызовов фасада, а
+        /// стражи, фичи и sink'и назначаются не автором, а нами. Всё, что ниже
+        /// этой границы, про хост уже не знает и знать не должно.
+        /// </para>
+        /// </summary>
+        internal static HostModel? BuildModel(
+            IReadOnlyList<Registration> registered,
+            KnownSymbols known,
+            SerializationOptions options,
+            GuardOptions guardOptions,
+            FeatureOptions featureOptions,
+            Dictionary<ISymbol, string> factories,
+            LocationInfo? hostLocation,
+            string? ns,
+            string declaration,
+            string fullName,
+            IReadOnlyList<string> exhausters,
+            IReadOnlyList<string> injectors,
+            List<DiagnosticInfo> diagnostics,
+            bool failedBefore
+            )
+        {
             var accepted = new List<Registration>();
             var byType = new Dictionary<ISymbol, string>(SymbolEqualityComparer.Default);
 
@@ -158,12 +216,7 @@ namespace JsonGoddess.Generator.Binding
             var collections = new Dictionary<string, ValueModel>(System.StringComparer.Ordinal);
             var stringEnums = new Dictionary<string, EnumModel>(System.StringComparer.Ordinal);
             var scalars = new Dictionary<string, ValueModel>(System.StringComparer.Ordinal);
-            var failed = accepted.Count != registered.Count;
-
-            var options = SerializationOptions.Read(host, known, diagnostics, ref failed);
-            var guardOptions = GuardOptions.Read(host, known, diagnostics, ref failed);
-            var featureOptions = FeatureOptions.Read(host, known);
-            var factories = CollectFactories(host, known, registered, hostLocation, diagnostics, ref failed);
+            var failed = failedBefore || accepted.Count != registered.Count;
 
             foreach (var registration in accepted)
             {
@@ -207,7 +260,7 @@ namespace JsonGoddess.Generator.Binding
                 //сам и оба имел в виду, - поэтому отказ с названной причиной.
                 if (factory is not null && parameters.Count > 0)
                 {
-                    RefuseFactory(host, registration.Type.ToDisplayString(), hostLocation, diagnostics, ref failed,
+                    RefuseFactory(fullName, registration.Type.ToDisplayString(), hostLocation, diagnostics, ref failed,
                         "the type is deserialized through a constructor with parameters, and a factory would "
                         + "have nowhere to pass them; drop one of the two");
                     continue;
@@ -250,10 +303,6 @@ namespace JsonGoddess.Generator.Binding
                 return null;
             }
 
-            var ns = host.ContainingNamespace.IsGlobalNamespace
-                ? null
-                : host.ContainingNamespace.ToDisplayString();
-
             //порядок вспомогательных методов фиксирован: текст порождаемого кода -
             //предмет тестов, и зависеть от порядка обхода словаря он не должен
             var collectionList = new List<ValueModel>(collections.Values);
@@ -267,10 +316,10 @@ namespace JsonGoddess.Generator.Binding
 
             return new HostModel(
                 ns,
-                BuildHostDeclaration(host),
-                host.ToDisplayString(),
-                exhausters.Count > 0 ? exhausters : new List<string> { "global::" + ExhausterBase },
-                injectors.Count > 0 ? injectors : new List<string> { "global::" + InjectorBase },
+                declaration,
+                fullName,
+                exhausters,
+                injectors,
                 subjects,
                 collectionList,
                 enumList,
@@ -282,7 +331,7 @@ namespace JsonGoddess.Generator.Binding
                 );
         }
 
-        private readonly struct Registration
+        internal readonly struct Registration
         {
             public readonly INamedTypeSymbol Type;
             public readonly bool IsRoot;
@@ -388,14 +437,14 @@ namespace JsonGoddess.Generator.Binding
 
                 if (string.IsNullOrWhiteSpace(invocation))
                 {
-                    RefuseFactory(host, name, location, diagnostics, ref failed,
+                    RefuseFactory(host.ToDisplayString(), name, location, diagnostics, ref failed,
                         "the invocation expression is empty");
                     continue;
                 }
 
                 if (!subjects.Contains(subjectType))
                 {
-                    RefuseFactory(host, name, location, diagnostics, ref failed,
+                    RefuseFactory(host.ToDisplayString(), name, location, diagnostics, ref failed,
                         "the type is not registered on this host with [JsonSubject], so nothing would ever "
                         + "call the factory");
                     continue;
@@ -403,7 +452,7 @@ namespace JsonGoddess.Generator.Binding
 
                 if (result.ContainsKey(subjectType))
                 {
-                    RefuseFactory(host, name, location, diagnostics, ref failed,
+                    RefuseFactory(host.ToDisplayString(), name, location, diagnostics, ref failed,
                         "the type already has a factory on this host, and two expressions cannot both "
                         + "replace one 'new'");
                     continue;
@@ -416,7 +465,7 @@ namespace JsonGoddess.Generator.Binding
         }
 
         private static void RefuseFactory(
-            INamedTypeSymbol host,
+            string hostName,
             string subjectName,
             LocationInfo? location,
             List<DiagnosticInfo> diagnostics,
@@ -428,7 +477,7 @@ namespace JsonGoddess.Generator.Binding
                 new DiagnosticInfo(
                     JsonGoddessDiagnostics.InvalidFactoryId,
                     location,
-                    host.ToDisplayString(),
+                    hostName,
                     subjectName,
                     reason
                     )

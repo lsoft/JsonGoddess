@@ -15,6 +15,8 @@ namespace JsonGoddess.Generator.Diagnostics
     {
         public const string Category = "JsonGoddess";
 
+        public const string CompatTypeFallsBackId = "JGD001";
+        public const string CompatGenerationFailedId = "JGD002";
         public const string SinkIsNotSealedId = "JGD010";
         public const string HostIsNotPartialId = "JGD020";
         public const string SubjectIsNotSupportedId = "JGD021";
@@ -184,6 +186,33 @@ namespace JsonGoddess.Generator.Diagnostics
                 + "объект, - худший исход по §1 плана."
             );
 
+        public static readonly DiagnosticDescriptor CompatTypeFallsBack = new DiagnosticDescriptor(
+            CompatTypeFallsBackId,
+            "Type falls back to System.Text.Json",
+            "Call to the JsonGoddess facade with type '{0}' keeps working through System.Text.Json instead of generated code: {1}",
+            Category,
+            DiagnosticSeverity.Info,
+            isEnabledByDefault: true,
+            description:
+                "Фасад обслужить этот тип не смог и отдал работу эталону - документ тот же, скорость "
+                + "прежняя. Это объявленное поведение, а не поломка, поэтому severity Info; "
+                + "MSBuild-свойство JsonGoddessCompatStrict = warning/error поднимает громкость, "
+                + "не меняя решения."
+            );
+
+        public static readonly DiagnosticDescriptor CompatGenerationFailed = new DiagnosticDescriptor(
+            CompatGenerationFailedId,
+            "Compat generation failed after the type graph was accepted",
+            "Type '{0}' passed the JsonGoddess type-graph walk but generation failed afterwards: {1}",
+            Category,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            description:
+                "Это дыра в генераторе, а не в коде пользователя: обход графа типов сказал «обслужим», "
+                + "а связывание потом отказало. Работа уходит эталону и продолжается, но случай стоит "
+                + "багрепорта: два наших же шага разошлись во мнении об одном и том же типе."
+            );
+
         private static readonly Dictionary<string, DiagnosticDescriptor> _all =
             new Dictionary<string, DiagnosticDescriptor>
             {
@@ -200,6 +229,8 @@ namespace JsonGoddess.Generator.Diagnostics
                 { InvalidMaxDepthId, InvalidMaxDepth },
                 { CaseInsensitiveNameIsNotSupportedId, CaseInsensitiveNameIsNotSupported },
                 { InvalidFactoryId, InvalidFactory },
+                { CompatTypeFallsBackId, CompatTypeFallsBack },
+                { CompatGenerationFailedId, CompatGenerationFailed },
             };
 
         public static DiagnosticDescriptor Get(string id) => _all[id];

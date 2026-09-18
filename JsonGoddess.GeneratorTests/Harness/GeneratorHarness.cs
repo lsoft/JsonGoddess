@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace JsonGoddess.GeneratorTests.Harness
 {
@@ -106,14 +107,77 @@ namespace JsonGoddess.GeneratorTests.Harness
 
         public static GeneratorDriver CreateDriver(LanguageVersion languageVersion = LanguageVersion.CSharp11)
         {
+            return CreateDriver(null, languageVersion);
+        }
+
+        /// <param name="buildProperties">
+        /// MSBuild-свойства, видимые генератору (<c>CompilerVisibleProperty</c>).
+        /// Ключи - без префикса <c>build_property.</c>: его дописывает харнесс,
+        /// чтобы тест читался как csproj, а не как внутренности Roslyn.
+        /// </param>
+        public static GeneratorDriver CreateDriver(
+            IReadOnlyDictionary<string, string>? buildProperties,
+            LanguageVersion languageVersion = LanguageVersion.CSharp11
+            )
+        {
             return CSharpGeneratorDriver.Create(
                 new[] { new global::JsonGoddess.Generator.JsonGoddessGenerator().AsSourceGenerator(), },
                 parseOptions: new CSharpParseOptions(languageVersion),
+                optionsProvider: buildProperties is null ? null : new BuildProperties(buildProperties),
                 driverOptions: new GeneratorDriverOptions(
                     IncrementalGeneratorOutputKind.None,
                     trackIncrementalGeneratorSteps: true
                     )
                 );
+        }
+
+        public static GeneratorRun Run(
+            IReadOnlyList<SourceFile> files,
+            IReadOnlyDictionary<string, string> buildProperties,
+            LanguageVersion languageVersion = LanguageVersion.CSharp11
+            )
+        {
+            return Continue(
+                CreateDriver(buildProperties, languageVersion),
+                CreateCompilation(files, languageVersion)
+                );
+        }
+
+        private sealed class BuildProperties : AnalyzerConfigOptionsProvider
+        {
+            private readonly AnalyzerConfigOptions _global;
+
+            public BuildProperties(IReadOnlyDictionary<string, string> properties)
+            {
+                var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var pair in properties)
+                {
+                    map.Add("build_property." + pair.Key, pair.Value);
+                }
+
+                _global = new Options(map);
+            }
+
+            public override AnalyzerConfigOptions GlobalOptions => _global;
+
+            public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) => Options.Empty;
+
+            public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) => Options.Empty;
+
+            private sealed class Options : AnalyzerConfigOptions
+            {
+                public static readonly Options Empty =
+                    new Options(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+
+                private readonly Dictionary<string, string> _values;
+
+                public Options(Dictionary<string, string> values)
+                {
+                    _values = values;
+                }
+
+                public override bool TryGetValue(string key, out string value) => _values.TryGetValue(key, out value!);
+            }
         }
 
         public static CSharpCompilation CreateCompilation(

@@ -35,6 +35,13 @@ namespace JsonGoddess.Generator.Binding
             MaxDepth = maxDepth;
         }
 
+        /// <summary>
+        /// Набор, назначенный не автором хоста, а нами. Нужен Compat-слою
+        /// (§10): там <c>[JsonGuard]</c> писать некому, а строгость обязана
+        /// совпасть с эталонной.
+        /// </summary>
+        public static GuardOptions For(JsonGuard guards, int maxDepth) => new GuardOptions(guards, maxDepth);
+
         public static GuardOptions Read(
             INamedTypeSymbol host,
             KnownSymbols known,

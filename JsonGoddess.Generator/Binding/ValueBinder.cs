@@ -478,6 +478,95 @@ namespace JsonGoddess.Generator.Binding
             return true;
         }
 
+        /// <summary>
+        /// Какие типы должны быть зарегистрированы субъектами, чтобы
+        /// <see cref="TryBind"/> справился с типом члена.
+        ///
+        /// <para>
+        /// Существует ради Compat-слоя (§10): там список субъектов никто не
+        /// пишет руками, и транзитивное замыкание графа приходится считать
+        /// самим. Живёт здесь, а не в Compat-биндере, потому что обязано
+        /// разбирать тип ровно теми же шагами, что и <see cref="TryBind"/>
+        /// прямо над ним, - разъехавшись, они дали бы не отказ, а
+        /// незарегистрированный тип и непонятную ошибку компилятора поверх.
+        /// </para>
+        ///
+        /// <para>
+        /// Про то, <b>можно</b> ли обслужить найденный тип, здесь не судят
+        /// вовсе: находка - это кандидат, а приговор выносит связывание.
+        /// Незнакомая форма (множество, очередь, словарь не по строке) не даёт
+        /// кандидатов и уедет в отказ там же, где уехала бы у обычного хоста.
+        /// </para>
+        /// </summary>
+        public static void CollectSubjectCandidates(
+            ITypeSymbol type, ICollection<INamedTypeSymbol> into
+            )
+        {
+            if (type is INamedTypeSymbol { IsGenericType: true } nullable
+                && nullable.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T)
+            {
+                CollectSubjectCandidates(nullable.TypeArguments[0], into);
+                return;
+            }
+
+            if (BuiltinTypes.TryBind(type, out _, out _) || type.TypeKind == TypeKind.Enum)
+            {
+                return;
+            }
+
+            if (type is IArrayTypeSymbol array)
+            {
+                CollectSubjectCandidates(array.ElementType, into);
+                return;
+            }
+
+            if (IsDictionary(type, out _, out var dictionaryValue))
+            {
+                CollectSubjectCandidates(dictionaryValue!, into);
+                return;
+            }
+
+            if (IsList(type, out var listElement))
+            {
+                CollectSubjectCandidates(listElement!, into);
+                return;
+            }
+
+            foreach (var name in new[]
+                {
+                    IDictionaryMetadataName, IReadOnlyDictionaryMetadataName,
+                })
+            {
+                if (IsGeneric(type, name, out var dictionaryInterface))
+                {
+                    CollectSubjectCandidates(dictionaryInterface!.TypeArguments[1], into);
+                    return;
+                }
+            }
+
+            foreach (var name in new[]
+                {
+                    IListMetadataName, IReadOnlyListMetadataName, ICollectionMetadataName,
+                    IEnumerableMetadataName, IReadOnlyCollectionMetadataName,
+                })
+            {
+                if (IsGeneric(type, name, out var listInterface))
+                {
+                    CollectSubjectCandidates(listInterface!.TypeArguments[0], into);
+                    return;
+                }
+            }
+
+            if (type is INamedTypeSymbol named
+                && (named.TypeKind == TypeKind.Class || named.TypeKind == TypeKind.Struct))
+            {
+                //аннотация nullability снимается: она приехала от объявления
+                //члена (`Address? ShipTo`), а суффиксы методов строятся по
+                //ToDisplayString(), и `?` в имени метода - это не имя метода
+                into.Add((INamedTypeSymbol)named.WithNullableAnnotation(NullableAnnotation.None));
+            }
+        }
+
         private static bool IsList(ITypeSymbol type, out ITypeSymbol? element)
         {
             element = null;
