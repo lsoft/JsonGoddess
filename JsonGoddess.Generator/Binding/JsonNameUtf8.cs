@@ -65,5 +65,38 @@ namespace JsonGoddess.Generator.Binding
         /// имени. До семи байт - да, и тогда <c>SequenceEqual</c> не нужен вовсе.
         /// </summary>
         public static bool IsKeyExact(byte[] utf8) => utf8.Length <= 7;
+
+        /// <summary>
+        /// Накрывается ли имя двумя перекрывающимися восьмибайтовыми словами -
+        /// байтами <c>0..7</c> и <c>L-8..L-1</c>. Их объединение полно, когда
+        /// <c>L-8 &lt;= 8</c>, то есть до шестнадцати байт включительно; с
+        /// семнадцати между словами появляется дыра, и сравнение перестаёт
+        /// доказывать имя.
+        ///
+        /// Нижняя граница - восемь: короче слова просто не прочитать, спан
+        /// имени кончится раньше.
+        /// </summary>
+        public static bool FitsInTwoWords(byte[] utf8) => utf8.Length >= 8 && utf8.Length <= 16;
+
+        /// <summary>
+        /// Восемь байт имени начиная со смещения как little-endian число - то
+        /// же самое, что в рантайме прочитает
+        /// <c>JsonGoddess.Internal.JsonNameKey.Word</c>.
+        ///
+        /// Порядок байтов задан арифметикой по той же причине, что и в
+        /// <see cref="ComputeKey"/>: константу печатает сборочная машина, а
+        /// сравнивает целевая.
+        /// </summary>
+        public static ulong Word(byte[] utf8, int offset)
+        {
+            ulong word = 0;
+
+            for (var i = 0; i < 8; i++)
+            {
+                word |= (ulong)utf8[offset + i] << (i * 8);
+            }
+
+            return word;
+        }
     }
 }

@@ -90,6 +90,61 @@ namespace Second
             Assert.DoesNotContain("JsonNameKey.Compute", text, StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Граница словесной формы (§12.6.1 плана). Выигрыш её в том, что
+        /// байты имени грузятся один раз на корзину, а не на каждое звено, -
+        /// значит при <b>одном</b> члене выносить нечего, и там остаётся
+        /// <c>SequenceEqual</c>. Замер это и показал: на типе, где все корзины
+        /// одноместные, форма не даёт ничего (§12.6).
+        /// </summary>
+        [Fact]
+        public void A_bucket_of_one_keeps_the_call_because_there_is_nothing_to_hoist()
+        {
+            var text = GeneratorHarness.Run(Sources.DistinctLengths).SingleGeneratedFile;
+
+            Assert.DoesNotContain("JsonNameKey.Word", text, StringComparison.Ordinal);
+            Assert.Contains("SequenceEqual(name, \"Customer\"u8)", text, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Обе стороны границы по длине сразу, на одном типе: короче восьми
+        /// байт слова не прочитать, длиннее шестнадцати - между словами
+        /// остаётся дыра, и сравнение перестало бы доказывать имя. Между ними
+        /// печатается словесная форма, а при длине ровно в восемь - без хвоста,
+        /// потому что первое слово накрывает имя целиком.
+        /// </summary>
+        [Fact]
+        public void Words_are_printed_only_where_two_of_them_cover_the_name()
+        {
+            var run = GeneratorHarness.Run(Sources.TwoPerBucket);
+            var text = run.SingleGeneratedFile;
+
+            Assert.Empty(run.CompilationErrors);
+
+            //пять байт - слова не прочитать
+            Assert.Contains("SequenceEqual(name, \"Total\"u8)", text, StringComparison.Ordinal);
+
+            //семнадцать - дыра между словами
+            Assert.Contains("SequenceEqual(name, \"ShippingContainer\"u8)", text, StringComparison.Ordinal);
+
+            //словесных корзин три - 8, 12 и 16 байт, значит три головы; а
+            //хвоста два, потому что при восьми байтах голова накрывает имя
+            //целиком и хвост не печатается вовсе
+            Assert.Equal(3, Occurrences(text, "var head = "));
+            Assert.Equal(2, Occurrences(text, "var tail = "));
+            Assert.Contains("//Quantity", text, StringComparison.Ordinal);
+
+            //двенадцать - перекрытие в четыре байта, шестнадцать - стык без
+            //перекрытия
+            Assert.Contains("JsonNameKey.Word(name, 4)", text, StringComparison.Ordinal);
+            Assert.Contains("JsonNameKey.Word(name, 8)", text, StringComparison.Ordinal);
+
+            //ни одного SequenceEqual на именах, попавших в словесную форму
+            Assert.DoesNotContain("SequenceEqual(name, \"Quantity\"u8)", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("SequenceEqual(name, \"DeliveryDate\"u8)", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("SequenceEqual(name, \"DeliveryTimeslot\"u8)", text, StringComparison.Ordinal);
+        }
+
         [Fact]
         public void One_crowded_bucket_gets_a_switch_by_key()
         {
@@ -107,6 +162,10 @@ namespace Second
         /// Ключ имени длиннее семи байт - только префильтр, и два таких имени
         /// могут дать одну константу. Эмиттер обязан собрать их в одну ветку:
         /// два case с одним значением компилятор не примет.
+        ///
+        /// Разделяются они внутри ветки сравнением по словам, а не
+        /// <c>SequenceEqual</c>: столкнувшиеся ключи - это ровно та длинная
+        /// цепочка, ради которой словесная форма и заведена (§12.6.1 плана).
         /// </summary>
         [Fact]
         public void Colliding_keys_share_one_case_and_are_separated_by_comparison()
@@ -120,8 +179,18 @@ namespace Second
             var cases = text.Split('\n').Count(l => l.TrimStart().StartsWith("case 0x", StringComparison.Ordinal));
             Assert.Equal(1, cases);
 
-            Assert.Contains("SequenceEqual(name, \"ReferenceA\"u8)", text, StringComparison.Ordinal);
-            Assert.Contains("SequenceEqual(name, \"ReferenceD\"u8)", text, StringComparison.Ordinal);
+            //имена по десять байт: слово выносится из цепочки, хвост берётся
+            //со смещения два, и каждый член получает своё условие
+            Assert.Contains("JsonNameKey.Word(name, 0)", text, StringComparison.Ordinal);
+            Assert.Contains("JsonNameKey.Word(name, 2)", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("SequenceEqual", text, StringComparison.Ordinal);
+
+            var branches = text.Split('\n').Count(l => l.TrimStart().StartsWith("if (head ==", StringComparison.Ordinal));
+            Assert.Equal(24, branches);
+
+            //константа глазами не читается, поэтому имя обязано стоять рядом
+            Assert.Contains("//ReferenceA", text, StringComparison.Ordinal);
+            Assert.Contains("//ReferenceX", text, StringComparison.Ordinal);
         }
 
         /// <summary>

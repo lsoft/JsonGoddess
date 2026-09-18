@@ -932,5 +932,59 @@ namespace JsonGoddess.Tests.Generated
             WideSerializer.Serialize(exhauster, value);
             return Encoding.UTF8.GetString(exhauster.ToArray());
         }
+
+        /// <summary>
+        /// Словесная форма диспетчера (§12.6.1 плана) читает имя как одно-два
+        /// числа. Здесь проверяется, что она читает документ так же, как
+        /// эталон, - на всех пяти длинах, вокруг которых проходят её границы.
+        /// </summary>
+        [Fact]
+        public void Word_edges_are_read_the_way_system_text_json_reads_them()
+        {
+            var utf8 = Encoding.UTF8.GetBytes(Reference.Write(WordEdges.CreateSample()));
+
+            var theirs = JsonSerializer.Deserialize<WordEdges>(utf8, Reference.Relaxed);
+            WordEdgesSerializer.Deserialize(DefaultInjector.Instance, utf8, out var ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+        }
+
+        /// <summary>
+        /// <b>Отрицательная проверка словесной формы.</b> Она сравнивает не
+        /// литерал, а числовые константы, которые напечатал генератор; ошибка в
+        /// константе не падает, а тихо промахивается - свойство уходит в
+        /// пропуск, и документ читается с дырой. Round-trip такого не заметит:
+        /// он подаёт правильные имена, на которых промах и совпадение выглядят
+        /// одинаково с точностью до того самого бага.
+        ///
+        /// Поэтому здесь имя каждого члена испорчено <b>ровно в один байт</b>,
+        /// причём в разных местах - в начале, в середине и в конце, - чтобы
+        /// промах не мог спрятаться ни в голове, ни в хвосте, ни в их
+        /// перекрытии. Длина при этом сохранена: иначе отсеет внешний
+        /// <c>switch</c>, и проверено будет не то.
+        ///
+        /// Эталон на таком документе не заполняет ничего, и мы обязаны вести
+        /// себя так же.
+        /// </summary>
+        [Fact]
+        public void Word_edges_refuse_foreign_names_of_the_same_length()
+        {
+            var alien = Encoding.UTF8.GetBytes(
+                "{\"Xotal\":1,\"LineX\":2,\"Xuantity\":3,\"CurrXncy\":4,"
+                + "\"XeliveryDate\":5,\"InvoicedDatX\":6,\"DeliveryXimeslot\":7,"
+                + "\"CustomerCategorX\":8,\"XhippingContainer\":9,\"PreferredLanguagX\":10}"
+                );
+
+            var theirs = JsonSerializer.Deserialize<WordEdges>(alien, Reference.Relaxed);
+            WordEdgesSerializer.Deserialize(DefaultInjector.Instance, alien, out var ours);
+
+            Assert.Equal(Reference.Write(theirs), Reference.Write(ours));
+
+            //и прямо, не через эталон: ни одно поле не должно быть заполнено
+            Assert.NotNull(ours);
+            Assert.Equal(0, ours!.Total + ours.Lines + ours.Quantity + ours.Currency
+                + ours.DeliveryDate + ours.InvoicedDate + ours.DeliveryTimeslot
+                + ours.CustomerCategory + ours.ShippingContainer + ours.PreferredLanguage);
+        }
     }
 }

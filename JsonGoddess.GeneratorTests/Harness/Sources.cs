@@ -35,6 +35,46 @@ namespace Demo
 ";
 
         /// <summary>
+        /// Четыре корзины по два члена - по одной на каждую сторону границы
+        /// словесной формы (§12.6.1 плана):
+        /// <list type="bullet">
+        /// <item>пять байт - короче восьми, слова не прочитать;</item>
+        /// <item>восемь байт - одно слово накрывает имя целиком, второго не
+        /// печатается;</item>
+        /// <item>двенадцать байт - два слова с перекрытием в четыре байта;</item>
+        /// <item>шестнадцать байт - слова стыкуются без перекрытия, это
+        /// последняя длина, на которой форма ещё полна;</item>
+        /// <item>семнадцать байт - между словами дыра, словесная форма
+        /// перестаёт доказывать имя.</item>
+        /// </list>
+        /// </summary>
+        public const string TwoPerBucket = @"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Edges
+    {
+        public int Total { get; set; }
+        public int Lines { get; set; }
+        public int Quantity { get; set; }
+        public int Currency { get; set; }
+        public int DeliveryDate { get; set; }
+        public int InvoicedDate { get; set; }
+        public int DeliveryTimeslot { get; set; }
+        public int CustomerCategory { get; set; }
+        public int ShippingContainer { get; set; }
+        public int PreferredLanguage { get; set; }
+    }
+
+    [JsonSubject(typeof(Edges), true)]
+    public partial class EdgesSerializer
+    {
+    }
+}
+";
+
+        /// <summary>
         /// Двадцать четыре имени длиной ровно семь байт. Корзина одна, она
         /// ровно на пороге (<c>NameDispatcher.KeySwitchThreshold</c>), и длина
         /// не отсекает ни одного кандидата - случай, в котором замер отдал

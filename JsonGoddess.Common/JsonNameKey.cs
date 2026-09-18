@@ -47,6 +47,33 @@ namespace JsonGoddess.Internal
         /// </summary>
         public const int MaxExactLength = 7;
 
+        /// <summary>
+        /// Восемь байт имени начиная со смещения, как одно little-endian
+        /// число. Генератор печатает это вместо <c>SequenceEqual</c> там, где
+        /// в корзине больше одного члена: два перекрывающихся слова накрывают
+        /// имя целиком при длине от восьми до шестнадцати, а загрузка выносится
+        /// из цепочки - один раз на всю корзину вместо одного раза на звено.
+        ///
+        /// <b>Зачем метод, а не <c>BinaryPrimitives</c> прямо в порождённом
+        /// коде.</b> Порождённый код компилируется в сборке потребителя, и
+        /// <c>System.Buffers.Binary</c> там есть не всегда - на net472 он
+        /// приезжает пакетом System.Memory, и полагаться на то, что ссылка на
+        /// него дотянулась транзитивно, нельзя. Здесь же он заведомо есть: эта
+        /// сборка от него и так зависит.
+        ///
+        /// Встраивание обязательно и проверено по машинному коду (§12.6.1
+        /// плана): без него вызов съел бы ровно то, ради чего всё затевалось.
+        ///
+        /// Проверки границ нет, и это не небрежность: вызов печатается только
+        /// внутри <c>case</c> по длине имени, то есть длина уже доказана, а
+        /// смещение - константа, выбранная генератором под эту длину.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Word(scoped ReadOnlySpan<byte> name, int offset)
+        {
+            return BinaryPrimitives.ReadUInt64LittleEndian(name.Slice(offset));
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ulong Compute(scoped ReadOnlySpan<byte> name)
         {

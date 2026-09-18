@@ -152,10 +152,15 @@ namespace JsonGoddess.Generator.Emit
                 var items = bucket.ToList();
                 var useKey = !caseInsensitive && items.Count >= KeySwitchThreshold;
 
-                builder.Line(
-                    "case " + bucket.Key + ": //членов: " + items.Count + ", "
-                    + (useKey ? "switch по ключу" : caseInsensitive ? "цепочка сравнений без учёта регистра" : "цепочка сравнений")
-                    );
+                var form = useKey
+                    ? "switch по ключу"
+                    : caseInsensitive
+                        ? "цепочка сравнений без учёта регистра"
+                        : UseWords(items, false)
+                            ? "цепочка сравнений по словам"
+                            : "цепочка сравнений";
+
+                builder.Line("case " + bucket.Key + ": //членов: " + items.Count + ", " + form);
                 builder.OpenBlock();
 
                 if (useKey)
@@ -175,6 +180,42 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
         }
 
+        /// <summary>
+        /// Стоит ли печатать цепочку словами вместо <c>SequenceEqual</c>.
+        ///
+        /// <b>Граница взята по машинному коду, а не по секундомеру</b>
+        /// (§12.6.1 плана). JIT встраивает <c>SequenceEqual</c> против
+        /// <c>u8</c>-литерала всегда - и при восьми кандидатах, и при тридцати,
+        /// - но разворачивает его дословно на каждом звене: двенадцать
+        /// инструкций и четыре обращения к памяти, потому что байты имени
+        /// перезагружаются заново, литерал читается по адресу, а условие
+        /// материализуется через <c>sete</c>/<c>movzx</c>/<c>test</c>. Явная
+        /// форма - шесть инструкций и ни одного обращения: загрузка вынесена
+        /// из цепочки, константа стала непосредственным операндом, ветвление
+        /// идёт по флагам.
+        ///
+        /// Экономия линейна по числу пройденных звеньев, а их в среднем
+        /// <c>(N+1)/2</c>. При <b>одном</b> члене выносить нечего - цепочки
+        /// нет, - и остаются шесть инструкций на свойство, которые замер не
+        /// различает (LINK, §12.6). При тридцати это ~93 инструкции на
+        /// свойство, то есть измеренные 45% (PREFIX, §12.3). Поэтому граница
+        /// проходит между одним членом и двумя, а не там, где выигрыш вылезает
+        /// из полосы неразличимости стенда: полоса - свойство измерителя, а не
+        /// кода, и подгонять под неё границы значило бы закреплять его
+        /// несовершенство.
+        ///
+        /// Осознанный пробел: имена короче восьми байт остаются на
+        /// <c>SequenceEqual</c>. Слово из них не прочитать, а собирать
+        /// сравнение из <c>uint32</c> с хвостом - отдельная работа с отдельной
+        /// проверкой, и выигрыш там заведомо меньше (звено и так короче).
+        /// </summary>
+        private static bool UseWords(IReadOnlyList<MemberModel> members, bool caseInsensitive)
+        {
+            return !caseInsensitive
+                && members.Count >= 2
+                && JsonNameUtf8.FitsInTwoWords(members[0].JsonNameUtf8);
+        }
+
         private static void EmitByChain(
             SourceBuilder builder,
             IReadOnlyList<MemberModel> members,
@@ -182,6 +223,12 @@ namespace JsonGoddess.Generator.Emit
             bool caseInsensitive
             )
         {
+            if (UseWords(members, caseInsensitive))
+            {
+                EmitByWords(builder, members, emitBody);
+                return;
+            }
+
             foreach (var member in members)
             {
                 var comparison = caseInsensitive
@@ -189,6 +236,53 @@ namespace JsonGoddess.Generator.Emit
                     : Mem + ".SequenceEqual(name, " + SourceBuilder.Utf8Literal(member.JsonName) + ")";
 
                 builder.OpenBlock("if (" + comparison + ")");
+                emitBody(member);
+                builder.Line("goto next;");
+                builder.CloseBlock();
+                builder.Line();
+            }
+        }
+
+        /// <summary>
+        /// Цепочка, звено которой - одно или два сравнения <c>ulong</c>.
+        ///
+        /// Длина уже доказана внешним <c>switch</c>'ем, поэтому в условии её
+        /// нет; при длине ровно в восемь байт первое слово накрывает имя
+        /// целиком, и второго не печатается вовсе.
+        ///
+        /// Имя члена уходит в комментарий рядом с каждой веткой, и это не
+        /// вежливость: константа <c>0x72656D6F74737543UL</c> не читается
+        /// глазами, а порождённый код у нас читают.
+        /// </summary>
+        private static void EmitByWords(
+            SourceBuilder builder,
+            IReadOnlyList<MemberModel> members,
+            Action<MemberModel> emitBody
+            )
+        {
+            var length = members[0].JsonNameUtf8.Length;
+            var tailOffset = length - 8;
+
+            builder.Line("var head = " + NameKey + ".Word(name, 0);");
+
+            if (tailOffset > 0)
+            {
+                builder.Line("var tail = " + NameKey + ".Word(name, " + tailOffset + ");");
+            }
+
+            builder.Line();
+
+            foreach (var member in members)
+            {
+                var condition = "head == 0x" + JsonNameUtf8.Word(member.JsonNameUtf8, 0).ToString("X16") + "UL";
+
+                if (tailOffset > 0)
+                {
+                    condition += " && tail == 0x"
+                        + JsonNameUtf8.Word(member.JsonNameUtf8, tailOffset).ToString("X16") + "UL";
+                }
+
+                builder.OpenBlock("if (" + condition + ") //" + member.JsonName);
                 emitBody(member);
                 builder.Line("goto next;");
                 builder.CloseBlock();
@@ -227,6 +321,15 @@ namespace JsonGoddess.Generator.Emit
                 {
                     emitBody(items[0]);
                     builder.Line("goto next;");
+                }
+                else if (UseWords(items, false))
+                {
+                    //столкнувшиеся ключи - это и есть та длинная цепочка, ради
+                    //которой словесная форма заведена: ключ доказал длину и
+                    //байты 0..6, а разделять членов приходится сравнением, и
+                    //таких сравнений здесь столько же, сколько членов
+                    EmitByWords(builder, items, emitBody);
+                    builder.Line("break;");
                 }
                 else
                 {

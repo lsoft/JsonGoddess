@@ -998,4 +998,55 @@ namespace JsonGoddess.Tests.Generated
     public partial class IfaceCollectionsSerializer
     {
     }
+
+    /// <summary>
+    /// Границы словесной формы диспетчера (§12.6.1 плана) в рантайме. Пять
+    /// корзин по два члена: пять байт (короче слова), восемь (слово накрывает
+    /// имя целиком), двенадцать (перекрытие в четыре байта), шестнадцать (стык
+    /// без перекрытия - последняя полная длина) и семнадцать (между словами
+    /// дыра, форма не печатается).
+    ///
+    /// Тип существует не ради round-trip'а, а ради <b>отрицательной</b>
+    /// проверки: словесная форма сравнивает числовые константы, и перепутанная
+    /// константа не падает - свойство молча уходит в пропуск, а документ
+    /// читается с дырой. Это худший исход по §1, и ловится он только
+    /// документом с чужими именами той же длины.
+    /// </summary>
+    public class WordEdges
+    {
+        public int Total { get; set; }
+        public int Lines { get; set; }
+        public int Quantity { get; set; }
+        public int Currency { get; set; }
+        public int DeliveryDate { get; set; }
+        public int InvoicedDate { get; set; }
+        public int DeliveryTimeslot { get; set; }
+        public int CustomerCategory { get; set; }
+        public int ShippingContainer { get; set; }
+        public int PreferredLanguage { get; set; }
+
+        public static WordEdges CreateSample()
+        {
+            return new WordEdges
+            {
+                Total = 1,
+                Lines = 2,
+                Quantity = 3,
+                Currency = 4,
+                DeliveryDate = 5,
+                InvoicedDate = 6,
+                DeliveryTimeslot = 7,
+                CustomerCategory = 8,
+                ShippingContainer = 9,
+                PreferredLanguage = 10,
+            };
+        }
+    }
+
+    [JsonExhauster(typeof(PooledUtf8Exhauster))]
+    [JsonInjector(typeof(DefaultInjector))]
+    [JsonSubject(typeof(WordEdges), true)]
+    public partial class WordEdgesSerializer
+    {
+    }
 }
