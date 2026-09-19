@@ -17,6 +17,19 @@ namespace JsonGoddess.StreamingPrototype.Generated
     /// </summary>
     [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
     [JsonFeature(JsonFeature.CaseInsensitiveNames)]
+    //Ровно тот набор, что мост ставит своему хосту (CompatBinder.CompatGuards):
+    //он подтянут к эталону, а не выбран по вкусу. Без него порождённый читатель
+    //брал бы число нестрогой лексикой и принимал '01', который эталон
+    //отвергает, - и замер сравнивал бы разные документы. Найдено подстановкой
+    //порождённого читателя в проверки прототипа (пункт 6б).
+    [JsonGuard(
+        JsonGuard.TrailingContent
+        | JsonGuard.ControlCharsInStrings
+        | JsonGuard.StrictNumbers
+        | JsonGuard.InvalidUtf8
+        | JsonGuard.MaxDepth,
+        MaxDepth = 64
+        )]
     [JsonSubject(typeof(Order), true)]
     [JsonSubject(typeof(OrderLine), false)]
     internal partial class OrderHost

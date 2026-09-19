@@ -31,6 +31,7 @@ namespace JsonGoddess.Generator.Binding
         public static GenerationResult Bind(
             Compilation compilation,
             ImmutableArray<HostReference> hosts,
+            StreamingSettings streaming,
             CancellationToken token
             )
         {
@@ -59,6 +60,11 @@ namespace JsonGoddess.Generator.Binding
             var known = new KnownSymbols(compilation);
             var files = new List<GeneratedFile>();
 
+            //факт сильнее умолчания, а явное свойство сильнее факта - см.
+            //StreamingSettings. Спрашивается это один раз на связывание, а не
+            //на хост: ответ у компиляции один
+            var wantsStreaming = streaming.Enabled ?? CompatBinder.ReferencesAspNetCore(compilation);
+
             foreach (var reference in hosts.OrderBy(h => h.MetadataName, System.StringComparer.Ordinal))
             {
                 token.ThrowIfCancellationRequested();
@@ -83,6 +89,19 @@ namespace JsonGoddess.Generator.Binding
                         ClassSourceProducer.Produce(model)
                         )
                     );
+
+                //Потоковый читатель - вторым файлом того же partial-класса, а не
+                //строчками в первом: он печатается не всегда, а файл, которого
+                //может не быть, лучше видно отдельным
+                if (wantsStreaming)
+                {
+                    var streamingText = TryReaderProducer.Produce(model);
+
+                    if (streamingText is not null)
+                    {
+                        files.Add(new GeneratedFile(model.FullName + ".Streaming.g.cs", streamingText));
+                    }
+                }
             }
 
             return new GenerationResult(files, diagnostics);

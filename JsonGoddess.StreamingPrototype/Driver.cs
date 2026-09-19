@@ -254,7 +254,13 @@ namespace JsonGoddess.StreamingPrototype
 
                         try
                         {
-                            read = OrderReader.Order(span, ref position, ref context, final, out order);
+                            //ПОРОЖДЁННЫЙ читатель, а не ручной: с пунктом 6б
+                            //эмиттер печатает Try-форму сам, и все проверки
+                            //драйвера - 1120 смещений обрыва, нарезка по байту,
+                            //запрос в ASP.NET - стали проверками печати
+                            read = Generated.OrderHost.TryRead_JsonGoddess_PerformanceTests_Model_Order(
+                                DefaultInjector.Instance, span, ref position, ref context, final, out order
+                                );
                         }
                         catch (JsonDocumentException failure)
                         {

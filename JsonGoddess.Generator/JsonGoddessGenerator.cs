@@ -50,9 +50,15 @@ namespace JsonGoddess.Generator
                     })
                 .Collect();
 
+            //потоковый читатель печатается не всегда, и решает это свойство
+            //сборки плюс факт ссылки на ASP.NET Core - см. StreamingSettings
+            var streaming = context.AnalyzerConfigOptionsProvider
+                .Select(static (provider, _) => StreamingSettings.Read(provider.GlobalOptions));
+
             var results = hosts
                 .Combine(context.CompilationProvider)
-                .Select(static (pair, token) => HostBinder.Bind(pair.Right, pair.Left, token));
+                .Combine(streaming)
+                .Select(static (pair, token) => HostBinder.Bind(pair.Left.Right, pair.Left.Left, pair.Right, token));
 
             context.RegisterSourceOutput(results, static (productionContext, result) => Emit(productionContext, result));
 

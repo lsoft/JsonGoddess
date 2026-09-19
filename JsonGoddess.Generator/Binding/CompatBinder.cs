@@ -677,7 +677,10 @@ namespace JsonGoddess.Generator.Binding
         /// одну из них.
         /// </para>
         /// </summary>
-        private static bool ReferencesAspNetCore(Compilation compilation)
+        //internal: тот же вопрос задаёт и HostBinder, решая, печатать ли
+        //потоковый читатель. Проба должна быть одна - разойдясь, эти двое
+        //включали бы веб-профиль и потоковый путь в разных сборках
+        internal static bool ReferencesAspNetCore(Compilation compilation)
         {
             return compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Http.Json.JsonOptions") is not null
                 || compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Mvc.JsonOptions") is not null;

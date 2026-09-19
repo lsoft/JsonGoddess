@@ -1090,15 +1090,20 @@ namespace JsonGoddess.Generator.Emit
             }
         }
 
-        private static string DupSeen(MemberModel member) => "dup_" + member.MemberName;
+        //internal, а не private, у помощников ниже: их печатает и потоковый
+        //читатель (TryReaderProducer). Скопировать их туда значило бы завести
+        //вторую правду о том, как называется локальная и какой бит у какого
+        //обязательного члена, - а расходиться этим двоим нельзя: они читают
+        //один и тот же документ в один и тот же тип.
+        internal static string DupSeen(MemberModel member) => "dup_" + member.MemberName;
 
         /// <summary>
         /// Маска присутствия обязательных членов. Имя без префикса члена:
         /// она одна на читатель, а не по одной на член.
         /// </summary>
-        private const string RequiredSeen = "required";
+        internal const string RequiredSeen = "required";
 
-        private static ulong RequiredBit(IReadOnlyList<MemberModel> required, MemberModel member)
+        internal static ulong RequiredBit(IReadOnlyList<MemberModel> required, MemberModel member)
         {
             for (var i = 0; i < required.Count; i++)
             {
@@ -1144,7 +1149,7 @@ namespace JsonGoddess.Generator.Emit
         /// списке стои́т <c>'amt'</c>, когда член назван
         /// <c>[JsonPropertyName("amt")] Amount</c>.
         /// </summary>
-        private static void EmitRequiredCheck(
+        internal static void EmitRequiredCheck(
             SourceBuilder builder,
             SubjectModel subject,
             IReadOnlyList<MemberModel> required
@@ -1219,7 +1224,7 @@ namespace JsonGoddess.Generator.Emit
         /// осталось умолчание, ровно как у эталона (проверено прогоном:
         /// <c>beta = 42</c> на документе без <c>beta</c> даёт 42).
         /// </summary>
-        private static void EmitDeferredLocals(
+        internal static void EmitDeferredLocals(
             SourceBuilder builder,
             SubjectModel subject,
             IReadOnlyList<MemberModel> members
@@ -1249,7 +1254,7 @@ namespace JsonGoddess.Generator.Emit
         /// нужно и не может быть - имя обязательного члена в документе было,
         /// иначе досюда бы не дошли.
         /// </summary>
-        private static string Construct(SubjectModel subject, IReadOnlyList<MemberModel> members)
+        internal static string Construct(SubjectModel subject, IReadOnlyList<MemberModel> members)
         {
             var arguments = subject.Parameters
                 .Select(p => Argument(members.First(m => m.MemberName == p.MemberName)));
@@ -1272,7 +1277,7 @@ namespace JsonGoddess.Generator.Emit
                 + ", }";
         }
 
-        private static string Target(MemberModel member, bool deferred)
+        internal static string Target(MemberModel member, bool deferred)
         {
             if (!deferred)
             {
@@ -1287,9 +1292,9 @@ namespace JsonGoddess.Generator.Emit
         //значения, - и совпасть с любым из них член вправе
         private static string Argument(MemberModel member) => "arg_" + member.MemberName;
 
-        private static string Assigned(MemberModel member) => "set_" + member.MemberName;
+        internal static string Assigned(MemberModel member) => "set_" + member.MemberName;
 
-        private static string Seen(MemberModel member) => "has_" + member.MemberName;
+        internal static string Seen(MemberModel member) => "has_" + member.MemberName;
 
         /// <summary>
         /// Читатель коллекции. Отличие от объекта не только в скобках: у
