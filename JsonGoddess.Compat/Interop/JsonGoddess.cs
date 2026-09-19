@@ -21,10 +21,33 @@ namespace JsonGoddess.Compat.Interop
     /// </para>
     ///
     /// <code>
+    /// // контроллеры MVC - читают тело запроса и пишут ответ
     /// builder.Services
     ///     .AddControllers()
     ///     .AddJsonOptions(o => o.JsonSerializerOptions.UseJsonGoddess());
+    ///
+    /// // minimal API и Results.Json - раковина у них СВОЯ, и одной строкой
+    /// // выше она не покрывается
+    /// builder.Services
+    ///     .ConfigureHttpJsonOptions(o => o.SerializerOptions.UseJsonGoddess());
     /// </code>
+    ///
+    /// <para>
+    /// Двумя строками, а не одной, потому что раковин опций в ASP.NET Core
+    /// две, и они не связаны: <c>Microsoft.AspNetCore.Mvc.JsonOptions</c> и
+    /// <c>Microsoft.AspNetCore.Http.Json.JsonOptions</c>. Свести их в одну
+    /// строку можно было бы третьим пакетом со ссылкой на ASP.NET Core, и
+    /// цена этого - пакет, привязанный к его версиям и таргетам, ради
+    /// экономии одной строки. Размен невыгодный.
+    /// </para>
+    ///
+    /// <para>
+    /// Настраивать больше ничего не нужно: веб-вариант порождённого кода
+    /// печатается сам, по факту ссылки проекта на ASP.NET Core. Энкодер, в том
+    /// числе подменённый фреймворком на <c>UnsafeRelaxedJsonEscaping</c>, тоже
+    /// не требует настройки - порождённый писатель зовёт тот, который лежит в
+    /// этих самых опциях.
+    /// </para>
     ///
     /// <para>
     /// Явным вызовом, а не само: опции строит потребитель, и вклиниться в

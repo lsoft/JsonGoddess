@@ -1,4 +1,5 @@
 using System;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -54,6 +55,13 @@ namespace JsonGoddess.Compat.Interop
         [ThreadStatic]
         private static CompatUtf8Exhauster? _exhauster;
 
+        /// <summary>
+        /// Раковина веб-профиля - отдельная, потому что и тип другой, и набор
+        /// экранируемого у неё приходит снаружи.
+        /// </summary>
+        [ThreadStatic]
+        private static EncoderUtf8Exhauster? _webExhauster;
+
         public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
             var read = _profile == BridgeProfile.Web ? BridgeBinding<T>.WebRead : BridgeBinding<T>.Read;
@@ -63,16 +71,34 @@ namespace JsonGoddess.Compat.Interop
 
         public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options)
         {
+            //skipInputValidation ниже: проверять нечего. Байты написал
+            //порождённый код, а не чужой ввод, и второй проход по ним был бы
+            //платой за недоверие к самим себе.
+
+            if (_profile == BridgeProfile.Web)
+            {
+                //Энкодер берётся из ОПЦИЙ, а не зашит: ASP.NET Core пишет ответ
+                //UnsafeRelaxedJsonEscaping, minimal API - тоже, а тело запроса
+                //читается настроенной раковиной, у которой энкодер обычно
+                //пуст. Одна раковина обслуживает всех, потому что
+                //экранирование делает не она, а тот самый энкодер.
+                //
+                //null означает у эталона JavaScriptEncoder.Default - это его
+                //собственная подстановка, а не наша догадка.
+                var web = _webExhauster ??= new EncoderUtf8Exhauster();
+                web.Reset(options.Encoder ?? JavaScriptEncoder.Default);
+
+                BridgeBinding<T>.WebWrite!(web, value);
+
+                writer.WriteRawValue(web.WrittenSpan, skipInputValidation: true);
+                return;
+            }
+
             var exhauster = _exhauster ??= new CompatUtf8Exhauster();
             exhauster.Reset();
 
-            var write = _profile == BridgeProfile.Web ? BridgeBinding<T>.WebWrite : BridgeBinding<T>.Write;
+            BridgeBinding<T>.Write!(exhauster, value);
 
-            write!(exhauster, value);
-
-            //skipInputValidation: проверять нечего. Байты написал порождённый
-            //код, а не чужой ввод, и второй проход по ним был бы платой за
-            //недоверие к самим себе.
             writer.WriteRawValue(exhauster.WrittenSpan, skipInputValidation: true);
         }
 

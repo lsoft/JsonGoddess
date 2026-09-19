@@ -384,6 +384,141 @@ namespace JsonGoddess.CompatTests
         }
 
         /// <summary>
+        /// Те опции, которые ASP.NET Core строит на самом деле, - и в этом всё
+        /// дело.
+        ///
+        /// <para>
+        /// MVC не отдаёт форматтеру раковину из <c>AddJsonOptions</c>, а
+        /// <b>копирует</b> её и ставит в копии
+        /// <c>UnsafeRelaxedJsonEscaping</c>; minimal API несёт такой же энкодер
+        /// прямо в объявлении своих опций. Пока раковина моста умела только
+        /// умолчательный набор, мост на записи ответа отступал <b>всегда</b> -
+        /// то есть не работал ровно там, ради чего строился (PLAN.md §12.9).
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_web_profile_writes_what_the_reference_writes_with_the_relaxed_encoder()
+        {
+            var plain = Relaxed();
+            var web = Relaxed().UseJsonGoddess();
+
+            var order = Order.CreateSample();
+
+            Assert.Equal(Reference.Serialize(order, plain), Reference.Serialize(order, web));
+        }
+
+        /// <summary>
+        /// Предыдущий тест не должен быть пустым: если релаксированный энкодер
+        /// ничего не меняет, он сравнивает совпадение с самим собой.
+        ///
+        /// <para>
+        /// Меняет: кириллица при нём едет в документ как есть, а при
+        /// умолчательном - <c>П</c>. Утверждение снимается с эталона, а
+        /// не объявляется.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_relaxed_encoder_really_changes_the_document()
+        {
+            var order = Order.CreateSample();
+
+            var strict = Reference.Serialize(order, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var relaxed = Reference.Serialize(order, Relaxed());
+
+            Assert.NotEqual(strict, relaxed);
+            Assert.Contains("\\u041F", strict, StringComparison.Ordinal);
+            Assert.Contains("Псков", relaxed, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ключи словаря пишутся в рантайме, а не константой, и потому обязаны
+        /// проходить через тот же энкодер.
+        ///
+        /// <para>
+        /// Дыра была бы незаметной: у имён членов есть проверка на компиляции,
+        /// а ключ словаря её не проходит по построению - его содержимое
+        /// известно только в рантайме.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void A_dictionary_key_goes_through_the_encoder_too()
+        {
+            var order = Order.CreateSample();
+            order.Counters = new Dictionary<string, int>
+            {
+                { "Псков", 1 },
+                { "a<b&c", 2 },
+                { "😀", 3 },
+            };
+
+            Assert.Equal(
+                Reference.Serialize(order, Relaxed()),
+                Reference.Serialize(order, Relaxed().UseJsonGoddess())
+                );
+
+            Assert.Equal(
+                Reference.Serialize(order, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                Reference.Serialize(order, new JsonSerializerOptions(JsonSerializerDefaults.Web).UseJsonGoddess())
+                );
+        }
+
+        /// <summary>
+        /// Любой энкодер, а не только два встроенных: раковина не повторяет
+        /// набор, а спрашивает его.
+        /// </summary>
+        [Fact]
+        public void Any_encoder_at_all_is_served_because_the_sink_asks_it_rather_than_copies_it()
+        {
+            var narrow = System.Text.Encodings.Web.JavaScriptEncoder.Create(
+                System.Text.Unicode.UnicodeRanges.BasicLatin
+                );
+
+            var plain = new JsonSerializerOptions(JsonSerializerDefaults.Web) { Encoder = narrow, };
+            var web = new JsonSerializerOptions(JsonSerializerDefaults.Web) { Encoder = narrow, }.UseJsonGoddess();
+
+            var order = Order.CreateSample();
+
+            Assert.Equal(Reference.Serialize(order, plain), Reference.Serialize(order, web));
+            Assert.Contains("web profile", JsonGoddess.Compat.Interop.JsonGoddess.Explain(typeof(Order), web), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Одни и те же опции, прочитанные двумя энкодерами подряд: раковина
+        /// живёт на потоке, и запомни она первый - второй документ вышел бы
+        /// неверным.
+        /// </summary>
+        [Fact]
+        public void Two_encoders_in_a_row_on_one_thread_do_not_bleed_into_each_other()
+        {
+            var order = Order.CreateSample();
+
+            var strictWeb = new JsonSerializerOptions(JsonSerializerDefaults.Web).UseJsonGoddess();
+            var relaxedWeb = Relaxed().UseJsonGoddess();
+
+            for (var round = 0; round < 3; round++)
+            {
+                Assert.Equal(
+                    Reference.Serialize(order, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                    Reference.Serialize(order, strictWeb)
+                    );
+
+                Assert.Equal(
+                    Reference.Serialize(order, Relaxed()),
+                    Reference.Serialize(order, relaxedWeb)
+                    );
+            }
+        }
+
+        private static JsonSerializerOptions Relaxed()
+        {
+            //ровно то, что строит ASP.NET Core на записи ответа
+            return new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            };
+        }
+
+        /// <summary>
         /// Регистр имени в веб-профиле не значит ничего, и число можно
         /// прислать строкой. Обе поблажки - часть
         /// <c>JsonSerializerDefaults.Web</c>, и обе обязаны работать одинаково

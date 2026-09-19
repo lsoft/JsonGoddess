@@ -93,3 +93,21 @@ jobs:
       # узнать об этом надо до, а не после получаса BenchmarkDotNet.
       - name: Benchmark participants agree
         run: dotnet run -c Release -f net10.0 --project JsonGoddess.PerformanceTests --no-build -- --verify
+
+      # То же самое для лестницы, и здесь у проверки есть вторая работа.
+      # Документы на всех ступенях она сверяет так же, но главное - она
+      # поднимает настоящий ASP.NET Core и требует, чтобы мост взялся за Order
+      # на ВСЕХ ЧЕТЫРЁХ раковинах опций, которые строит фреймворк: настроенной,
+      # той, которой пишется ответ (там подменённый энкодер), той, которой
+      # читается тело, и раковине minimal API. Плюс POST через весь конвейер:
+      # совпал ли разбор, проверяется ответом контроллера, а не осмотром опций.
+      #
+      # Разъедься однажды JsonSerializerDefaults.Web с нашим веб-профилем -
+      # мост молча отступит, всё останется зелёным и правильным, и только
+      # медленным. Молчаливого исхода здесь быть не должно.
+      #
+      # Свойства JsonGoddessCompatWeb проект не ставит: веб-профиль обязан
+      # включаться сам, по факту ссылки на ASP.NET Core, и этот шаг проверяет
+      # заодно и это.
+      - name: The staircase agrees, and the bridge still reaches ASP.NET
+        run: dotnet run -c Release --project JsonGoddess.WebPerformanceTests --no-build -- --verify

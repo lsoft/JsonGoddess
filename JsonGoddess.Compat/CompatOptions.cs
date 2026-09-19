@@ -233,6 +233,36 @@ namespace JsonGoddess.Compat
         /// не мы. Это ровно то же основание, по которому в мосте нет ни одного
         /// нашего стража.
         /// </para>
+        ///
+        /// <para>
+        /// <c>Encoder</c> не спрашивается <b>вовсе</b>, и это не послабление
+        /// тоже. Раковина веб-профиля - <c>EncoderUtf8Exhauster</c> - не несёт
+        /// своего набора экранируемого: она зовёт тот самый энкодер, который
+        /// лежит в этих опциях. Спрашивать «тот ли у вас энкодер» значило бы
+        /// спрашивать у себя же. Именно этот вопрос и делал мост бесполезным в
+        /// вебе: MVC отдаёт форматтеру <b>копию</b> опций с подменённым
+        /// <c>UnsafeRelaxedJsonEscaping</c>, и на записи ответа мост отступал
+        /// всегда (§12.9).
+        /// </para>
+        ///
+        /// <para>
+        /// <c>DefaultBufferSize</c> тоже не спрашивается, и по тому же
+        /// правилу, что <c>MaxDepth</c>: это подсказка о размере временных
+        /// буферов, и в документе её не видно ни одним байтом. Порождённый код
+        /// её не читает - он пишет в свою раковину и читает из чужого
+        /// читателя. Отказывать из-за неё значило бы отказывать тому, кто
+        /// всего лишь настроил размер буфера под свою нагрузку. Что документ
+        /// от неё не зависит - закреплено пробой, а не объявлено
+        /// (<c>CompatTests/BufferSizeFixture</c>).
+        /// </para>
+        ///
+        /// <para>
+        /// Имена свойств при этом остаются константами и через энкодер не
+        /// проходят - на них у профиля отдельное условие: генератор печатает
+        /// веб-вариант только для тех типов, чьи имена <b>одинаковы при любом
+        /// энкодере</b>, а про остальные говорит <c>JGD004</c>. Условие
+        /// проверяется на компиляции, потому что в рантайме менять уже нечего.
+        /// </para>
         /// </summary>
         public static bool IsWebApartFromTheResolver(JsonSerializerOptions? options)
         {
@@ -265,14 +295,15 @@ namespace JsonGoddess.Compat
 
         private static bool ComputeWeb(JsonSerializerOptions options)
         {
-            if (options.Converters.Count > 0 || !EncoderIsDefault(options))
+            if (options.Converters.Count > 0)
             {
                 return false;
             }
 
             foreach (var property in Compared)
             {
-                if (property.Name == nameof(JsonSerializerOptions.MaxDepth))
+                if (property.Name == nameof(JsonSerializerOptions.MaxDepth)
+                    || property.Name == nameof(JsonSerializerOptions.DefaultBufferSize))
                 {
                     continue;
                 }

@@ -11,6 +11,21 @@ namespace JsonGoddess.Compat.Interop
     public delegate void BridgeWriter<in T>(CompatUtf8Exhauster exhauster, T value);
 
     /// <summary>
+    /// То же для веб-профиля - и раковина другая.
+    ///
+    /// <para>
+    /// ASP.NET Core пишет ответ <c>UnsafeRelaxedJsonEscaping</c>, а не
+    /// умолчательным энкодером, и набор его задан таблицей Unicode, которую
+    /// повторить нечем. <see cref="EncoderUtf8Exhauster"/> её и не повторяет -
+    /// он зовёт тот самый энкодер, что лежит в опциях. Отдельный делегат, а не
+    /// общий с <see cref="BridgeWriter{T}"/>, потому что раковины запечатаны
+    /// обе: конкретный тип в сигнатуре - это девиртуализованный вызов в
+    /// порождённом коде, и терять его ради одного делегата незачем.
+    /// </para>
+    /// </summary>
+    public delegate void BridgeWebWriter<in T>(EncoderUtf8Exhauster exhauster, T value);
+
+    /// <summary>
     /// Чтение значения прямо из читателя эталона.
     ///
     /// <para>
@@ -47,7 +62,7 @@ namespace JsonGoddess.Compat.Interop
 
         public static BridgeReader<T>? Read;
 
-        public static BridgeWriter<T>? WebWrite;
+        public static BridgeWebWriter<T>? WebWrite;
 
         public static BridgeReader<T>? WebRead;
 
@@ -68,7 +83,7 @@ namespace JsonGoddess.Compat.Interop
             BridgeRegistry.Add<T>(BridgeProfile.Default);
         }
 
-        public static void RegisterForTheWeb(BridgeWriter<T> write, BridgeReader<T> read)
+        public static void RegisterForTheWeb(BridgeWebWriter<T> write, BridgeReader<T> read)
         {
             WebWrite = write ?? throw new ArgumentNullException(nameof(write));
             WebRead = read ?? throw new ArgumentNullException(nameof(read));

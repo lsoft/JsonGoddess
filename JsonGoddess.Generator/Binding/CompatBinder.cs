@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -54,6 +55,14 @@ namespace JsonGoddess.Generator.Binding
         /// §11.1, маршрут B).
         /// </summary>
         private const string Exhauster = "global::JsonGoddess.CompatUtf8Exhauster";
+
+        /// <summary>
+        /// Раковина веб-профиля. Отличается от умолчательной тем, что набор
+        /// экранируемого у неё приходит из опций, а не зашит: ASP.NET Core
+        /// пишет ответ <c>UnsafeRelaxedJsonEscaping</c>, и повторить его
+        /// таблицу нечем - в ней все незанятые кодовые точки Unicode.
+        /// </summary>
+        private const string WebExhauster = "global::JsonGoddess.Compat.EncoderUtf8Exhauster";
         private const string Injector = "global::JsonGoddess.DefaultInjector";
         private const string ModuleInitializerName = "System.Runtime.CompilerServices.ModuleInitializerAttribute";
 
@@ -252,7 +261,7 @@ namespace JsonGoddess.Generator.Binding
             //второй читатель на каждый тип, то есть примерно удвоение
             //порождаемого кода (§16.1), а консольному приложению он не нужен
             //ни разу.
-            if (settings.Web)
+            if (settings.Web ?? ReferencesAspNetCore(compilation))
             {
                 //Корни пробуются поодиночке - ровно по той же причине, что и
                 //под умолчаниями: веб-профиль отвергает больше (не-ASCII имя
@@ -270,7 +279,9 @@ namespace JsonGoddess.Generator.Binding
                     var closure = Closure(root, known);
                     var trial = new List<DiagnosticInfo>();
 
-                    if (BuildWebFor(closure, known, trial) is null)
+                    var built = BuildWebFor(closure, known, trial);
+
+                    if (built is null)
                     {
                         diagnostics.Add(
                             new DiagnosticInfo(
@@ -278,6 +289,20 @@ namespace JsonGoddess.Generator.Binding
                                 roots[root],
                                 settings.Raise(DiagnosticSeverity.Warning),
                                 Explain(trial)
+                                )
+                            );
+                        continue;
+                    }
+
+                    var offender = FirstNameThatDependsOnTheEncoder(built);
+                    if (offender is not null)
+                    {
+                        diagnostics.Add(
+                            new DiagnosticInfo(
+                                JsonGoddessDiagnostics.CompatWebProfileFailedId,
+                                roots[root],
+                                settings.Raise(DiagnosticSeverity.Warning),
+                                NameDependsOnTheEncoder(offender)
                                 )
                             );
                         continue;
@@ -437,11 +462,66 @@ namespace JsonGoddess.Generator.Binding
                 HostNamespace,
                 WebHostDeclaration,
                 HostNamespace + "." + WebHostTypeName,
-                new List<string> { Exhauster },
+                new List<string> { WebExhauster },
                 new List<string>(),
                 diagnostics,
                 false
                 );
+        }
+
+        /// <summary>
+        /// Все имена, которые веб-вариант напечатает <b>константами</b>,
+        /// одинаковы при любом энкодере - или первое, которое не таково.
+        ///
+        /// <para>
+        /// Условие возникло вместе с <c>EncoderUtf8Exhauster</c>. Строки
+        /// значений он экранирует чужим энкодером и потому верен при любом;
+        /// имена же печатаются на компиляции, одним набором, и энкодера в этот
+        /// момент нет. Совпадают они при любом энкодере ровно тогда, когда
+        /// экранировать в них нечего: <c>&amp;</c>, <c>'</c>, <c>+</c>,
+        /// <c>&lt;</c>, <c>&gt;</c>, <c>`</c> умолчательный энкодер
+        /// разворачивает, а релаксированный оставляет как есть, - и одна
+        /// константа обслужить оба уже не может.
+        /// </para>
+        ///
+        /// <para>
+        /// Проверка устроена как вопрос к самому экранированию, а не как свой
+        /// список символов: имя годится, если <c>ReferenceEscaping.Body</c>
+        /// его не изменил. Разойтись эти два правила не могут по построению -
+        /// правило здесь одно.
+        /// </para>
+        /// </summary>
+        private static string? FirstNameThatDependsOnTheEncoder(HostModel model)
+        {
+            foreach (var subject in model.Subjects)
+            {
+                foreach (var member in subject.Members)
+                {
+                    if (!member.CanWrite)
+                    {
+                        //член без getter'а в документ не печатается вовсе
+                        continue;
+                    }
+
+                    if (!ReferenceEscaping.Body(member.JsonName).Equals(member.JsonName, StringComparison.Ordinal))
+                    {
+                        return subject.FullName + "." + member.MemberName + " (\"" + member.JsonName + "\")";
+                    }
+                }
+            }
+
+            foreach (var enumeration in model.StringEnums)
+            {
+                foreach (var member in enumeration.Members)
+                {
+                    if (!ReferenceEscaping.Body(member.JsonName).Equals(member.JsonName, StringComparison.Ordinal))
+                    {
+                        return enumeration.FullName + "." + member.MemberName + " (\"" + member.JsonName + "\")";
+                    }
+                }
+            }
+
+            return null;
         }
 
         private static List<HostBinder.Registration> Closure(INamedTypeSymbol root, KnownSymbols known)
@@ -571,6 +651,45 @@ namespace JsonGoddess.Generator.Binding
         /// много, но человеку нужна та, с которой начать; остальные он увидит,
         /// когда почините первую.
         /// </summary>
+        /// <summary>
+        /// Сборка ссылается на ASP.NET Core - значит веб-профиль ей нужен, и
+        /// спрашивать об этом человека незачем.
+        ///
+        /// <para>
+        /// Раньше веб-вариант печатался только по явной просьбе, и это была
+        /// верная арифметика с неверной ценой ошибки: не поставив свойства,
+        /// человек получал работающее, правильное и <b>медленное</b>
+        /// приложение, а узнавал об этом, только если замечал, что не
+        /// ускорилось, и шёл читать <c>Declined</c>. Факт ссылки отвечает на
+        /// тот же вопрос точнее любого умолчания.
+        /// </para>
+        ///
+        /// <para>
+        /// Лишнего кода это не печатает даже проекту, который ASP.NET Core
+        /// только упоминает: веб-вариант печатается по тому же списку типов,
+        /// что и умолчательный, а список берётся из найденных вызовов фасада.
+        /// Нет вызовов - нет и типов, и удваивать нечего.
+        /// </para>
+        ///
+        /// <para>
+        /// Спрашивается про <b>две</b> раковины опций, а не про одну: MVC и
+        /// minimal API живут в разных сборках, и приложение вправе не знать
+        /// одну из них.
+        /// </para>
+        /// </summary>
+        private static bool ReferencesAspNetCore(Compilation compilation)
+        {
+            return compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Http.Json.JsonOptions") is not null
+                || compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Mvc.JsonOptions") is not null;
+        }
+
+        private static string NameDependsOnTheEncoder(string offender)
+        {
+            return "the JSON name of " + offender + " is written differently by different encoders"
+                + " (the default one escapes it, ASP.NET Core's relaxed one does not),"
+                + " and generated names are constants rather than encoded at run time";
+        }
+
         private static string Explain(List<DiagnosticInfo> refusals)
         {
             if (refusals.Count == 0)

@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+
+    <!--
+      Один таргет, и оба слова тут по делу.
+
+      net472 невозможен: ASP.NET Core на .NET Framework не живёт, и добавить
+      его сюда нельзя при всём желании.
+
+      Второй современный таргет не нужен: лестница меряет ОТНОШЕНИЕ трёх
+      слоёв внутри одного процесса, и прогон под вторым рантаймом дал бы
+      вторую таблицу той же формы за двойное время. Абсолютные числа
+      сериализации по таргетам сравнивает JsonGoddess.PerformanceTests -
+      там это к месту, а здесь вопрос другой.
+    -->
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!--
+      BenchmarkDotNet собирает и запускает свои проекты; в Debug измерять
+      нечего, поэтому сам прогон всегда идёт в Release.
+    -->
+    <Optimize Condition="'$(Configuration)' == 'Release'">true</Optimize>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+
+    <!--
+      JsonGoddessCompatWeb здесь НЕ ставится, и это утверждение, а не упущение.
+
+      Веб-профиль должен появляться сам - по факту ссылки на ASP.NET Core, а не
+      по свойству, которое человек обязан найти. Этот проект на ASP.NET Core
+      ссылается и свойства не ставит; если автоопределение сломается, проверка
+      (запуск с ключом verify) упадёт на том, что мост не обслужил опции MVC.
+      То есть обещание "веб-проекту ничего настраивать не нужно" проверяется
+      здесь прогоном.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <CompilerVisibleProperty Include="JsonGoddessCompat" />
+    <CompilerVisibleProperty Include="JsonGoddessCompatWeb" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+    <!--
+      TestServer, а не Kestrel на петле. Вопрос лестницы - какую долю запроса
+      занимает JSON, - и сокет в этой доле не участвует, зато шумит. Настоящее
+      развёртывание добавляет сеть ПОВЕРХ измеренного, то есть делает нашу
+      долю ещё меньше; об этом честнее сказать словами, чем растворить в
+      разбросе.
+    -->
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JsonGoddess.Common\JsonGoddess.Common.csproj" />
+    <ProjectReference Include="..\JsonGoddess.Components\JsonGoddess.Components.csproj" />
+    <ProjectReference Include="..\JsonGoddess.Compat\JsonGoddess.Compat.csproj" />
+
+    <ProjectReference Include="..\JsonGoddess.Generator\JsonGoddess.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Форма полезной нагрузки берётся у соседнего проекта файлом, а не копией.
+      Две таблицы - плоская и лестница - читаются вместе только если в них
+      один и тот же объект: разойдись формы, и «доля JSON в запросе» перестала
+      бы соотноситься с «ценой сериализации».
+    -->
+    <Compile Include="..\JsonGoddess.PerformanceTests\Model\Order.cs" Link="Model\Order.cs" />
+  </ItemGroup>
+
+</Project>

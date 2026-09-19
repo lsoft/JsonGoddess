@@ -20,7 +20,7 @@ namespace JsonGoddess.Generator.Binding
         public const string StrictProperty = "build_property.JsonGoddessCompatStrict";
         public const string WebProperty = "build_property.JsonGoddessCompatWeb";
 
-        public static readonly CompatSettings Default = new CompatSettings(true, null, null, false);
+        public static readonly CompatSettings Default = new CompatSettings(true, null, null, null);
 
         /// <summary>Перехват вызовов фасада включён.</summary>
         public readonly bool Enabled;
@@ -56,18 +56,27 @@ namespace JsonGoddess.Generator.Binding
         /// то есть под то, что строят ASP.NET Core MVC и minimal API.
         ///
         /// <para>
-        /// По умолчанию <b>нет</b>, и это не осторожность, а арифметика:
-        /// веб-вариант - это второй писатель и второй читатель на каждый
-        /// обслуженный тип, то есть примерно удвоение порождаемого кода
-        /// (§16.1). Консольному приложению он не нужен ни разу, а веб-проект
-        /// включает его одной строкой - и узнаёт о ней из сообщения, которое
-        /// мост печатает, когда отступает: молча решать за человека, сколько
-        /// кода ему напечатать, здесь нечем.
+        /// <c>null</c> - «не просили ни того ни другого», и тогда решает не
+        /// умолчание, а <b>факт</b>: ссылается ли сборка на ASP.NET Core
+        /// (<c>CompatBinder</c> спрашивает об этом компиляцию). Веб-вариант -
+        /// это второй писатель и второй читатель на каждый обслуженный тип,
+        /// то есть примерно удвоение порождаемого кода (§16.1); консольному
+        /// приложению он не нужен ни разу, а веб-проекту нужен всегда, и
+        /// отличить одно от другого можно, не спрашивая человека.
+        /// </para>
+        ///
+        /// <para>
+        /// Раньше здесь стояло «по умолчанию нет», и человек узнавал о
+        /// свойстве из сообщения, которое мост печатает, отступая. Это
+        /// работало, но требовало сперва заметить, что не ускорилось, - то
+        /// есть цена ошибки платилась молчанием. Явное значение свойства
+        /// по-прежнему сильнее факта: и <c>enable</c>, и <c>disable</c>
+        /// делают ровно то, что написано.
         /// </para>
         /// </summary>
-        public readonly bool Web;
+        public readonly bool? Web;
 
-        private CompatSettings(bool enabled, DiagnosticSeverity? floor, string? unrecognized, bool web)
+        private CompatSettings(bool enabled, DiagnosticSeverity? floor, string? unrecognized, bool? web)
         {
             Enabled = enabled;
             Floor = floor;
@@ -80,8 +89,24 @@ namespace JsonGoddess.Generator.Binding
             var enabled = !options.TryGetValue(EnabledProperty, out var switchValue)
                 || !string.Equals(switchValue, "disable", StringComparison.OrdinalIgnoreCase);
 
-            var web = options.TryGetValue(WebProperty, out var webValue)
-                && string.Equals(webValue?.Trim(), "enable", StringComparison.OrdinalIgnoreCase);
+            //Трёхзначно: «включить», «выключить» и «не просили». Последнее -
+            //не то же самое, что «выключить»: за него отвечает факт ссылки на
+            //ASP.NET Core, и решает его CompatBinder, у которого есть
+            //компиляция
+            bool? web = null;
+            if (options.TryGetValue(WebProperty, out var webValue))
+            {
+                var trimmed = webValue?.Trim();
+
+                if (string.Equals(trimmed, "enable", StringComparison.OrdinalIgnoreCase))
+                {
+                    web = true;
+                }
+                else if (string.Equals(trimmed, "disable", StringComparison.OrdinalIgnoreCase))
+                {
+                    web = false;
+                }
+            }
 
             if (!options.TryGetValue(StrictProperty, out var strict) || string.IsNullOrWhiteSpace(strict))
             {
@@ -133,7 +158,7 @@ namespace JsonGoddess.Generator.Binding
         public override int GetHashCode()
         {
             var hash = Enabled ? 1 : 0;
-            hash = unchecked((hash * 31) + (Web ? 1 : 0));
+            hash = unchecked((hash * 31) + (Web is null ? 2 : Web.Value ? 1 : 0));
             hash = unchecked((hash * 31) + (Floor?.GetHashCode() ?? 0));
             return unchecked((hash * 31) + (UnrecognizedStrictValue?.GetHashCode() ?? 0));
         }

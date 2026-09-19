@@ -7,4 +7,5 @@
   <Project Path="JsonGoddess.GeneratorTests/JsonGoddess.GeneratorTests.csproj" />
   <Project Path="JsonGoddess.PerformanceTests/JsonGoddess.PerformanceTests.csproj" />
   <Project Path="JsonGoddess.Tests/JsonGoddess.Tests.csproj" />
+  <Project Path="JsonGoddess.WebPerformanceTests/JsonGoddess.WebPerformanceTests.csproj" />
 </Solution>

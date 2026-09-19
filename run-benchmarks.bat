@@ -16,6 +16,15 @@ rem
 rem    run-benchmarks.bat                       - all fixtures
 rem    run-benchmarks.bat --filter *WideFixture*  - one of them
 rem
+rem  --web runs the ASP.NET staircase instead (JsonGoddess.WebPerformanceTests).
+rem  It is a separate project, and therefore a separate run, because ASP.NET Core
+rem  does not exist on net472 and the rest of the suite is measured there too.
+rem  Its numbers are not comparable with the flat table anyway: the staircase
+rem  answers what SHARE of a request is JSON, not what a serializer costs.
+rem
+rem    run-benchmarks.bat --web
+rem    run-benchmarks.bat --web --filter *StaircaseFixture*
+rem
 rem  On a hybrid CPU the run is pinned to the performance cores - see the
 rem  affinity block below and eng\get-pcore-affinity.ps1.
 rem
@@ -34,7 +43,23 @@ set "HOSTEXE=JsonGoddess.PerformanceTests\bin\Release\net10.0\JsonGoddess.Perfor
 set "ARTIFACTS=%CD%\BenchmarkDotNet.Artifacts"
 set "LOG=%CD%\benchmarks.log"
 
-set "BENCHARGS=%*"
+rem Arguments are collected one at a time rather than taken from %* whole,
+rem because shift does not rewrite %* - so a --web consumed below would still be
+rem handed to BenchmarkDotNet, which would reject it.
+set "BENCHARGS="
+:parseargs
+if "%~1"=="" goto :parsed
+if /i "%~1"=="--web" (
+    set "PROJECT=JsonGoddess.WebPerformanceTests\JsonGoddess.WebPerformanceTests.csproj"
+    set "HOSTEXE=JsonGoddess.WebPerformanceTests\bin\Release\net10.0\JsonGoddess.WebPerformanceTests.exe"
+    shift
+    goto :parseargs
+)
+set "BENCHARGS=%BENCHARGS% %1"
+shift
+goto :parseargs
+:parsed
+
 if not defined BENCHARGS set "BENCHARGS=--filter *"
 
 rem Remembered now, restored after the reports are printed - see :restorecp.
@@ -75,7 +100,7 @@ if defined AFFINITY (
     echo Affinity: not restricted.
 )
 
-echo [1/2] Building Release: net472 + net8.0 + net10.0 ...
+echo [1/2] Building Release: %PROJECT% ...
 dotnet build -c Release "%PROJECT%" --nologo -v quiet >> "%LOG%" 2>&1
 if errorlevel 1 goto :failed
 
