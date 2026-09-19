@@ -400,6 +400,36 @@ namespace JsonGoddess.Generator.Binding
                             ? null
                             : TryReaderProducer.Produce(streamingModel);
 
+                        if (streamingModel is not null)
+                        {
+                            //JGD005: корень, который мост обслуживает, а
+                            //потоковый читатель - нет. Не поломка: тело такого
+                            //типа читает эталон ровно как читал. Сказано затем,
+                            //чтобы ускорение, которого не случилось, не
+                            //пришлось искать замером
+                            var streamable = TryReaderProducer.Servable(streamingModel);
+
+                            foreach (var root in streamingModel.Subjects.Where(s => s.IsRoot))
+                            {
+                                if (streamable.Contains(root.MethodSuffix))
+                                {
+                                    continue;
+                                }
+
+                                var symbol = webServed
+                                    .FirstOrDefault(s => s.ToDisplayString() == root.FullName.Replace("global::", string.Empty));
+
+                                diagnostics.Add(
+                                    new DiagnosticInfo(
+                                        JsonGoddessDiagnostics.StreamingTypeIsNotServedId,
+                                        symbol is null ? null : roots[symbol],
+                                        root.FullName.Replace("global::", string.Empty),
+                                        TryReaderProducer.WhyNotServed(streamingModel, root, streamable)
+                                        )
+                                    );
+                            }
+                        }
+
                         if (streamingModel is not null && streamingText is not null)
                         {
                             files.Add(

@@ -9,6 +9,7 @@ JGD001 | JsonGoddess | Info | Call to the JsonGoddess.Compat facade keeps workin
 JGD002 | JsonGoddess | Warning | Compat generation failed after the type-graph walk had accepted the type
 JGD003 | JsonGoddess | Warning | JsonGoddessCompatStrict is set to a value other than info, warning or error
 JGD004 | JsonGoddess | Warning | The ASP.NET Core web profile is in effect but the type graph cannot be bound under it
+JGD005 | JsonGoddess | Info | The streaming input formatter does not read this type, so its request bodies keep going through System.Text.Json
 JGD010 | JsonGoddess | Warning | Sink type registered with [JsonExhauster]/[JsonInjector] is not sealed, so calls cannot be devirtualized
 JGD020 | JsonGoddess | Error | Type carrying [JsonSubject] is not declared partial
 JGD021 | JsonGoddess | Error | Subject type cannot be served

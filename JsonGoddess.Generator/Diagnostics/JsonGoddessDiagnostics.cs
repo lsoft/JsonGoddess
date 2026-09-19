@@ -19,6 +19,7 @@ namespace JsonGoddess.Generator.Diagnostics
         public const string CompatGenerationFailedId = "JGD002";
         public const string CompatStrictValueIsNotRecognizedId = "JGD003";
         public const string CompatWebProfileFailedId = "JGD004";
+        public const string StreamingTypeIsNotServedId = "JGD005";
         public const string SinkIsNotSealedId = "JGD010";
         public const string HostIsNotPartialId = "JGD020";
         public const string SubjectIsNotSupportedId = "JGD021";
@@ -245,6 +246,21 @@ namespace JsonGoddess.Generator.Diagnostics
                 + "только к веб-профилю."
             );
 
+        public static readonly DiagnosticDescriptor StreamingTypeIsNotServed = new DiagnosticDescriptor(
+            StreamingTypeIsNotServedId,
+            "The streaming input formatter does not serve this type",
+            "'{0}' is served by JsonGoddess, but the streaming input formatter does not read it: {1}. Request bodies of this type are read by System.Text.Json as before.",
+            Category,
+            DiagnosticSeverity.Info,
+            isEnabledByDefault: true,
+            description:
+                "Потоковый читатель (фаза 10) обслуживает не всякий тип: полиморфный субъект и "
+                + "субъект-коллекция пока не печатаются, и неспособность заразна - тип, у которого "
+                + "такой тип членом, тоже не обслуживается. Это не поломка: тело запроса такого типа "
+                + "читает System.Text.Json ровно как читал, и ответ от этого не меняется. Сказано об "
+                + "этом затем, чтобы ускорение, которого не случилось, не пришлось искать замером."
+            );
+
         private static readonly Dictionary<string, DiagnosticDescriptor> _all =
             new Dictionary<string, DiagnosticDescriptor>
             {
@@ -265,6 +281,7 @@ namespace JsonGoddess.Generator.Diagnostics
                 { CompatGenerationFailedId, CompatGenerationFailed },
                 { CompatStrictValueIsNotRecognizedId, CompatStrictValueIsNotRecognized },
                 { CompatWebProfileFailedId, CompatWebProfileFailed },
+                { StreamingTypeIsNotServedId, StreamingTypeIsNotServed },
             };
 
         public static DiagnosticDescriptor Get(string id) => _all[id];

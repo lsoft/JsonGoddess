@@ -120,7 +120,8 @@ namespace JsonGoddess.StreamingPrototype.Web
                     ? "без статистики"
                     : "обращений к трубе " + StreamingInputFormatter.Last.Reads
                         + ", переигрываний " + StreamingInputFormatter.Last.Retries
-                        + ", окно до " + StreamingInputFormatter.Last.LargestWindow + " Б")
+                        + ", окно до " + StreamingInputFormatter.Last.LargestWindow + " Б"
+                        + ", целиком одним куском=" + StreamingInputFormatter.Last.Whole)
                 );
         }
 

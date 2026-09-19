@@ -197,6 +197,16 @@ namespace Demo
 
             //а сосед по хосту от этого не страдает
             Assert.Contains("TryRead_Demo_Plain", text);
+
+            //и об этом сказано - иначе ускорение, которого не случилось,
+            //пришлось бы искать замером
+            Assert.Contains("JGD005", run.DiagnosticIds);
+
+            var said = run.GeneratorDiagnostics.Single(d => d.Id == "JGD005").GetMessage();
+
+            Assert.Contains("Demo.Shelter", said);
+            Assert.Contains("Tenant", said);
+            Assert.Contains("polymorphic", said);
         }
 
         /// <summary>

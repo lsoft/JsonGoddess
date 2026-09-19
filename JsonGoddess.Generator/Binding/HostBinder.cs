@@ -101,6 +101,24 @@ namespace JsonGoddess.Generator.Binding
                     {
                         files.Add(new GeneratedFile(model.FullName + ".Streaming.g.cs", streamingText));
                     }
+
+                    //JGD005: корень, которого потоковый читатель не обслуживает.
+                    //Не поломка - тело такого типа читается как читалось, - но
+                    //молчать нельзя: ускорение, которого не случилось, иначе
+                    //пришлось бы искать замером
+                    var streamable = TryReaderProducer.Servable(model);
+
+                    foreach (var root in model.Subjects.Where(s => s.IsRoot && !streamable.Contains(s.MethodSuffix)))
+                    {
+                        diagnostics.Add(
+                            new DiagnosticInfo(
+                                JsonGoddessDiagnostics.StreamingTypeIsNotServedId,
+                                reference.Location,
+                                root.FullName.Replace("global::", string.Empty),
+                                TryReaderProducer.WhyNotServed(model, root, streamable)
+                                )
+                            );
+                    }
                 }
             }
 

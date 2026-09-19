@@ -51,6 +51,17 @@ namespace JsonGoddess.WebPerformanceTests.Web
                 "объект: ведущий ноль во втором элементе"
                 );
 
+            //Хвост после документа: эталон его отвергает безусловно, а драйвер
+            //останавливается, дочитав корень, и в трубе остаётся мусор, которого
+            //он не видел. Проверяется пробой, а не рассуждением.
+            await SameRefusal(stock, ours, "/mvc/orders", "[]мусор", "хвост после пустого массива");
+            await SameRefusal(stock, ours, "/mvc/orders", "[{\"id\":1}]{}", "хвост после массива");
+            await SameRefusal(stock, ours, "/mvc/order", "{\"id\":1} 7", "хвост после объекта");
+
+            //null на месте корня: эталон отдаёт null-модель, а не отказ
+            await SameRefusal(stock, ours, "/mvc/orders", "null", "null вместо массива");
+            await SameRefusal(stock, ours, "/mvc/order", "null", "null вместо объекта");
+
             await OtherCharsetGoesToTheStockFormatter(ours);
 
             Console.WriteLine();
@@ -173,6 +184,12 @@ namespace JsonGoddess.WebPerformanceTests.Web
             try
             {
                 using var document = JsonDocument.Parse(body);
+
+                //успешный ответ - не объект вовсе: тело возвращают как есть
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return "<принято: " + body + ">";
+                }
 
                 if (!document.RootElement.TryGetProperty("errors", out var errors))
                 {

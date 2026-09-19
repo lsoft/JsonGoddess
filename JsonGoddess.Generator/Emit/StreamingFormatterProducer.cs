@@ -154,6 +154,14 @@ namespace JsonGoddess.Generator.Emit
             builder.Line("var cancellationToken = context.HttpContext.RequestAborted;");
             builder.Line("var cap = MaximumPendingValueLength;");
             builder.Line();
+
+            //Объявленная длина тела - признак «приехало целиком», без которого
+            //быстрый путь почти не срабатывает: у мелкого тела первое же
+            //обращение к трубе приносит его полностью, но IsCompleted при этом
+            //ещё ложно. Нет заголовка (chunked) - нет и признака, и это честно:
+            //тогда работает автомат.
+            builder.Line("var expectedLength = context.HttpContext.Request.ContentLength ?? -1;");
+            builder.Line();
             builder.OpenBlock("try");
 
             foreach (var root in roots)
@@ -220,11 +228,19 @@ namespace JsonGoddess.Generator.Emit
                 "var value = await " + hostTypeName + "." + method + "("
                 );
             builder.Indent();
-            builder.Line(Injector + ".Instance, pipe, cap, cancellationToken");
+            builder.Line(Injector + ".Instance, pipe, cap, expectedLength, cancellationToken");
             builder.Line(").ConfigureAwait(false);");
             builder.Unindent();
             builder.Line();
-            builder.Line("return " + FormatterResult + ".Success(value);");
+
+            //NoValue, а не Success(null), и это снято пробой: штатный форматтер
+            //отвечает так на всякое тело, разобравшееся в null (в том числе на
+            //литерал "null"), а MVC уже из этого делает отказ с пустым ключом.
+            //Success(null) дал бы 400 с другим набором ключей.
+            builder.Line(
+                "return value is null ? " + FormatterResult + ".NoValue() : " + FormatterResult + ".Success(value);"
+                );
+
             builder.CloseBlock();
             builder.Line();
         }

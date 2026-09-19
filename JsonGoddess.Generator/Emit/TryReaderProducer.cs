@@ -157,6 +157,62 @@ namespace JsonGoddess.Generator.Emit
         }
 
         /// <summary>
+        /// Почему тип не обслуживается - словами, для <c>JGD005</c>.
+        ///
+        /// <para>
+        /// Причину называть обязательно: «не обслуживается» без неё
+        /// превращается в «неизвестно почему», а это ровно то молчание, против
+        /// которого весь §1 плана.
+        /// </para>
+        /// </summary>
+        public static string WhyNotServed(HostModel host, SubjectModel subject, HashSet<string> servable)
+        {
+            if (subject.IsPolymorphic)
+            {
+                return "it is polymorphic, and the streaming reader does not print polymorphic readers yet";
+            }
+
+            if (subject.CollectionShape is not null)
+            {
+                return "it is a collection subject, and the streaming reader does not print those yet";
+            }
+
+            foreach (var member in subject.Members)
+            {
+                if (!member.CanRead || ValueIsServable(member.Value, servable))
+                {
+                    continue;
+                }
+
+                var nested = host.Subjects
+                    .FirstOrDefault(s => s.MethodSuffix == Offender(member.Value));
+
+                return "its member '" + member.MemberName + "' is of a type that is not served"
+                    + (nested is null ? string.Empty : " (" + WhyNotServed(host, nested, servable) + ")");
+            }
+
+            return "the root it belongs to is not served";
+        }
+
+        private static string? Offender(ValueModel value)
+        {
+            switch (value.Form)
+            {
+                case ValueForm.Subject:
+                    return value.MethodSuffix;
+
+                case ValueForm.List:
+                case ValueForm.Array:
+                case ValueForm.Dictionary:
+                case ValueForm.Enumerable:
+                    return Offender(value.Element!);
+
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
         /// Что не печатается <b>само по себе</b>, без оглядки на членов.
         ///
         /// <para>

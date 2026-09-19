@@ -86,11 +86,12 @@ namespace JsonGoddess.StreamingPrototype.Web
                 var items = await driver.ReadAsync(
                     context.HttpContext.Request.BodyReader,
                     Driver.DefaultCap,
+                    context.HttpContext.Request.ContentLength ?? -1,
                     context.HttpContext.RequestAborted
                     );
 
                 Last = new DriverStatsSnapshot(
-                    driver.Reads, driver.Retries, driver.Gathers, driver.LargestWindow
+                    driver.Reads, driver.Retries, driver.Gathers, driver.LargestWindow, driver.ReadWhole
                     );
 
                 return InputFormatterResult.Success(items);
@@ -112,5 +113,11 @@ namespace JsonGoddess.StreamingPrototype.Web
         }
     }
 
-    public sealed record DriverStatsSnapshot(int Reads, int Retries, int Gathers, int LargestWindow);
+    public sealed record DriverStatsSnapshot(
+        int Reads,
+        int Retries,
+        int Gathers,
+        int LargestWindow,
+        bool Whole = false
+        );
 }

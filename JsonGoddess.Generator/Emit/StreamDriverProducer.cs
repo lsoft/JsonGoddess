@@ -27,6 +27,8 @@ namespace JsonGoddess.Generator.Emit
     public static class StreamDriverProducer
     {
         private const string TryScan = "__TryScan";
+        private const string Scan = ValueSourceProducer.Scan;
+        private const string PathBuilder = "global::JsonGoddess.Internal.JsonPath";
         private const string Context = "global::JsonGoddess.JsonParseContext";
         private const string Span = "global::System.ReadOnlySpan<byte>";
         private const string DocumentException = "global::JsonGoddess.JsonDocumentException";
@@ -70,7 +72,9 @@ namespace JsonGoddess.Generator.Emit
             {
                 foreach (var root in roots)
                 {
-                    EmitArrayDriver(builder, root, injectors[i], ClassName("Stream_", root, injectors.Count, i));
+                    EmitArrayDriver(
+                        builder, root, injectors[i], ClassName("Stream_", root, injectors.Count, i), host.Guards
+                        );
 
                     if (TryReaderProducer.ReadsByProperty(root, host.Guards))
                     {
@@ -102,7 +106,8 @@ namespace JsonGoddess.Generator.Emit
             SourceBuilder builder,
             SubjectModel subject,
             string injector,
-            string className
+            string className,
+            JsonGuard guards
             )
         {
             var element = subject.FullName;
@@ -134,6 +139,13 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
 
             builder.Line("/// <summary>");
+            builder.Line("/// Корнем приехал <c>null</c>. Эталон на таком теле отдаёт null-модель,");
+            builder.Line("/// а не отказ (снято пробой), - значит и мы обязаны.");
+            builder.Line("/// </summary>");
+            builder.Line("private bool _null;");
+            builder.Line();
+
+            builder.Line("/// <summary>");
             builder.Line("/// Наибольший виденный элемент: не начинать разбор там, где он заведомо");
             builder.Line("/// не влезет. Стои́т это не времени, а мусора - до места обрыва элемент");
             builder.Line("/// уже построен и будет выброшен.");
@@ -150,16 +162,20 @@ namespace JsonGoddess.Generator.Emit
             builder.Line("protected override bool IsDone => _phase == " + Done + ";");
             builder.Line();
 
+            EmitTrailingGuard(builder, guards);
+
             builder.Line(
                 "protected override " + IList + "<" + element + "> Finish() =>"
                 );
             builder.Indent();
-            builder.Line("_asList ? _items.FinishAsList() : _items.Finish();");
+            builder.Line("_null ? null! : _asList ? _items.FinishAsList() : _items.Finish();");
             builder.Unindent();
             builder.Line();
 
             builder.Line("protected override void Release() => _items.Release();");
             builder.Line();
+
+            EmitWholeArrayRead(builder, subject, element, guards);
 
             builder.OpenBlock(
                 "protected override int ParseWhatFits(scoped " + Span + " json, bool final)"
@@ -174,6 +190,13 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
 
             builder.OpenBlock("if (_phase == " + BeforeArray + ")");
+            Wait(builder, TryScan + ".TryReadNull(json, ref position, final, out var isNull)");
+            builder.OpenBlock("if (isNull)");
+            builder.Line("_null = true;");
+            builder.Line("_phase = " + Done + ";");
+            builder.Line("return position;");
+            builder.CloseBlock();
+            builder.Line();
             Wait(builder, TryScan + ".Expect(json, ref position, " + TryScan + ".OpenBracket, final)");
             builder.Line("consumed = position;");
             builder.Line("_phase = " + BeforeFirstElement + ";");
@@ -312,6 +335,7 @@ namespace JsonGoddess.Generator.Emit
             builder.Line(injector + " injector,");
             builder.Line(PipeReader + " pipe,");
             builder.Line("int cap = " + StreamReader + "<" + IList + "<" + element + ">>.DefaultCap,");
+            builder.Line("long expectedLength = -1,");
             builder.Line(Token + " cancellationToken = default");
             builder.Line(")");
             builder.Unindent();
@@ -320,7 +344,8 @@ namespace JsonGoddess.Generator.Emit
             builder.Line("var driver = new " + className + "(injector, " + asList + ");");
             builder.Line();
             builder.Line(
-                "return " + cast + "await driver.ReadAsync(pipe, cap, cancellationToken).ConfigureAwait(false);"
+                "return " + cast
+                + "await driver.ReadAsync(pipe, cap, expectedLength, cancellationToken).ConfigureAwait(false);"
                 );
 
             builder.CloseBlock();
@@ -397,8 +422,13 @@ namespace JsonGoddess.Generator.Emit
 
             builder.Line("protected override bool IsDone => _phase == " + Done + ";");
             builder.Line();
+
+            EmitTrailingGuard(builder, guards);
+
             builder.Line("protected override " + subject.Declaration + " Finish() => _result;");
             builder.Line();
+
+            EmitWholeObjectRead(builder, subject, guards);
 
             builder.OpenBlock("protected override int ParseWhatFits(scoped " + Span + " json, bool final)");
             builder.Line("var context = new " + Context + "(json);");
@@ -676,6 +706,176 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
         }
 
+        /// <summary>
+        /// Быстрый путь корневого массива: тело целиком, обычный читатель, ни
+        /// одной проверки «хватило ли байт».
+        /// </summary>
+        private static void EmitWholeArrayRead(
+            SourceBuilder builder,
+            SubjectModel subject,
+            string element,
+            JsonGuard guards
+            )
+        {
+            builder.OpenBlock(
+                "protected override bool TryReadWhole(scoped " + Span + " json, out "
+                + IList + "<" + element + "> value)"
+                );
+
+            builder.Line("var position = 0;");
+            builder.Line("var context = new " + Context + "(json);");
+            builder.Line("var items = default(" + PooledList + "<" + element + ">);");
+            builder.Line();
+            builder.OpenBlock("try");
+
+            //Читается тем же Try-читателем, но с final: true - и тогда «не
+            //хватило» невозможно по построению: на закрытой трубе каждый
+            //примитив либо дочитывает, либо отказывает (это первое утверждение
+            //JsonTryScanFixture). Поэтому возвращаемые значения здесь не
+            //проверяются, а автомата с его фазами, откатами и оценкой
+            //наибольшего элемента нет вовсе.
+            builder.Line(TryScan + ".TryReadNull(json, ref position, true, out var isNull);");
+            builder.Line();
+            builder.OpenBlock("if (isNull)");
+            builder.Line("value = null!;");
+            builder.CloseBlock();
+            builder.OpenBlock("else");
+
+            builder.Line(TryScan + ".Expect(json, ref position, " + TryScan + ".OpenBracket, true);");
+            builder.Line(
+                TryScan + ".TryConsume(json, ref position, " + TryScan + ".CloseBracket, true, out var empty);"
+                );
+            builder.Line();
+            builder.OpenBlock("if (!empty)");
+            builder.OpenBlock("while (true)");
+            builder.Line(
+                TryReaderProducer.SubjectMethod(subject)
+                + "(_injector, json, ref position, ref context, true, out var item);"
+                );
+            builder.Line("items.Add(item!);");
+            builder.Line();
+            builder.Line(
+                TryScan + ".TryConsume(json, ref position, " + TryScan + ".Comma, true, out var more);"
+                );
+            builder.Line();
+            builder.OpenBlock("if (!more)");
+            builder.Line("break;");
+            builder.CloseBlock();
+            builder.CloseBlock();
+            builder.Line();
+            builder.Line(TryScan + ".Expect(json, ref position, " + TryScan + ".CloseBracket, true);");
+            builder.CloseBlock();
+            builder.Line();
+            builder.Line("value = _asList ? items.FinishAsList() : items.Finish();");
+
+            builder.CloseBlock();
+            builder.Line();
+
+            EmitWholeTail(builder, guards);
+
+            builder.CloseBlock();
+
+            EmitWholeCatches(builder, guards);
+
+            builder.OpenBlock("finally");
+            builder.Line("items.Release();");
+            builder.Line("context.Release();");
+            builder.CloseBlock();
+
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        /// <summary>Быстрый путь корневого объекта - обычный читатель как он есть.</summary>
+        private static void EmitWholeObjectRead(SourceBuilder builder, SubjectModel subject, JsonGuard guards)
+        {
+            builder.OpenBlock(
+                "protected override bool TryReadWhole(scoped " + Span + " json, out "
+                + subject.Declaration + " value)"
+                );
+
+            builder.Line("var position = 0;");
+            builder.Line("var context = new " + Context + "(json);");
+            builder.Line();
+            builder.OpenBlock("try");
+
+            //final: true, поэтому «не хватило» невозможно - см. быстрый путь
+            //массива выше
+            builder.Line(
+                TryReaderProducer.SubjectMethod(subject)
+                + "(_injector, json, ref position, ref context, true, out value);"
+                );
+            builder.Line();
+
+            EmitWholeTail(builder, guards);
+
+            builder.CloseBlock();
+
+            EmitWholeCatches(builder, guards);
+
+            builder.OpenBlock("finally");
+            builder.Line("context.Release();");
+            builder.CloseBlock();
+
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        private static void EmitWholeTail(SourceBuilder builder, JsonGuard guards)
+        {
+            if ((guards & JsonGuard.TrailingContent) != 0)
+            {
+                builder.Line(TryScan + ".SkipWhitespace(json, ref position, true);");
+                builder.Line();
+                builder.OpenBlock("if (position != json.Length)");
+                builder.Line(
+                    "throw new " + DocumentException
+                    + "(\"Unexpected trailing content after the top-level value.\", position);"
+                    );
+                builder.CloseBlock();
+                builder.Line();
+            }
+
+            builder.Line("return true;");
+        }
+
+        /// <summary>
+        /// Путь отказа на быстром пути строится иначе, чем на оконном, и проще:
+        /// документ здесь есть <b>целиком</b>, поэтому его собирает тот же
+        /// холодный проход, что и у обычной точки входа.
+        /// </summary>
+        private static void EmitWholeCatches(SourceBuilder builder, JsonGuard guards)
+        {
+            if (guards == JsonGuard.None)
+            {
+                return;
+            }
+
+            builder.OpenBlock("catch (" + DocumentException + " failure)");
+            builder.Line("throw " + PathBuilder + ".Decorate(failure, json);");
+            builder.CloseBlock();
+
+            builder.OpenBlock("catch (global::System.FormatException failure)");
+            builder.Line("throw " + PathBuilder + ".Decorate(failure, json, position);");
+            builder.CloseBlock();
+        }
+
+        /// <summary>
+        /// <c>JsonGuard.TrailingContent</c>: мусор после корневого значения -
+        /// отказ. Без стража не печатается вовсе, и драйвер возвращается сразу,
+        /// дочитав корень.
+        /// </summary>
+        private static void EmitTrailingGuard(SourceBuilder builder, JsonGuard guards)
+        {
+            if ((guards & JsonGuard.TrailingContent) == 0)
+            {
+                return;
+            }
+
+            builder.Line("protected override bool RefusesTrailingContent => true;");
+            builder.Line();
+        }
+
         //фазы спуска идут тройками после Done
         private static int DescentFirst(int slot) => 5 + (slot * 3);
 
@@ -712,6 +912,7 @@ namespace JsonGoddess.Generator.Emit
             builder.Line(injector + " injector,");
             builder.Line(PipeReader + " pipe,");
             builder.Line("int cap = " + StreamReader + "<" + subject.Declaration + ">.DefaultCap,");
+            builder.Line("long expectedLength = -1,");
             builder.Line(Token + " cancellationToken = default");
             builder.Line(")");
             builder.Unindent();
@@ -719,7 +920,9 @@ namespace JsonGoddess.Generator.Emit
 
             builder.Line("var driver = new " + className + "(injector);");
             builder.Line();
-            builder.Line("return await driver.ReadAsync(pipe, cap, cancellationToken).ConfigureAwait(false);");
+            builder.Line(
+                "return await driver.ReadAsync(pipe, cap, expectedLength, cancellationToken).ConfigureAwait(false);"
+                );
 
             builder.CloseBlock();
             builder.Line();

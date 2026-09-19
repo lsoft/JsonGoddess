@@ -75,11 +75,56 @@ namespace JsonGoddess.Internal
             get; protected set;
         }
 
+        /// <summary>
+        /// Тело приехало целиком одним куском, и его прочитал <b>обычный</b>
+        /// читатель, без автомата и переигрываний.
+        /// </summary>
+        public bool ReadWhole
+        {
+            get; private set;
+        }
+
         /// <summary>Автомат дошёл до конца документа.</summary>
         protected abstract bool IsDone
         {
             get;
         }
+
+        /// <summary>
+        /// Прочитать тело целиком обычным читателем - выбор пути по месту
+        /// (PLAN.md §12.9, фаза 10, пункт 7).
+        ///
+        /// <para>
+        /// Зовётся один раз и только тогда, когда первое же обращение к трубе
+        /// вернуло <b>всё</b> тело <b>одним сегментом</b>: копировать нечего,
+        /// ждать нечего, и автомат с его проверками «хватило ли байт» -
+        /// чистый расход. Замер: 624.5 нс против 704.0 нс на объект, плюс не
+        /// платится машинерия <c>async</c> (272 байта на запрос).
+        /// </para>
+        ///
+        /// <para>
+        /// Ложь означает «такого пути у меня нет» - база так и отвечает.
+        /// </para>
+        /// </summary>
+        protected virtual bool TryReadWhole(scoped ReadOnlySpan<byte> json, out T value)
+        {
+            value = default!;
+            return false;
+        }
+
+        /// <summary>
+        /// Отвергать ли хвост после корневого значения -
+        /// <c>JsonGuard.TrailingContent</c>.
+        ///
+        /// <para>
+        /// Найдено пробой, а не рассуждением: драйвер останавливается, дочитав
+        /// корень, и мусор, оставшийся в трубе, он попросту не видит - на
+        /// <c>[]мусор</c> эталон отвечал 400, а мы 200. Цена проверки - проход
+        /// по пробелам от конца корня до конца тела, и платит её только хост,
+        /// попросивший строгости (веб-профиль моста просит).
+        /// </para>
+        /// </summary>
+        protected virtual bool RefusesTrailingContent => false;
 
         /// <summary>
         /// Разобрать то, что влезло, и вернуть число <b>съеденных</b> байт -
@@ -95,12 +140,26 @@ namespace JsonGoddess.Internal
         {
         }
 
+        /// <param name="expectedLength">
+        /// Длина тела, если она объявлена (<c>Content-Length</c>), иначе -1.
+        ///
+        /// <para>
+        /// Нужна ровно для быстрого пути, и <b>без неё он почти не срабатывает</b>
+        /// - замерено: у тела в 374 байта первое же обращение к трубе приносит
+        /// его целиком, но <c>IsCompleted</c> при этом ещё ложно, потому что
+        /// писатель трубы не закрыт. Ждать второго обращения только затем, чтобы
+        /// узнать это, значило бы потерять весь выигрыш.
+        /// </para>
+        /// </param>
         public async Task<T> ReadAsync(
             PipeReader pipe,
             int cap = DefaultCap,
+            long expectedLength = -1,
             CancellationToken cancellationToken = default
             )
         {
+            var first = true;
+
             try
             {
                 while (true)
@@ -115,6 +174,23 @@ namespace JsonGoddess.Internal
                     var buffer = read.Buffer;
                     Reads++;
 
+                    if (first)
+                    {
+                        first = false;
+
+                        //всё тело, один сегмент - разбирать его автоматом незачем
+                        if (buffer.IsSingleSegment
+                            && (read.IsCompleted || (expectedLength >= 0 && buffer.Length >= expectedLength))
+                            && buffer.Length <= cap
+                            && TryReadWhole(buffer.FirstSpan, out var whole))
+                        {
+                            ReadWhole = true;
+                            pipe.AdvanceTo(buffer.End);
+
+                            return whole;
+                        }
+                    }
+
                     if (buffer.Length > cap)
                     {
                         throw new JsonDocumentException(
@@ -124,13 +200,31 @@ namespace JsonGoddess.Internal
                             );
                     }
 
-                    var consumed = Window(buffer, read.IsCompleted);
+                    long consumed;
+
+                    if (IsDone)
+                    {
+                        //корень уже прочитан на прошлом обороте - осталось
+                        //убедиться, что дальше только пробелы
+                        consumed = Trailing(buffer, 0);
+                    }
+                    else
+                    {
+                        consumed = Window(buffer, read.IsCompleted);
+
+                        if (IsDone)
+                        {
+                            //хвост в ЭТОМ же окне: корень кончился, а байты
+                            //за ним никто ещё не смотрел
+                            consumed = Trailing(buffer, consumed);
+                        }
+                    }
 
                     //съедено - слева, просмотрено - до конца окна: иначе труба
                     //отдаст то же самое и будет ждать вечно
                     pipe.AdvanceTo(buffer.GetPosition(consumed), buffer.End);
 
-                    if (IsDone)
+                    if (IsDone && (read.IsCompleted || !RefusesTrailingContent))
                     {
                         return Finish();
                     }
@@ -155,6 +249,55 @@ namespace JsonGoddess.Internal
                     _scratch = null;
                 }
             }
+        }
+
+        /// <summary>
+        /// Хвост после корня: от <paramref name="from"/> и до конца окна там
+        /// обязаны быть одни пробелы. Возвращает новую границу съеденного -
+        /// пробелы съедаются, иначе труба отдала бы их снова.
+        ///
+        /// <para>
+        /// Идёт по сегментам, а не по непрерывной копии: хвост бывает какой
+        /// угодно длины, и собирать его в один буфер ради того, чтобы отказать,
+        /// было бы дорого ровно в том случае, когда отказ и нужен.
+        /// </para>
+        /// </summary>
+        private long Trailing(in ReadOnlySequence<byte> buffer, long from)
+        {
+            if (!RefusesTrailingContent)
+            {
+                return from;
+            }
+
+            var offset = from;
+
+            foreach (var segment in buffer.Slice(from))
+            {
+                var span = segment.Span;
+
+                for (var i = 0; i < span.Length; i++)
+                {
+                    var b = span[i];
+
+                    if (b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D)
+                    {
+                        continue;
+                    }
+
+                    throw new JsonDocumentException(
+                        "Unexpected trailing content after the top-level value.",
+                        checked((int)(offset + i)),
+                        "$",
+                        -1,
+                        -1,
+                        null
+                        );
+                }
+
+                offset += span.Length;
+            }
+
+            return buffer.Length;
         }
 
         private int Window(in ReadOnlySequence<byte> buffer, bool final)

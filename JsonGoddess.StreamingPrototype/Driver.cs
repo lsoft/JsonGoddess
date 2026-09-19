@@ -75,7 +75,9 @@ namespace JsonGoddess.StreamingPrototype
 
             try
             {
-                return (Order[])await driver.ReadAsync(pipe, cap, token).ConfigureAwait(false);
+                //длина тела здесь неизвестна - проверки кормят трубу по кускам
+                //нарочно, и быстрому пути тут делать нечего
+                return (Order[])await driver.ReadAsync(pipe, cap, -1, token).ConfigureAwait(false);
             }
             finally
             {
