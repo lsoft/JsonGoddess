@@ -111,3 +111,17 @@ jobs:
       # заодно и это.
       - name: The staircase agrees, and the bridge still reaches ASP.NET
         run: dotnet run -c Release --project JsonGoddess.WebPerformanceTests --no-build -- --verify
+
+      # Прототип фазы 10: разбор по кускам с переигрыванием элемента.
+      #
+      # Он здесь не ради скорости, а ради двух утверждений, которые иначе
+      # проверить нечем: документ читается одинаково при ЛЮБОЙ нарезке, вплоть
+      # до подачи по одному байту с сегментом на байт, и обрыв на каждом
+      # смещении кончается отказом, а не молча принятым результатом. Плюс
+      # настоящий ASP.NET: свой входной форматтер обязан давать тот же ответ и
+      # тот же код отказа, что штатный.
+      #
+      # Обе находки прототипа были именно такими - тихими: разбор шёл дальше и
+      # ломался далеко от места, где соврали.
+      - name: The streaming prototype reads the same on any split
+        run: dotnet run -c Release --project JsonGoddess.StreamingPrototype --no-build

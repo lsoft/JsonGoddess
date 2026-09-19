@@ -55,12 +55,23 @@ if /i "%~1"=="--web" (
     shift
     goto :parseargs
 )
+if /i "%~1"=="--stream" (
+    set "PROJECT=JsonGoddess.StreamingPrototype\JsonGoddess.StreamingPrototype.csproj"
+    set "HOSTEXE=JsonGoddess.StreamingPrototype\bin\Release\net10.0\JsonGoddess.StreamingPrototype.exe"
+    set "EXTRA=--bench"
+    shift
+    goto :parseargs
+)
 set "BENCHARGS=%BENCHARGS% %1"
 shift
 goto :parseargs
 :parsed
 
 if not defined BENCHARGS set "BENCHARGS=--filter *"
+
+rem The streaming prototype is a verification program by default; --bench is what
+rem switches it to BenchmarkDotNet, so it has to reach the exe ahead of the rest.
+if defined EXTRA set "BENCHARGS=%EXTRA% %BENCHARGS%"
 
 rem Remembered now, restored after the reports are printed - see :restorecp.
 rem Split on the colon only and trim afterwards: chcp's message is localized and

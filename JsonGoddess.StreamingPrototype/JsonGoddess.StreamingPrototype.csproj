@@ -1,0 +1,52 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+
+    <!--
+      Прототип фазы 10 (PLAN.md §12.9, «Гибридный читатель»). Пишется руками,
+      повторяя форму порождённого кода, и доводится до входного форматтера
+      ASP.NET. Смысл один: найти подводные камни на дешёвом коде, прежде чем
+      трогать эмиттер.
+
+      net10.0 единственный: вопрос здесь про ASP.NET Core и PipeReader, а их
+      на net472 нет.
+    -->
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.0" />
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JsonGoddess.Common\JsonGoddess.Common.csproj" />
+    <ProjectReference Include="..\JsonGoddess.Components\JsonGoddess.Components.csproj" />
+
+    <!--
+      Читатель прототипа написан руками - в этом весь смысл. Генератор здесь
+      нужен для другого: напечатать ТОТ ЖЕ тип теми же правилами имён, чтобы
+      было с чем сравнить. Иначе «схема дешёвая» не отличить от «прототип
+      случайно быстрее порождённого кода».
+    -->
+    <ProjectReference Include="..\JsonGoddess.Generator\JsonGoddess.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Та же модель, что у лестницы и у плоского стенда: числа обязаны
+      соотноситься между собой.
+    -->
+    <Compile Include="..\JsonGoddess.PerformanceTests\Model\Order.cs" Link="Model\Order.cs" />
+  </ItemGroup>
+
+</Project>
