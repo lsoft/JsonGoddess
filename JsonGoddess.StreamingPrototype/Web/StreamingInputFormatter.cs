@@ -41,7 +41,7 @@ namespace JsonGoddess.StreamingPrototype.Web
 
         protected override bool CanReadType(Type type)
         {
-            return type == typeof(Order[]) || type == typeof(List<Order>);
+            return type == typeof(Order[]) || type == typeof(List<Order>) || type == typeof(Order);
         }
 
         public override async Task<InputFormatterResult> ReadRequestBodyAsync(InputFormatterContext context)
@@ -54,6 +54,24 @@ namespace JsonGoddess.StreamingPrototype.Web
 
             try
             {
+                if (context.ModelType == typeof(Order))
+                {
+                    //корень - один объект: единицей переигрывания становится
+                    //свойство, иначе пришлось бы держать всё тело
+                    var one = await SingleDriver.ReadOne(
+                        context.HttpContext.Request.BodyReader,
+                        stats,
+                        Driver.DefaultCap,
+                        context.HttpContext.RequestAborted
+                        );
+
+                    Last = new DriverStatsSnapshot(stats.Reads, stats.Retries, stats.Gathers, stats.LargestWindow);
+
+                    return one is null
+                        ? InputFormatterResult.Success(null)
+                        : InputFormatterResult.Success(one);
+                }
+
                 var items = await Driver.ReadOrders(
                     context.HttpContext.Request.BodyReader,
                     stats,
@@ -73,9 +91,11 @@ namespace JsonGoddess.StreamingPrototype.Web
             }
             catch (JsonDocumentException error)
             {
-                //штатный форматтер кладёт ошибку в ModelState с ключом из
-                //JsonException.Path; у нас пути пока нет - см. список находок
-                context.ModelState.TryAddModelError(string.Empty, error.Message);
+                //Ключ - путь, ровно как у штатного форматтера, который берёт
+                //его из JsonException.Path. Именно ключ клиенты и разбирают в
+                //400-м ответе; текст сообщения у нас свой и совпадать с
+                //эталонным не обязан.
+                context.ModelState.TryAddModelError(error.Path ?? string.Empty, error.Message);
 
                 return InputFormatterResult.Failure();
             }

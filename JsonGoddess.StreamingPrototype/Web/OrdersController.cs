@@ -16,5 +16,9 @@ namespace JsonGoddess.StreamingPrototype.Web
 
         [HttpPost("/count")]
         public int Count([FromBody] Order[] orders) => orders.Length;
+
+        /// <summary>Корень - один объект, а не массив: тот самый вырожденный случай.</summary>
+        [HttpPost("/one")]
+        public Order AcceptOne([FromBody] Order order) => order;
     }
 }

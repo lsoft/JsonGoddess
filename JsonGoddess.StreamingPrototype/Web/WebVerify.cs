@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using JsonGoddess.PerformanceTests.Model;
 using Microsoft.AspNetCore.Builder;
@@ -42,6 +43,12 @@ namespace JsonGoddess.StreamingPrototype.Web
             await SameRefusal(stock, ours, "[{\"id\":1}", "обрыв");
             await SameRefusal(stock, ours, string.Empty, "пустое тело");
             await SameRefusal(stock, ours, "не json вовсе", "мусор");
+
+            await SingleObject(stock, ours, 3, "обычный");
+            await SingleObject(stock, ours, 2000, "толстый");
+
+            await Aborted(stock, "эталон");
+            await Aborted(ours, "мы");
 
             await NotServed(ours);
         }
@@ -107,9 +114,124 @@ namespace JsonGoddess.StreamingPrototype.Web
             var theirs = await Post(stock, body, "/orders");
             var mine = await Post(ours, body, "/orders");
 
+            //Сверяются код и КЛЮЧИ ModelState - то есть то, что клиент
+            //разбирает машинно. Тексты сообщений у нас свои и совпадать не
+            //обязаны: это объявленное расхождение, а не недосмотр.
+            var theirKeys = Keys(theirs.Body);
+            var myKeys = Keys(mine.Body);
+
             Verify.Check(
-                theirs.Status == mine.Status,
-                what + ": эталон " + (int)theirs.Status + ", мы " + (int)mine.Status
+                theirs.Status == mine.Status && theirKeys == myKeys,
+                what + ": код " + (int)theirs.Status + "/" + (int)mine.Status
+                + ", ключи «" + theirKeys + "» / «" + myKeys + "»"
+                );
+        }
+
+        /// <summary>
+        /// Ключи <c>errors</c> из <c>ProblemDetails</c>, в порядке появления.
+        /// </summary>
+        private static string Keys(string body)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+
+                if (!document.RootElement.TryGetProperty("errors", out var errors))
+                {
+                    return "<нет errors>";
+                }
+
+                var names = new System.Collections.Generic.List<string>();
+
+                foreach (var error in errors.EnumerateObject())
+                {
+                    names.Add(error.Name);
+                }
+
+                return string.Join(", ", names);
+            }
+            catch (JsonException)
+            {
+                return "<не разобрать>";
+            }
+        }
+
+        /// <summary>
+        /// Корень - один объект. Смысл проверки не в ответе (он совпадёт и
+        /// так), а в <b>окне</b>: единицей переигрывания стало свойство, и
+        /// держать весь документ больше не надо.
+        /// </summary>
+        private static async Task SingleObject(IHost stock, IHost ours, int lines, string what)
+        {
+            var order = Order.CreateSample();
+            order.Lines = new System.Collections.Generic.List<OrderLine>();
+
+            for (var i = 0; i < lines; i++)
+            {
+                order.Lines.Add(new OrderLine { Sku = "SKU-" + i, Quantity = i, Price = i, Note = "строка номер " + i, });
+            }
+
+            var body = Reference.SerializeToUtf8Bytes(order, Web);
+
+            var theirs = await Post(stock, body, "/one");
+            var mine = await Post(ours, body, "/one");
+
+            Verify.Check(
+                theirs.Status == mine.Status && theirs.Body == mine.Body,
+                "корневой объект, " + what + " (" + body.Length + " Б): ответы совпали="
+                + (theirs.Body == mine.Body)
+                + ", " + (StreamingInputFormatter.Last is null
+                    ? "без статистики"
+                    : "обращений " + StreamingInputFormatter.Last.Reads
+                        + ", переигрываний " + StreamingInputFormatter.Last.Retries
+                        + ", окно до " + StreamingInputFormatter.Last.LargestWindow + " Б")
+                );
+        }
+
+        /// <summary>
+        /// Оборванный клиент. Проверяются две вещи, и обе про живучесть:
+        /// запрос обязан <b>завершиться</b> (а не висеть на ожидании добавки,
+        /// которой не будет), и приложение обязано пережить это - следующий
+        /// запрос отвечает как обычно.
+        /// </summary>
+        private static async Task Aborted(IHost host, string who)
+        {
+            using var client = Client(host);
+
+            using var leaving = new CancellationTokenSource();
+
+            var posting = client.PostAsync("/count", new Abort(Payload(1000), leaving.Token), leaving.Token);
+
+            //дать телу доехать до половины и уйти
+            await Task.Delay(200);
+            leaving.Cancel();
+
+            var finished = await Task.WhenAny(posting, Task.Delay(TimeSpan.FromSeconds(10)));
+
+            if (!ReferenceEquals(finished, posting))
+            {
+                Verify.Check(false, who + ": обрыв клиента подвесил запрос");
+                return;
+            }
+
+            var how = "без отказа";
+
+            try
+            {
+                using var response = await posting;
+                how = "ответ " + (int)response.StatusCode;
+            }
+            catch (Exception error)
+            {
+                how = error.GetType().Name;
+            }
+
+            //и приложение живо
+            var after = await Post(host, Payload(10), "/count");
+
+            Verify.Check(
+                after.Status == HttpStatusCode.OK && after.Body == "10",
+                who + ": обрыв -> " + how + ", следующий запрос -> " + (int)after.Status + ":" + after.Body
                 );
         }
 

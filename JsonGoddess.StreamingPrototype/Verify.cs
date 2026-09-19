@@ -30,6 +30,7 @@ namespace JsonGoddess.StreamingPrototype
 
         internal static async Task All()
         {
+            await Paths();
             await Differential();
             await ByteAtATime();
             await Escapes();
@@ -162,6 +163,71 @@ namespace JsonGoddess.StreamingPrototype
         private static string Canonical(IEnumerable<Order> items)
         {
             return Reference.Serialize(items, Web);
+        }
+
+        /// <summary>
+        /// Путь до места отказа. Штатный форматтер MVC кладёт в
+        /// <c>ModelState</c> ключ из <c>JsonException.Path</c>, то есть от
+        /// этого пути зависит тело 400-го ответа - а оно у клиентов разбирается.
+        ///
+        /// <para>
+        /// Ожидания здесь не записаны литералами: их даёт сам эталон, прямо в
+        /// проверке.
+        /// </para>
+        /// </summary>
+        private static async Task Paths()
+        {
+            Console.WriteLine("=== 0. Путь до места отказа - как у эталона ===");
+
+            var cases = new[]
+            {
+                "[{\"id\":\"нет\"}]",
+                "[{\"id\":1},{\"id\":\"нет\"}]",
+                "[{\"id\":1},{\"id\":2},{\"total\":\"нет\"}]",
+                "[{\"lines\":[{\"quantity\":\"нет\"}]}]",
+                "[{\"id\":1},{\"lines\":[{\"sku\":\"a\"},{\"price\":\"нет\"}]}]",
+                "[{\"paid\":\"нет\"}]",
+                "[{\"id\":1,}]",
+                "[{\"id\":01}]",
+
+                //отказы ВНЕ элемента - здесь путь ставит не наш читатель, а
+                //драйвер, и угадывать его нельзя
+                string.Empty,
+                "   ",
+                "не json вовсе",
+                "[{\"id\":1}",
+                "[{\"id\":1},",
+                "[",
+                "{\"id\":1}",
+                "[1]",
+            };
+
+            foreach (var text in cases)
+            {
+                var body = Encoding.UTF8.GetBytes(text);
+
+                var theirs = "не отказал";
+                try
+                {
+                    Reference.Deserialize<Order[]>(body, Web);
+                }
+                catch (JsonException error)
+                {
+                    theirs = error.Path ?? "<null>";
+                }
+
+                var ours = "не отказал";
+                try
+                {
+                    await Through(body, int.MaxValue, 4096);
+                }
+                catch (JsonDocumentException error)
+                {
+                    ours = error.Path ?? "<null>";
+                }
+
+                Check(theirs == ours, text.PadRight(52) + " эталон " + theirs.PadRight(18) + " мы " + ours);
+            }
         }
 
         private static async Task Differential()

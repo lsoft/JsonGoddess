@@ -5,6 +5,7 @@ using System.IO.Pipelines;
 using System.Threading;
 using System.Threading.Tasks;
 using JsonGoddess;
+using JsonGoddess.Internal;
 using JsonGoddess.PerformanceTests.Model;
 
 namespace JsonGoddess.StreamingPrototype
@@ -248,7 +249,24 @@ namespace JsonGoddess.StreamingPrototype
                             return consumed;
                         }
 
-                        if (!OrderReader.Order(span, ref position, ref context, final, out var order))
+                        bool read;
+                        Order? order;
+
+                        try
+                        {
+                            read = OrderReader.Order(span, ref position, ref context, final, out order);
+                        }
+                        catch (JsonDocumentException failure)
+                        {
+                            //Путь эталона - это $[3].id, то есть индекс
+                            //элемента плюс место внутри него. Индекс знает
+                            //драйвер, место внутри - холодный проход по
+                            //элементу (§6.4); окна целиком для прохода нет и
+                            //быть не может, оно кончается где попало.
+                            throw Located(failure, span, start, items.Count);
+                        }
+
+                        if (!read)
                         {
                             //элемент не влез: откатываемся к его началу и ждём
                             stats.Retries++;
@@ -287,6 +305,25 @@ namespace JsonGoddess.StreamingPrototype
                     return position;
                 }
             }
+            catch (JsonDocumentException failure) when (failure.Path is null)
+            {
+                //Отказ ВНЕ элемента: до массива, между элементами, на его
+                //закрытии. Путь тут ставит драйвер, потому что внутри элемента
+                //мы не были. Правила сняты пробой у эталона (Verify.Paths):
+                //до массива - корень, дальше - индекс СЛЕДУЮЩЕГО элемента.
+                JsonPath.Locate(span, Math.Max(0, failure.BytePosition), out var line, out var column);
+
+                throw new JsonDocumentException(
+                    failure.Reason,
+                    failure.BytePosition,
+                    phase == Phase.BeforeArray
+                        ? "$"
+                        : "$[" + items.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) + "]",
+                    line,
+                    column,
+                    failure
+                    );
+            }
             finally
             {
                 context.Release();
@@ -301,11 +338,52 @@ namespace JsonGoddess.StreamingPrototype
         internal static bool Trace;
 
         /// <summary>
+        /// Отказ с путём в нотации эталона: <c>$[3].id</c>.
+        ///
+        /// <para>
+        /// Собирается из двух половин, и иначе нельзя. Индекс элемента знает
+        /// только драйвер; место внутри элемента - только холодный проход по
+        /// документу (§6.4), а документа у нас нет: есть окно, которое
+        /// кончается где попало и начинается не с начала тела. Поэтому проход
+        /// идёт по <b>элементу</b>, а его результат приставляется к индексу.
+        /// </para>
+        /// </summary>
+        private static JsonDocumentException Located(
+            JsonDocumentException failure,
+            ReadOnlySpan<byte> span,
+            int elementStart,
+            int index
+            )
+        {
+            var inside = JsonPath.Decorate(
+                new JsonDocumentException(
+                    failure.Reason,
+                    Math.Max(0, failure.BytePosition - elementStart),
+                    failure.Anchor
+                    ),
+                span.Slice(elementStart)
+                );
+
+            var tail = inside.Path is null || inside.Path.Length <= 1
+                ? string.Empty
+                : inside.Path.Substring(1);
+
+            return new JsonDocumentException(
+                failure.Reason,
+                failure.BytePosition,
+                "$[" + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + "]" + tail,
+                inside.LineNumber,
+                inside.BytePositionInLine,
+                failure
+                );
+        }
+
+        /// <summary>
         /// Непрерывный кусок. Обычный случай - один сегмент, и тогда не
         /// копируется ничего. Иначе собирается <b>остаток</b>, а он ограничен
         /// недочитанным элементом, а не телом.
         /// </summary>
-        private static ReadOnlySpan<byte> Contiguous(
+        internal static ReadOnlySpan<byte> Contiguous(
             in ReadOnlySequence<byte> buffer,
             ref byte[]? scratch,
             DriverStats stats

@@ -27,6 +27,12 @@ namespace JsonGoddess.StreamingPrototype
                 return 0;
             }
 
+            if (args.Any(a => string.Equals(a, "--network", StringComparison.Ordinal)))
+            {
+                await Web.Network.All();
+                return 0;
+            }
+
             if (args.Any(a => string.Equals(a, "--alloc", StringComparison.Ordinal)))
             {
                 await Allocations.All();
