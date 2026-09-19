@@ -1,0 +1,146 @@
+using System;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
+
+namespace JsonGoddess.Compat.Interop
+{
+    /// <summary>
+    /// Мост (§10, маршрут B): порождённый код, выданный эталону под видом
+    /// <see cref="JsonTypeInfo"/>.
+    ///
+    /// <para>
+    /// Зачем он нужен, когда есть маршрут A. Маршрут A подменяет вызов
+    /// <c>JsonSerializer</c> в <b>вашем</b> коде - генератор видит вызов и
+    /// печатает вместо него обращение к порождённому. В настоящем приложении
+    /// вызовов в вашем коде почти нет: объект контроллера сериализует
+    /// ASP.NET Core, ответ читает <c>HttpClient.ReadFromJsonAsync</c>, тело
+    /// запроса разбирает форматтер. Весь этот код давно скомпилирован, и
+    /// генератору в него не заглянуть. Мост входит с другой стороны - через
+    /// штатную точку расширения эталона, - и потому достаёт до всего, что
+    /// принимает <see cref="JsonSerializerOptions"/>.
+    /// </para>
+    ///
+    /// <code>
+    /// builder.Services
+    ///     .AddControllers()
+    ///     .AddJsonOptions(o => o.JsonSerializerOptions.UseJsonGoddess());
+    /// </code>
+    ///
+    /// <para>
+    /// Явным вызовом, а не само: опции строит потребитель, и вклиниться в
+    /// чужой конструктор нечем. Это же и честнее - маршрут A включается
+    /// молча, потому что там человек уже сослался на фасад и другого смысла в
+    /// ссылке нет, а здесь он передаёт свои опции чужой библиотеке и должен
+    /// знать, что в них добавилось.
+    /// </para>
+    /// </summary>
+    public static class JsonGoddess
+    {
+        /// <summary>
+        /// Добавить порождённый код в <paramref name="options"/>. Возвращает
+        /// те же опции, чтобы вызов можно было писать цепочкой.
+        ///
+        /// <para>
+        /// Типы, которых мост не обслуживает, продолжают идти обычным путём
+        /// эталона: резолвер по умолчанию остаётся в цепочке следом за нашим.
+        /// </para>
+        /// </summary>
+        public static JsonSerializerOptions UseJsonGoddess(this JsonSerializerOptions options)
+        {
+            if (options is null)
+            {
+                throw new ArgumentNullException(nameof(options));
+            }
+
+            //Цепочка, а не подмена TypeInfoResolver: у потребителя там уже
+            //может лежать его собственный резолвер - контекст source-gen,
+            //например, - и затереть его значило бы сломать то, что работало.
+            var chain = options.TypeInfoResolverChain;
+
+            //Пустая цепочка - это НЕ «резолвер по умолчанию»: пока к ней никто
+            //не притронулся, эталон подставляет умолчание сам, а первое же
+            //обращение превращает её в настоящий список, и умолчания в нём
+            //нет. Вставив в такую цепочку только себя, мы оставили бы без
+            //резолвера все типы, которых мост не обслуживает, - то есть
+            //сломали бы ровно то, что обязаны были не трогать. Проверено
+            //прогоном: без этой ветки шесть тестов падают с
+            //NotSupportedException.
+            var empty = chain.Count == 0;
+
+            chain.Insert(0, BridgeResolver.Instance);
+
+            if (empty)
+            {
+                chain.Add(new DefaultJsonTypeInfoResolver());
+            }
+
+            return options;
+        }
+
+        /// <summary>
+        /// Сколько типов обслуживает мост в этой сборке. Ноль означает, что
+        /// генератор не отработал или отступил на всех типах; причину он
+        /// сообщает диагностикой <c>JGD001</c> на сборке.
+        /// </summary>
+        public static int ServedTypeCount => BridgeRegistry.Count;
+
+        /// <summary>
+        /// Возьмётся ли мост за <paramref name="type"/> с этими опциями, и
+        /// если нет - почему. Существует ради тестов и ради человека, который
+        /// не понимает, отчего не ускорилось.
+        /// </summary>
+        public static string Explain(Type type, JsonSerializerOptions? options)
+        {
+            if (type is null)
+            {
+                throw new ArgumentNullException(nameof(type));
+            }
+
+            if (!BridgeRegistry.TryGet(type, out _))
+            {
+                return "the bridge does not serve '" + type + "': the generator either refused the type or never saw it.";
+            }
+
+            if (options is not null && !CompatOptions.IsDefaultApartFromTheResolver(options))
+            {
+                return "the options differ from the defaults, and the generated code was produced for the defaults only;"
+                    + " serialization goes through System.Text.Json instead.";
+            }
+
+            return "the bridge serves '" + type + "'.";
+        }
+    }
+
+    /// <summary>
+    /// Резолвер моста. Один на процесс: состояния у него нет, а решение
+    /// зависит только от типа и опций, которые ему приносят.
+    /// </summary>
+    internal sealed class BridgeResolver : IJsonTypeInfoResolver
+    {
+        internal static readonly BridgeResolver Instance = new BridgeResolver();
+
+        private BridgeResolver()
+        {
+        }
+
+        public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options)
+        {
+            if (!BridgeRegistry.TryGet(type, out var factory))
+            {
+                //не наш тип - пусть его строит следующий в цепочке
+                return null;
+            }
+
+            //Порождённый код написан под одно поведение - умолчания эталона.
+            //Отдать ему чужие опции значило бы выдать валидный документ,
+            //отличающийся от эталонного: тот самый худший исход, ради
+            //которого весь этот слой и обвешан проверками. Сомнение - «нет».
+            if (!CompatOptions.IsDefaultApartFromTheResolver(options))
+            {
+                return null;
+            }
+
+            return factory!(options);
+        }
+    }
+}

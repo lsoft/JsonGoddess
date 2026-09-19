@@ -27,6 +27,15 @@
     <ProjectReference Include="..\JsonGoddess.Components\JsonGoddess.Components.csproj" />
 
     <!--
+      Нужен ради моста (§10, маршрут B): мерить надо тот мост, который
+      напечатает генератор потребителю, а не его рукописный макет. Перехват
+      вызовов фасада при этом безвреден - он подменяет обращения к
+      JsonGoddess.Compat.JsonSerializer, а замеры зовут System.Text.Json
+      напрямую, и ни одна их строка не меняется.
+    -->
+    <ProjectReference Include="..\JsonGoddess.Compat\JsonGoddess.Compat.csproj" />
+
+    <!--
       Генератор подключён анализатором, как у потребителя пакета: мерить надо
       тот код, который получит человек, а не его рукописный эквивалент.
     -->

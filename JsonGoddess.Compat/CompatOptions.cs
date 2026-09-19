@@ -128,6 +128,61 @@ namespace JsonGoddess.Compat
             return verdict;
         }
 
+        /// <summary>
+        /// То же самое, но без вопроса о резолвере: мост (§10, маршрут B)
+        /// свой резолвер в эти опции и положил, и требовать от них
+        /// умолчательного значило бы требовать, чтобы мост не был установлен.
+        ///
+        /// <para>
+        /// Всё остальное спрашивается ровно как у фасада, и по той же причине:
+        /// порождённый код читает не опции, а одно поведение, под которое
+        /// напечатан. Конвертеры при этом по-прежнему запрещены - чужой
+        /// конвертер мог бы отвечать за тип <b>внутри</b> нашего объекта,
+        /// который мы пишем целиком и про который его не спросим.
+        /// </para>
+        ///
+        /// <para>
+        /// Вердикт кешируется отдельным столбцом: у одних и тех же опций два
+        /// вопроса дают разные ответы, и путать их нельзя.
+        /// </para>
+        /// </summary>
+        public static bool IsDefaultApartFromTheResolver(JsonSerializerOptions? options)
+        {
+            if (options is null)
+            {
+                return true;
+            }
+
+            if (BridgeVerdicts.TryGetValue(options, out var cached))
+            {
+                return (bool)cached;
+            }
+
+            var verdict = ComputeApartFromTheResolver(options);
+
+            if (options.IsReadOnly)
+            {
+                try
+                {
+                    BridgeVerdicts.Add(options, verdict ? Yes : No);
+                }
+                catch (ArgumentException)
+                {
+                    //кто-то успел раньше; вердикт у него тот же
+                }
+            }
+
+            return verdict;
+        }
+
+        private static readonly ConditionalWeakTable<JsonSerializerOptions, object> BridgeVerdicts =
+            new ConditionalWeakTable<JsonSerializerOptions, object>();
+
+        private static bool ComputeApartFromTheResolver(JsonSerializerOptions options)
+        {
+            return options.Converters.Count == 0 && ComparedPropertiesAreDefault(options);
+        }
+
         private static bool Compute(JsonSerializerOptions options)
         {
             if (options.Converters.Count > 0)
@@ -149,6 +204,17 @@ namespace JsonGoddess.Compat
                 return false;
             }
 
+            return ComparedPropertiesAreDefault(options);
+        }
+
+        /// <summary>
+        /// Все сравниваемые свойства совпадают с умолчанием. Вынесено из
+        /// <see cref="Compute"/> затем, чтобы вопрос моста и вопрос фасада
+        /// отличались ровно тем, чем они отличаются, - и ни одним свойством
+        /// больше.
+        /// </summary>
+        private static bool ComparedPropertiesAreDefault(JsonSerializerOptions options)
+        {
             foreach (var property in Compared)
             {
                 object? mine;

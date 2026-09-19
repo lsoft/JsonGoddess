@@ -8,6 +8,7 @@ namespace JsonGoddess.PerformanceTests.Model
     /// всякий, кому важна скорость, включит именно этот.
     /// </summary>
     [JsonSerializable(typeof(Order))]
+    [JsonSerializable(typeof(Order[]))]
     [JsonSerializable(typeof(OrderLine))]
     [JsonSerializable(typeof(Wide))]
     public partial class OrderJsonContext : JsonSerializerContext

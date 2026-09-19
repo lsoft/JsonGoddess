@@ -26,6 +26,8 @@ namespace JsonGoddess.PerformanceTests
                 new FlagCostFixture().Setup();
                 new LayoutFixture().Setup();
                 new EscapingFixture().Setup();
+                new BridgeFixture().Setup();
+                new ValueReadFixture().Setup();
 
                 Console.WriteLine("verify: all serializers agree on every document, and they read back.");
                 return;
