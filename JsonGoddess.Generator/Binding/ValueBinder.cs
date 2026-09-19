@@ -454,10 +454,17 @@ namespace JsonGoddess.Generator.Binding
                 //ответа: какое из них напишет эталон, не определено и в самом
                 //BCL (Enum.GetName не обещает постоянства). Отказ здесь честнее
                 //выбора наугад, который выглядел бы как совместимость.
-                if (isStringEnum && !byValue.Add(field.ConstantValue?.ToString() ?? string.Empty))
+                //Значение печатается инвариантно, а не как придётся: знак
+                //минуса у отрицательной константы культурно-зависим (проверено
+                //пробой, scratchpad/CultureProbe - sv-SE даёт U+2212, ar-SA и
+                //fa-IR добавляют метку направления). Ключ и текст отказа не
+                //имеют права зависеть от локали машины, на которой собирают.
+                var constant = UnderlyingValue(field);
+
+                if (isStringEnum && !byValue.Add(constant))
                 {
                     refusal = "members '" + field.Name + "' and an earlier one share the underlying value "
-                        + field.ConstantValue + "; in string form there is no defined answer to which name is written, "
+                        + constant + "; in string form there is no defined answer to which name is written, "
                         + "so JsonGoddess refuses instead of guessing";
                     return false;
                 }
@@ -505,6 +512,27 @@ namespace JsonGoddess.Generator.Binding
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Числовое значение члена enum'а в виде, не зависящем от локали
+        /// сборочной машины.
+        ///
+        /// <para>
+        /// <c>ConstantValue</c> - это <c>object</c> с упакованным целым любой
+        /// ширины, и его <c>ToString()</c> взял бы знак минуса у текущей
+        /// культуры. Проба (<c>scratchpad/CultureProbe</c>) показала, что под
+        /// sv-SE минус превращается в U+2212, а под ar-SA и fa-IR к нему
+        /// добавляется метка направления письма. Значение уходит и в ключ
+        /// разрешения дубликатов, и в текст отказа: и то и другое обязано быть
+        /// одинаковым на любой машине.
+        /// </para>
+        /// </summary>
+        private static string UnderlyingValue(IFieldSymbol field)
+        {
+            return field.ConstantValue is System.IFormattable formattable
+                ? formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture)
+                : field.ConstantValue?.ToString() ?? string.Empty;
         }
 
         private static bool IsAscii(string value)

@@ -43,4 +43,14 @@
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
+
+  <ItemGroup>
+    <!--
+      Культура прогона из JSONGODDESS_TEST_CULTURE - один файл на все тестовые
+      проекты. Генератор работает на сборке, и его культура - тоже культура
+      машины, так что вопрос стоит здесь ровно так же, как и в рантайме.
+    -->
+    <Compile Include="..\JsonGoddess.Tests\TestCulture.cs" Link="Shared\TestCulture.cs" />
+  </ItemGroup>
+
 </Project>

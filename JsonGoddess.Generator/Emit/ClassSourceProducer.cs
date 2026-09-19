@@ -27,6 +27,7 @@ namespace JsonGoddess.Generator.Emit
         private const string DocumentException = "global::JsonGoddess.JsonDocumentException";
         private const string PathBuilder = "global::JsonGoddess.Internal.JsonPath";
         private const string PathAnchor = "global::JsonGoddess.JsonPathAnchor";
+        private const string RequiredNames = "global::JsonGoddess.Internal.JsonRequiredNames";
 
         /// <summary>
         /// Просьба к JIT'у вставить тело по месту. Ставится только на читатель
@@ -1134,6 +1135,11 @@ namespace JsonGoddess.Generator.Emit
         /// почтения, а из расчёта на compat-слой (§10): там наше исключение
         /// увидит чужой код, написанный под эталон.
         ///
+        /// Разделитель в списке - не константа: эталон берёт его у текущей
+        /// культуры интерфейса, и <c>'a'; 'b'</c> выше - это вид под ru-RU, а
+        /// под en-US будет <c>'a', 'b'</c>. Правило вынесено в
+        /// <c>JsonGoddess.Internal.JsonRequiredNames</c>, где и объяснено.
+        ///
         /// Перечисляются <b>JSON-имена</b>, а не имена членов: у эталона в
         /// списке стои́т <c>'amt'</c>, когда член назван
         /// <c>[JsonPropertyName("amt")] Amount</c>.
@@ -1190,7 +1196,7 @@ namespace JsonGoddess.Generator.Emit
             builder.OpenBlock("for (var i = 0; i < names.Length; i++)");
             builder.OpenBlock("if ((seen & (1UL << i)) == 0UL)");
             builder.OpenBlock("if (missing.Length > 0)");
-            builder.Line("missing.Append(\"; \");");
+            builder.Line("missing.Append(" + RequiredNames + ".Separator);");
             builder.CloseBlock();
             builder.Line();
             builder.Line("missing.Append('\\'').Append(names[i]).Append('\\'');");

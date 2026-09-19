@@ -55,6 +55,39 @@ jobs:
       - name: Generator tests
         run: dotnet test JsonGoddess.GeneratorTests/JsonGoddess.GeneratorTests.csproj -c Release --no-build
 
+      # Перехват вызовов фасада целиком: здесь он, в отличие от JsonGoddess.Tests,
+      # включён. Проект собирался и раньше, но не запускался - то есть
+      # проверялось, что сгенерированный перехват компилируется, и не
+      # проверялось, что он работает.
+      - name: Compat tests
+        run: dotnet test JsonGoddess.CompatTests/JsonGoddess.CompatTests.csproj -c Release --no-build
+
+      # Третий прогон тех же тестов под чужой культурой.
+      #
+      # Заведён по случаю. Сообщение об отказе эталон склеивает разделителем
+      # текущей культуры интерфейса, порождённый код держал его константой
+      # "; ", и верно это было ровно под ru-RU - культурой машины, на которой
+      # писалось. Раннер работает под en-US, и падение здесь было первым и
+      # единственным признаком. Симметричная ошибка - написанная под en-US и
+      # неверная в остальном мире - этим раннером не ловилась бы вовсе.
+      #
+      # tr-TR выбрана не наугад: это единственная культура, в которой
+      # 'I'.ToLower() даёт 'ı', а 'i'.ToUpper() - 'İ', то есть единственная,
+      # ломающая политики именования. ar-SA добавлена ради другого календаря,
+      # других цифр и метки направления письма перед знаком минуса.
+      - name: Test under a foreign culture
+        env:
+          JSONGODDESS_TEST_CULTURE: tr-TR
+        run: |
+          dotnet test JsonGoddess.Tests/JsonGoddess.Tests.csproj -c Release --no-build
+          dotnet test JsonGoddess.GeneratorTests/JsonGoddess.GeneratorTests.csproj -c Release --no-build
+          dotnet test JsonGoddess.CompatTests/JsonGoddess.CompatTests.csproj -c Release --no-build
+
+      - name: Test under a right-to-left culture
+        env:
+          JSONGODDESS_TEST_CULTURE: ar-SA
+        run: dotnet test JsonGoddess.Tests/JsonGoddess.Tests.csproj -c Release --no-build
+
       # Не замер, а проверка: все участники бенчмарка обязаны выдавать один и
       # тот же документ. Расхождение здесь означает, что сравнивать нечего, и
       # узнать об этом надо до, а не после получаса BenchmarkDotNet.

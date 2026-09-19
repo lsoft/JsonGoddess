@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -1022,17 +1023,34 @@ namespace JsonGoddess.Tests.Generated
         /// сообщение увидит чужой код в compat-слое (§10).
         ///
         /// Ожидание получено пробой эталона, а не написано рукой: в списке
-        /// стоят <b>JSON-имена</b> (<c>'amt'</c>, не <c>'Renamed'</c>),
-        /// разделены <c>"; "</c>, порядок - объявления.
+        /// стоят <b>JSON-имена</b> (<c>'amt'</c>, не <c>'Renamed'</c>), порядок -
+        /// объявления.
+        ///
+        /// <para>
+        /// Разделитель списка литералом не записан намеренно. Эталон берёт его
+        /// у текущей культуры интерфейса, так что под ru-RU список выглядит
+        /// как <c>'a'; 'b'</c>, а под en-US - как <c>'a', 'b'</c>. Записанный
+        /// литералом, он делал бы тест верным ровно на машине автора: CI под
+        /// en-US ловил здесь падение, которого на ru-RU не было, и падал при
+        /// этом не тест, а порождённый код - он-то разделитель и держал
+        /// константой. Поэтому в <c>InlineData</c> стоят только имена, а
+        /// склеивает их то же правило, которое печатает генератор: если
+        /// правило неверно, первое же утверждение разойдётся с эталоном.
+        /// </para>
         /// </summary>
         [Theory]
-        [InlineData("{}", "'Amount'; 'Count'; 'Label'; 'amt'")]
-        [InlineData("{\"Amount\":1}", "'Count'; 'Label'; 'amt'")]
-        [InlineData("{\"Amount\":1,\"Count\":2,\"Label\":\"L\"}", "'amt'")]
-        [InlineData("{\"Amount\":1,\"Count\":2,\"Label\":\"L\",\"Renamed\":3}", "'amt'")]
-        [InlineData("{\"amount\":1,\"Count\":2,\"Label\":\"L\",\"amt\":3}", "'Amount'")]
-        public void Missing_required_name_is_refused_with_the_reference_wording(string json, string expected)
+        [InlineData("{}", "Amount Count Label amt")]
+        [InlineData("{\"Amount\":1}", "Count Label amt")]
+        [InlineData("{\"Amount\":1,\"Count\":2,\"Label\":\"L\"}", "amt")]
+        [InlineData("{\"Amount\":1,\"Count\":2,\"Label\":\"L\",\"Renamed\":3}", "amt")]
+        [InlineData("{\"amount\":1,\"Count\":2,\"Label\":\"L\",\"amt\":3}", "Amount")]
+        public void Missing_required_name_is_refused_with_the_reference_wording(string json, string missingNames)
         {
+            var expected = string.Join(
+                JsonRequiredNames.Separator,
+                missingNames.Split(' ').Select(name => "'" + name + "'")
+                );
+
             var utf8 = Encoding.UTF8.GetBytes(json);
 
             var theirs = Assert.Throws<JsonException>(
@@ -1049,6 +1067,55 @@ namespace JsonGoddess.Tests.Generated
             Assert.Contains(expected, theirs.Message, StringComparison.Ordinal);
             Assert.Contains(expected, ours.Message, StringComparison.Ordinal);
             Assert.Contains("was missing required properties including", ours.Message, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Разделитель списка следует за культурой интерфейса - и следует у
+        /// обоих сразу.
+        ///
+        /// Тест существует ради одного: расхождение по локали обязано ловиться
+        /// на машине разработчика, а не на раннере CI. Предыдущая редакция
+        /// соседнего теста держала разделитель литералом и была поэтому верна
+        /// ровно под ru-RU; под en-US порождённый код печатал <c>'a'; 'b'</c>
+        /// там, где эталон печатает <c>'a', 'b'</c>, и узнали мы об этом из
+        /// чужого прогона.
+        /// </summary>
+        [Theory]
+        [InlineData("en-US")]
+        [InlineData("ru-RU")]
+        [InlineData("")]
+        public void The_missing_list_follows_the_ui_culture_the_way_the_reference_does(string culture)
+        {
+            var previous = CultureInfo.CurrentUICulture;
+            try
+            {
+                CultureInfo.CurrentUICulture = new CultureInfo(culture);
+
+                var utf8 = Encoding.UTF8.GetBytes("{}");
+
+                var theirs = Assert.Throws<JsonException>(
+                    () => JsonSerializer.Deserialize<Demanding>(utf8, Reference.Relaxed)
+                    );
+
+                var ours = Assert.Throws<JsonDocumentException>(
+                    () =>
+                    {
+                        DemandingSerializer.Deserialize(DefaultInjector.Instance, utf8, out _);
+                    }
+                    );
+
+                var expected = string.Join(
+                    JsonRequiredNames.Separator,
+                    new[] { "Amount", "Count", "Label", "amt", }.Select(name => "'" + name + "'")
+                    );
+
+                Assert.Contains(expected, theirs.Message, StringComparison.Ordinal);
+                Assert.Contains(expected, ours.Message, StringComparison.Ordinal);
+            }
+            finally
+            {
+                CultureInfo.CurrentUICulture = previous;
+            }
         }
 
         /// <summary>
