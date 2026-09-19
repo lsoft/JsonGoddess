@@ -72,22 +72,28 @@ namespace JsonGoddess.StreamingPrototype.Web
                         : InputFormatterResult.Success(one);
                 }
 
-                var items = await Driver.ReadOrders(
+                //Список и массив читает один автомат, и различаются они только
+                //тем, во что накопитель отдаёт прочитанное: копия из одного в
+                //другое стоила бы ровно того, ради чего накопитель и заведён.
+                //
+                //Драйвер создаётся здесь, а не точкой входа StreamReadArray_,
+                //только ради счётчиков: без них потоковый путь нечем проверять.
+                var driver = new Generated.OrderHost.Stream_JsonGoddess_PerformanceTests_Model_Order(
+                    DefaultInjector.Instance,
+                    asList: context.ModelType != typeof(Order[])
+                    );
+
+                var items = await driver.ReadAsync(
                     context.HttpContext.Request.BodyReader,
-                    stats,
                     Driver.DefaultCap,
                     context.HttpContext.RequestAborted
                     );
 
-                Last = new DriverStatsSnapshot(stats.Reads, stats.Retries, stats.Gathers, stats.LargestWindow);
+                Last = new DriverStatsSnapshot(
+                    driver.Reads, driver.Retries, driver.Gathers, driver.LargestWindow
+                    );
 
-                //массив отдаётся КАК ЕСТЬ - он уже нужного размера. Копия
-                //здесь стоила бы ровно того, ради чего заведён OrderBuilder.
-                object model = context.ModelType == typeof(Order[])
-                    ? items
-                    : new List<Order>(items);
-
-                return InputFormatterResult.Success(model);
+                return InputFormatterResult.Success(items);
             }
             catch (JsonDocumentException error)
             {

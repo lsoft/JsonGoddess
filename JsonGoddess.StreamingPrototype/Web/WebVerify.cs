@@ -47,6 +47,23 @@ namespace JsonGoddess.StreamingPrototype.Web
             await SingleObject(stock, ours, 3, "обычный");
             await SingleObject(stock, ours, 2000, "толстый");
 
+            //Пути отказа у корневого ОБЪЕКТА: их драйвер ставит сам, и правила
+            //у него другие, чем у массива. Особенно внутри свойства-коллекции -
+            //там путь собирается из имени свойства, индекса элемента и холодного
+            //прохода по элементу, и проверить это можно только сверкой.
+            await SameRefusalOne(stock, ours, "{\"id\":01}", "объект: ведущий ноль");
+            await SameRefusalOne(stock, ours, "{\"id\":1,}", "объект: висячая запятая");
+            await SameRefusalOne(
+                stock, ours,
+                "{\"id\":1,\"lines\":[{\"sku\":\"a\",\"quantity\":1,\"price\":1},{\"sku\":\"b\",\"quantity\":2,\"price\":01}]}",
+                "объект: ведущий ноль во втором элементе коллекции"
+                );
+            await SameRefusalOne(
+                stock, ours,
+                "{\"id\":1,\"lines\":[{\"sku\":\"a\",\"quantity\":\"нет\"}]}",
+                "объект: не число в элементе коллекции"
+                );
+
             await Aborted(stock, "эталон");
             await Aborted(ours, "мы");
 
@@ -117,6 +134,24 @@ namespace JsonGoddess.StreamingPrototype.Web
             //Сверяются код и КЛЮЧИ ModelState - то есть то, что клиент
             //разбирает машинно. Тексты сообщений у нас свои и совпадать не
             //обязаны: это объявленное расхождение, а не недосмотр.
+            var theirKeys = Keys(theirs.Body);
+            var myKeys = Keys(mine.Body);
+
+            Verify.Check(
+                theirs.Status == mine.Status && theirKeys == myKeys,
+                what + ": код " + (int)theirs.Status + "/" + (int)mine.Status
+                + ", ключи «" + theirKeys + "» / «" + myKeys + "»"
+                );
+        }
+
+        /// <summary>То же, но телом с одним объектом - маршрут <c>/one</c>.</summary>
+        private static async Task SameRefusalOne(IHost stock, IHost ours, string text, string what)
+        {
+            var body = Encoding.UTF8.GetBytes(text);
+
+            var theirs = await Post(stock, body, "/one");
+            var mine = await Post(ours, body, "/one");
+
             var theirKeys = Keys(theirs.Body);
             var myKeys = Keys(mine.Body);
 

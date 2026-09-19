@@ -200,6 +200,98 @@ namespace Demo
         }
 
         /// <summary>
+        /// Драйвер (пункт 6в) печатается на корень, и только на него: спускаться
+        /// по свойствам имеет смысл там, где объект и есть весь документ.
+        /// </summary>
+        [Fact]
+        public void A_root_gets_both_drivers_and_the_descent_into_a_collection()
+        {
+            var source = @"
+using System;
+using JsonGoddess;
+using System.Collections.Generic;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    public class Line
+    {
+        public int Quantity { get; set; }
+    }
+
+    public class Subject
+    {
+        public int Id { get; set; }
+        public List<Line>? Lines { get; set; }
+    }
+
+    [JsonSubject(typeof(Subject), true)]
+    [JsonSubject(typeof(Line), false)]
+    public partial class SubjectSerializer
+    {
+    }
+}
+";
+
+            var run = Run(source, On);
+            var text = Streaming(run)!;
+
+            Assert.Empty(run.CompilationErrors);
+
+            //массив и список читает один автомат, объект - другой
+            Assert.Contains("StreamReadArray_Demo_Subject", text);
+            Assert.Contains("StreamReadList_Demo_Subject", text);
+            Assert.Contains("StreamReadOne_Demo_Subject", text);
+
+            //поимущественное чтение и спуск в коллекцию
+            Assert.Contains("TryReadName_Demo_Subject", text);
+            Assert.Contains("TryReadValue_Demo_Subject", text);
+            Assert.Contains("спуск до элемента", text);
+
+            //вложенный тип корнем не объявлен - драйвера у него нет
+            Assert.DoesNotContain("StreamReadArray_Demo_Line", text);
+        }
+
+        /// <summary>
+        /// Отложенная сборка снимает поимущественное чтение: пока не прочитано
+        /// всё, объекта не существует - класть свойство некуда. Единицей
+        /// переигрывания остаётся объект целиком, и это не отказ, а другая цена.
+        /// </summary>
+        [Fact]
+        public void A_constructor_bound_root_keeps_the_whole_object_as_the_retry_unit()
+        {
+            var source = @"
+using System;
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    public class Subject
+    {
+        public Subject(int id) => Id = id;
+
+        public int Id { get; }
+    }
+
+    [JsonSubject(typeof(Subject), true)]
+    public partial class SubjectSerializer
+    {
+    }
+}
+";
+
+            var run = Run(source, On);
+            var text = Streaming(run)!;
+
+            Assert.Empty(run.CompilationErrors);
+
+            Assert.Contains("StreamReadArray_Demo_Subject", text);
+            Assert.DoesNotContain("StreamReadOne_Demo_Subject", text);
+            Assert.DoesNotContain("TryReadName_Demo_Subject", text);
+        }
+
+        /// <summary>
         /// Хост, где обслуживать нечего, не печатает пустого файла: файл,
         /// которого может не быть, лучше видно отсутствующим.
         /// </summary>

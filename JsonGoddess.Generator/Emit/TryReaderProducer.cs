@@ -226,6 +226,19 @@ namespace JsonGoddess.Generator.Emit
                 foreach (var subject in host.Subjects.Where(s => servable.Contains(s.MethodSuffix)))
                 {
                     EmitSubjectReader(builder, subject, injector, host.Guards, host.MaxDepth, host.Features);
+
+                    //половинки поимущественного чтения печатаются только
+                    //корню: спускаться по свойствам имеет смысл там, где
+                    //объект и есть весь документ
+                    if (subject.IsRoot && ReadsByProperty(subject, host.Guards))
+                    {
+                        var members = subject.Members.Where(m => m.CanRead).ToList();
+
+                        EmitNameReader(builder, subject, injector, members, host.Guards, host.Features);
+                        EmitPropertyValueReader(
+                            builder, subject, injector, members, host.Guards, host.MaxDepth, host.Features
+                            );
+                    }
                 }
 
                 foreach (var scalar in host.Scalars)
@@ -243,6 +256,8 @@ namespace JsonGoddess.Generator.Emit
                     EmitEnumReader(builder, enumModel, injector, host.Guards, host.Features);
                 }
             }
+
+            StreamDriverProducer.Emit(builder, host, servable);
 
             builder.CloseBlock();
 
@@ -582,6 +597,177 @@ namespace JsonGoddess.Generator.Emit
             builder.Line("return true;");
 
             EmitDepthClose(builder, guardsDepth);
+
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Годится ли субъект на <b>поимущественное</b> чтение - то, при
+        /// котором единицей переигрывания становится свойство, а сам объект
+        /// живёт в состоянии драйвера и не выбрасывается.
+        ///
+        /// <para>
+        /// Отложенная сборка это исключает: пока не прочитано всё, объекта не
+        /// существует - класть свойство некуда. Страж повторов тоже: его флаги
+        /// живут в теле читателя, а тут тела нет, есть отдельные вызовы.
+        /// Оба случая не отказ, а возврат к прежней единице - объекту целиком.
+        /// </para>
+        /// </summary>
+        public static bool ReadsByProperty(SubjectModel subject, JsonGuard guards)
+        {
+            return !subject.NeedsDeferredConstruction
+                && (guards & JsonGuard.DuplicateProperties) == 0;
+        }
+
+        public static string NameMethod(SubjectModel subject) => "TryReadName_" + subject.MethodSuffix;
+
+        public static string ValueMethod(SubjectModel subject) => "TryReadValue_" + subject.MethodSuffix;
+
+        /// <summary>
+        /// Имя свойства и двоеточие, плюс номер попавшегося члена
+        /// (<c>-1</c> - незнакомое имя).
+        ///
+        /// <para>
+        /// Отдельно от значения не ради красоты: драйвер одиночного объекта,
+        /// узнав член, иногда берёт разбор его значения на себя - чтобы единицей
+        /// переигрывания стал элемент коллекции, а не свойство целиком. На
+        /// толстом объекте это разница между окном в весь документ и окном в
+        /// один элемент.
+        /// </para>
+        /// </summary>
+        private static void EmitNameReader(
+            SourceBuilder builder,
+            SubjectModel subject,
+            string injector,
+            List<MemberModel> members,
+            JsonGuard guards,
+            JsonFeature features
+            )
+        {
+            builder.Line("internal static bool " + NameMethod(subject) + "(");
+            builder.Indent();
+            builder.Line(injector + " injector,");
+            builder.Line("scoped " + Span + " json,");
+            builder.Line("scoped ref int position,");
+            builder.Line("scoped ref " + Context + " context,");
+            builder.Line("bool final,");
+            builder.Line("out int which");
+            builder.Line(")");
+            builder.Unindent();
+            builder.OpenBlock();
+
+            builder.Line("which = -1;");
+            builder.Line();
+
+            EmitTrivia(builder, features);
+            Fail(builder, StringRead(guards) + "(json, ref position, final, out var name, out var nameEscaped)");
+            Fail(builder, TryScan + ".Expect(json, ref position, " + TryScan + ".Colon, final)");
+
+            if (members.Count > 0)
+            {
+                builder.Unindent();
+                builder.Line("dispatch:");
+                builder.Indent();
+
+                NameDispatcher.Emit(
+                    builder,
+                    members,
+                    features,
+                    member => builder.Line(
+                        "which = " + members.IndexOf(member).ToString(System.Globalization.CultureInfo.InvariantCulture) + ";"
+                        )
+                    );
+
+                builder.OpenBlock("if (nameEscaped)");
+                builder.Line("nameEscaped = false;");
+                builder.Line(
+                    "name = context.UnescapeName(name"
+                    + ((guards & JsonGuard.InvalidUtf8) != 0 ? ", true" : string.Empty) + ");"
+                    );
+                builder.Line("goto dispatch;");
+                builder.CloseBlock();
+                builder.Line();
+
+                builder.Unindent();
+                builder.Line("next:");
+                builder.Indent();
+            }
+
+            builder.Line("return true;");
+
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Значение члена по его номеру - вторая половина поимущественного
+        /// чтения.
+        /// </summary>
+        private static void EmitPropertyValueReader(
+            SourceBuilder builder,
+            SubjectModel subject,
+            string injector,
+            IReadOnlyList<MemberModel> members,
+            JsonGuard guards,
+            int maxDepth,
+            JsonFeature features
+            )
+        {
+            builder.Line("internal static bool " + ValueMethod(subject) + "(");
+            builder.Indent();
+            builder.Line(injector + " injector,");
+            builder.Line("scoped " + Span + " json,");
+            builder.Line("scoped ref int position,");
+            builder.Line("scoped ref " + Context + " context,");
+            builder.Line("bool final,");
+            builder.Line(subject.FullName + " result,");
+            builder.Line("int which");
+            builder.Line(")");
+            builder.Unindent();
+            builder.OpenBlock();
+
+            builder.OpenBlock("switch (which)");
+
+            var temps = new Temps();
+
+            for (var i = 0; i < members.Count; i++)
+            {
+                var member = members[i];
+
+                builder.Line("case " + i.ToString(System.Globalization.CultureInfo.InvariantCulture) + ": //" + member.JsonName);
+                builder.OpenBlock();
+                EmitValueRead(builder, member.Value, "result." + member.MemberName, temps);
+                builder.Line("return true;");
+                builder.CloseBlock();
+                builder.Line();
+            }
+
+            builder.Line("default:");
+            builder.OpenBlock();
+
+            if ((guards & JsonGuard.UnknownProperties) != 0)
+            {
+                builder.Line(
+                    "throw new " + DocumentException
+                    + "(\"Unknown property.\", position);"
+                    );
+            }
+            else if ((guards & JsonGuard.MaxDepth) != 0)
+            {
+                builder.Line(
+                    "return " + TryScan + ".SkipValueGuarded(json, ref position, ref context.Depth, "
+                    + maxDepth + ", final);"
+                    );
+            }
+            else
+            {
+                builder.Line("return " + TryScan + ".SkipValue(json, ref position, final);");
+            }
+
+            builder.CloseBlock();
+
+            builder.CloseBlock();
 
             builder.CloseBlock();
             builder.Line();
