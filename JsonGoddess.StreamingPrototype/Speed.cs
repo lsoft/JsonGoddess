@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using JsonGoddess.Internal;
 using JsonGoddess.PerformanceTests.Model;
 
 namespace JsonGoddess.StreamingPrototype
@@ -28,9 +29,9 @@ namespace JsonGoddess.StreamingPrototype
             {
                 var position = 0;
 
-                TryScan.Expect(span, ref position, TryScan.OpenBracket, true);
+                JsonTryScan.Expect(span, ref position, JsonTryScan.OpenBracket, true);
 
-                if (!TryScan.TryConsume(span, ref position, TryScan.CloseBracket, true, out var empty) || empty)
+                if (!JsonTryScan.TryConsume(span, ref position, JsonTryScan.CloseBracket, true, out var empty) || empty)
                 {
                     return items.Finish();
                 }
@@ -40,14 +41,14 @@ namespace JsonGoddess.StreamingPrototype
                     OrderReader.Order(span, ref position, ref context, true, out var order);
                     items.Add(order!);
 
-                    TryScan.TryConsume(span, ref position, TryScan.Comma, true, out var more);
+                    JsonTryScan.TryConsume(span, ref position, JsonTryScan.Comma, true, out var more);
                     if (!more)
                     {
                         break;
                     }
                 }
 
-                TryScan.Expect(span, ref position, TryScan.CloseBracket, true);
+                JsonTryScan.Expect(span, ref position, JsonTryScan.CloseBracket, true);
                 return items.Finish();
             }
             finally

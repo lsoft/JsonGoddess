@@ -205,7 +205,7 @@ namespace JsonGoddess.StreamingPrototype
 
                 if (phase == Phase.BeforeArray)
                 {
-                    if (!TryScan.Expect(span, ref position, TryScan.OpenBracket, final))
+                    if (!JsonTryScan.Expect(span, ref position, JsonTryScan.OpenBracket, final))
                     {
                         return consumed;
                     }
@@ -219,7 +219,7 @@ namespace JsonGoddess.StreamingPrototype
                     if (phase == Phase.BeforeFirstElement)
                     {
                         //пустой массив законен только здесь
-                        if (!TryScan.TryConsume(span, ref position, TryScan.CloseBracket, final, out var empty))
+                        if (!JsonTryScan.TryConsume(span, ref position, JsonTryScan.CloseBracket, final, out var empty))
                         {
                             return consumed;
                         }
@@ -284,7 +284,7 @@ namespace JsonGoddess.StreamingPrototype
                         }
                     }
 
-                    if (!TryScan.TryConsume(span, ref position, TryScan.Comma, final, out var more))
+                    if (!JsonTryScan.TryConsume(span, ref position, JsonTryScan.Comma, final, out var more))
                     {
                         return consumed;
                     }
@@ -296,7 +296,7 @@ namespace JsonGoddess.StreamingPrototype
                         continue;
                     }
 
-                    if (!TryScan.Expect(span, ref position, TryScan.CloseBracket, final))
+                    if (!JsonTryScan.Expect(span, ref position, JsonTryScan.CloseBracket, final))
                     {
                         return consumed;
                     }

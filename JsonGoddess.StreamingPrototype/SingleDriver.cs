@@ -150,7 +150,7 @@ namespace JsonGoddess.StreamingPrototype
 
                 if (phase == Phase.BeforeObject)
                 {
-                    if (!TryScan.Null(span, ref position, final, out var isNull))
+                    if (!JsonTryScan.TryReadNull(span, ref position, final, out var isNull))
                     {
                         return consumed;
                     }
@@ -161,7 +161,7 @@ namespace JsonGoddess.StreamingPrototype
                         return position;
                     }
 
-                    if (!TryScan.Expect(span, ref position, TryScan.OpenBrace, final))
+                    if (!JsonTryScan.Expect(span, ref position, JsonTryScan.OpenBrace, final))
                     {
                         return consumed;
                     }
@@ -176,7 +176,7 @@ namespace JsonGoddess.StreamingPrototype
                     if (phase == Phase.BeforeFirstProperty)
                     {
                         //пустой объект законен только здесь
-                        if (!TryScan.TryConsume(span, ref position, TryScan.CloseBrace, final, out var empty))
+                        if (!JsonTryScan.TryConsume(span, ref position, JsonTryScan.CloseBrace, final, out var empty))
                         {
                             return consumed;
                         }
@@ -211,7 +211,7 @@ namespace JsonGoddess.StreamingPrototype
                             {
                                 //Спуск: массив строк разбирается ЗДЕСЬ, по
                                 //элементу, а не целиком внутри читателя.
-                                if (!TryScan.Null(span, ref position, final, out var noLines))
+                                if (!JsonTryScan.TryReadNull(span, ref position, final, out var noLines))
                                 {
                                     stats.Retries++;
                                     return consumed;
@@ -225,7 +225,7 @@ namespace JsonGoddess.StreamingPrototype
                                     goto separator;
                                 }
 
-                                if (!TryScan.Expect(span, ref position, TryScan.OpenBracket, final))
+                                if (!JsonTryScan.Expect(span, ref position, JsonTryScan.OpenBracket, final))
                                 {
                                     stats.Retries++;
                                     return consumed;
@@ -268,7 +268,7 @@ namespace JsonGoddess.StreamingPrototype
 
                     if (phase == Phase.LinesFirst)
                     {
-                        if (!TryScan.TryConsume(span, ref position, TryScan.CloseBracket, final, out var empty))
+                        if (!JsonTryScan.TryConsume(span, ref position, JsonTryScan.CloseBracket, final, out var empty))
                         {
                             return consumed;
                         }
@@ -327,7 +327,7 @@ namespace JsonGoddess.StreamingPrototype
                             }
                         }
 
-                        if (!TryScan.TryConsume(span, ref position, TryScan.Comma, final, out var another))
+                        if (!JsonTryScan.TryConsume(span, ref position, JsonTryScan.Comma, final, out var another))
                         {
                             return consumed;
                         }
@@ -339,7 +339,7 @@ namespace JsonGoddess.StreamingPrototype
                             continue;
                         }
 
-                        if (!TryScan.Expect(span, ref position, TryScan.CloseBracket, final))
+                        if (!JsonTryScan.Expect(span, ref position, JsonTryScan.CloseBracket, final))
                         {
                             return consumed;
                         }
@@ -350,7 +350,7 @@ namespace JsonGoddess.StreamingPrototype
 
                 separator:
 
-                    if (!TryScan.TryConsume(span, ref position, TryScan.Comma, final, out var more))
+                    if (!JsonTryScan.TryConsume(span, ref position, JsonTryScan.Comma, final, out var more))
                     {
                         return consumed;
                     }
@@ -362,7 +362,7 @@ namespace JsonGoddess.StreamingPrototype
                         continue;
                     }
 
-                    if (!TryScan.Expect(span, ref position, TryScan.CloseBrace, final))
+                    if (!JsonTryScan.Expect(span, ref position, JsonTryScan.CloseBrace, final))
                     {
                         return consumed;
                     }
@@ -418,7 +418,7 @@ namespace JsonGoddess.StreamingPrototype
 
             try
             {
-                return TryScan.String(span, ref position, true, out var raw, out var escaped)
+                return JsonTryScan.ReadStringContent(span, ref position, true, out var raw, out var escaped)
                     ? JsonStringDecoder.Decode(raw, escaped)
                     : null;
             }

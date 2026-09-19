@@ -39,7 +39,7 @@ namespace JsonGoddess.StreamingPrototype
         {
             value = null;
 
-            if (!TryScan.Null(json, ref position, final, out var isNull))
+            if (!JsonTryScan.TryReadNull(json, ref position, final, out var isNull))
             {
                 return false;
             }
@@ -49,14 +49,14 @@ namespace JsonGoddess.StreamingPrototype
                 return true;
             }
 
-            if (!TryScan.Expect(json, ref position, TryScan.OpenBrace, final))
+            if (!JsonTryScan.Expect(json, ref position, JsonTryScan.OpenBrace, final))
             {
                 return false;
             }
 
             var result = new Order();
 
-            if (!TryScan.TryConsume(json, ref position, TryScan.CloseBrace, final, out var closed))
+            if (!JsonTryScan.TryConsume(json, ref position, JsonTryScan.CloseBrace, final, out var closed))
             {
                 return false;
             }
@@ -74,7 +74,7 @@ namespace JsonGoddess.StreamingPrototype
                     return false;
                 }
 
-                if (!TryScan.TryConsume(json, ref position, TryScan.Comma, final, out var more))
+                if (!JsonTryScan.TryConsume(json, ref position, JsonTryScan.Comma, final, out var more))
                 {
                     return false;
                 }
@@ -85,7 +85,7 @@ namespace JsonGoddess.StreamingPrototype
                 }
             }
 
-            if (!TryScan.Expect(json, ref position, TryScan.CloseBrace, final))
+            if (!JsonTryScan.Expect(json, ref position, JsonTryScan.CloseBrace, final))
             {
                 return false;
             }
@@ -147,7 +147,7 @@ namespace JsonGoddess.StreamingPrototype
         {
             which = Member.Unknown;
 
-            if (!TryScan.String(json, ref position, final, out var name, out var nameEscaped))
+            if (!JsonTryScan.ReadStringContent(json, ref position, final, out var name, out var nameEscaped))
             {
                 return false;
             }
@@ -157,7 +157,7 @@ namespace JsonGoddess.StreamingPrototype
                 name = context.UnescapeName(name, true);
             }
 
-            if (!TryScan.Expect(json, ref position, TryScan.Colon, final))
+            if (!JsonTryScan.Expect(json, ref position, JsonTryScan.Colon, final))
             {
                 return false;
             }
@@ -219,7 +219,7 @@ namespace JsonGoddess.StreamingPrototype
                     return true;
 
                 case Member.Paid:
-                    if (!TryScan.Boolean(json, ref position, final, out var paid))
+                    if (!JsonTryScan.ReadBoolean(json, ref position, final, out var paid))
                     {
                         return false;
                     }
@@ -273,7 +273,7 @@ namespace JsonGoddess.StreamingPrototype
                     return true;
 
                 default:
-                    return Skip(json, ref position, ref context, final);
+                    return JsonTryScan.SkipValue(json, ref position, final);
             }
         }
 
@@ -287,7 +287,7 @@ namespace JsonGoddess.StreamingPrototype
         {
             value = null;
 
-            if (!TryScan.Null(json, ref position, final, out var isNull))
+            if (!JsonTryScan.TryReadNull(json, ref position, final, out var isNull))
             {
                 return false;
             }
@@ -297,14 +297,14 @@ namespace JsonGoddess.StreamingPrototype
                 return true;
             }
 
-            if (!TryScan.Expect(json, ref position, TryScan.OpenBracket, final))
+            if (!JsonTryScan.Expect(json, ref position, JsonTryScan.OpenBracket, final))
             {
                 return false;
             }
 
             var items = new List<OrderLine>();
 
-            if (!TryScan.TryConsume(json, ref position, TryScan.CloseBracket, final, out var closed))
+            if (!JsonTryScan.TryConsume(json, ref position, JsonTryScan.CloseBracket, final, out var closed))
             {
                 return false;
             }
@@ -324,7 +324,7 @@ namespace JsonGoddess.StreamingPrototype
 
                 items.Add(line!);
 
-                if (!TryScan.TryConsume(json, ref position, TryScan.Comma, final, out var more))
+                if (!JsonTryScan.TryConsume(json, ref position, JsonTryScan.Comma, final, out var more))
                 {
                     return false;
                 }
@@ -335,7 +335,7 @@ namespace JsonGoddess.StreamingPrototype
                 }
             }
 
-            if (!TryScan.Expect(json, ref position, TryScan.CloseBracket, final))
+            if (!JsonTryScan.Expect(json, ref position, JsonTryScan.CloseBracket, final))
             {
                 return false;
             }
@@ -354,7 +354,7 @@ namespace JsonGoddess.StreamingPrototype
         {
             value = null;
 
-            if (!TryScan.Null(json, ref position, final, out var isNull))
+            if (!JsonTryScan.TryReadNull(json, ref position, final, out var isNull))
             {
                 return false;
             }
@@ -364,14 +364,14 @@ namespace JsonGoddess.StreamingPrototype
                 return true;
             }
 
-            if (!TryScan.Expect(json, ref position, TryScan.OpenBrace, final))
+            if (!JsonTryScan.Expect(json, ref position, JsonTryScan.OpenBrace, final))
             {
                 return false;
             }
 
             var result = new OrderLine();
 
-            if (!TryScan.TryConsume(json, ref position, TryScan.CloseBrace, final, out var closed))
+            if (!JsonTryScan.TryConsume(json, ref position, JsonTryScan.CloseBrace, final, out var closed))
             {
                 return false;
             }
@@ -384,7 +384,7 @@ namespace JsonGoddess.StreamingPrototype
 
             while (true)
             {
-                if (!TryScan.String(json, ref position, final, out var name, out var nameEscaped))
+                if (!JsonTryScan.ReadStringContent(json, ref position, final, out var name, out var nameEscaped))
                 {
                     return false;
                 }
@@ -394,7 +394,7 @@ namespace JsonGoddess.StreamingPrototype
                     name = context.UnescapeName(name, true);
                 }
 
-                if (!TryScan.Expect(json, ref position, TryScan.Colon, final))
+                if (!JsonTryScan.Expect(json, ref position, JsonTryScan.Colon, final))
                 {
                     return false;
                 }
@@ -458,13 +458,13 @@ namespace JsonGoddess.StreamingPrototype
                         break;
                 }
 
-                if (!Skip(json, ref position, ref context, final))
+                if (!JsonTryScan.SkipValue(json, ref position, final))
                 {
                     return false;
                 }
 
             next:
-                if (!TryScan.TryConsume(json, ref position, TryScan.Comma, final, out var more))
+                if (!JsonTryScan.TryConsume(json, ref position, JsonTryScan.Comma, final, out var more))
                 {
                     return false;
                 }
@@ -475,7 +475,7 @@ namespace JsonGoddess.StreamingPrototype
                 }
             }
 
-            if (!TryScan.Expect(json, ref position, TryScan.CloseBrace, final))
+            if (!JsonTryScan.Expect(json, ref position, JsonTryScan.CloseBrace, final))
             {
                 return false;
             }
@@ -494,7 +494,7 @@ namespace JsonGoddess.StreamingPrototype
         {
             value = 0;
 
-            if (!TryScan.Number(json, ref position, final, out var raw))
+            if (!JsonTryScan.ReadNumberRawStrict(json, ref position, final, out var raw))
             {
                 return false;
             }
@@ -513,7 +513,7 @@ namespace JsonGoddess.StreamingPrototype
         {
             value = 0m;
 
-            if (!TryScan.Number(json, ref position, final, out var raw))
+            if (!JsonTryScan.ReadNumberRawStrict(json, ref position, final, out var raw))
             {
                 return false;
             }
@@ -532,7 +532,7 @@ namespace JsonGoddess.StreamingPrototype
         {
             value = null;
 
-            if (!TryScan.Null(json, ref position, final, out var isNull))
+            if (!JsonTryScan.TryReadNull(json, ref position, final, out var isNull))
             {
                 return false;
             }
@@ -542,7 +542,7 @@ namespace JsonGoddess.StreamingPrototype
                 return true;
             }
 
-            if (!TryScan.String(json, ref position, final, out var raw, out var hasEscape))
+            if (!JsonTryScan.ReadStringContent(json, ref position, final, out var raw, out var hasEscape))
             {
                 return false;
             }
@@ -561,7 +561,7 @@ namespace JsonGoddess.StreamingPrototype
         {
             value = default;
 
-            if (!TryScan.String(json, ref position, final, out var raw, out var hasEscape))
+            if (!JsonTryScan.ReadStringContent(json, ref position, final, out var raw, out var hasEscape))
             {
                 return false;
             }
@@ -580,154 +580,13 @@ namespace JsonGoddess.StreamingPrototype
         {
             value = default;
 
-            if (!TryScan.String(json, ref position, final, out var raw, out var hasEscape))
+            if (!JsonTryScan.ReadStringContent(json, ref position, final, out var raw, out var hasEscape))
             {
                 return false;
             }
 
             Injector.ParseText(ref context, raw, hasEscape, out value);
             return true;
-        }
-
-        /// <summary>
-        /// Незнакомое свойство. Рекурсия здесь не страшна: глубину ограничивает
-        /// тот же счётчик, что и у порождённого кода, а прототипу довольно
-        /// простой формы.
-        /// </summary>
-        private static bool Skip(
-            ReadOnlySpan<byte> json,
-            ref int position,
-            ref JsonParseContext context,
-            bool final
-            )
-        {
-            if (!TryScan.Whitespace(json, ref position, final))
-            {
-                return false;
-            }
-
-            if (position >= json.Length)
-            {
-                return final;
-            }
-
-            switch (json[position])
-            {
-                case TryScan.OpenBrace:
-                    return SkipObject(json, ref position, ref context, final);
-
-                case TryScan.OpenBracket:
-                    return SkipArray(json, ref position, ref context, final);
-
-                case TryScan.Quote:
-                    return TryScan.String(json, ref position, final, out _, out _);
-
-                case (byte)'t':
-                case (byte)'f':
-                    return TryScan.Boolean(json, ref position, final, out _);
-
-                case (byte)'n':
-                    return TryScan.Null(json, ref position, final, out _);
-
-                default:
-                    return TryScan.Number(json, ref position, final, out _);
-            }
-        }
-
-        private static bool SkipObject(
-            ReadOnlySpan<byte> json,
-            ref int position,
-            ref JsonParseContext context,
-            bool final
-            )
-        {
-            if (!TryScan.Expect(json, ref position, TryScan.OpenBrace, final))
-            {
-                return false;
-            }
-
-            if (!TryScan.TryConsume(json, ref position, TryScan.CloseBrace, final, out var closed))
-            {
-                return false;
-            }
-
-            if (closed)
-            {
-                return true;
-            }
-
-            while (true)
-            {
-                if (!TryScan.String(json, ref position, final, out _, out _))
-                {
-                    return false;
-                }
-
-                if (!TryScan.Expect(json, ref position, TryScan.Colon, final))
-                {
-                    return false;
-                }
-
-                if (!Skip(json, ref position, ref context, final))
-                {
-                    return false;
-                }
-
-                if (!TryScan.TryConsume(json, ref position, TryScan.Comma, final, out var more))
-                {
-                    return false;
-                }
-
-                if (!more)
-                {
-                    break;
-                }
-            }
-
-            return TryScan.Expect(json, ref position, TryScan.CloseBrace, final);
-        }
-
-        private static bool SkipArray(
-            ReadOnlySpan<byte> json,
-            ref int position,
-            ref JsonParseContext context,
-            bool final
-            )
-        {
-            if (!TryScan.Expect(json, ref position, TryScan.OpenBracket, final))
-            {
-                return false;
-            }
-
-            if (!TryScan.TryConsume(json, ref position, TryScan.CloseBracket, final, out var closed))
-            {
-                return false;
-            }
-
-            if (closed)
-            {
-                return true;
-            }
-
-            while (true)
-            {
-                if (!Skip(json, ref position, ref context, final))
-                {
-                    return false;
-                }
-
-                if (!TryScan.TryConsume(json, ref position, TryScan.Comma, final, out var more))
-                {
-                    return false;
-                }
-
-                if (!more)
-                {
-                    break;
-                }
-            }
-
-            return TryScan.Expect(json, ref position, TryScan.CloseBracket, final);
         }
     }
 }
