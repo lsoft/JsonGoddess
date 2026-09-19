@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Encodings.Web;
@@ -130,6 +131,14 @@ namespace JsonGoddess.WebPerformanceTests.Web
         internal JsonSerializerOptions MinimalApiOptions { get; }
 
         /// <summary>
+        /// Входные форматтеры приложения - в том порядке, в котором их
+        /// опрашивает MVC. Нужны затем, чтобы «форматтер зарегистрирован»
+        /// проверялось у работающего приложения, а не у той строки, которой мы
+        /// его туда клали.
+        /// </summary>
+        internal IReadOnlyList<IInputFormatter> InputFormatters { get; private set; } = null!;
+
+        /// <summary>
         /// Поднять приложение. <paramref name="goddess"/> - звать ли
         /// <c>UseJsonGoddess</c>; больше приложения ничем не отличаются.
         ///
@@ -145,7 +154,13 @@ namespace JsonGoddess.WebPerformanceTests.Web
         /// обосновывало.
         /// </para>
         /// </summary>
-        internal static async Task<Pipeline> StartAsync(bool goddess)
+        /// <param name="streaming">
+        /// Звать ли <c>AddJsonGoddess()</c> - порождённое расширение, ставящее
+        /// потоковый входной форматтер первым (фаза 10, пункт 6г). Отдельно от
+        /// <paramref name="goddess"/> намеренно: мост и потоковый путь - разные
+        /// пути, и включаются они порознь.
+        /// </param>
+        internal static async Task<Pipeline> StartAsync(bool goddess, bool streaming = false)
         {
             var host = new HostBuilder()
                 .ConfigureWebHost(web =>
@@ -155,7 +170,16 @@ namespace JsonGoddess.WebPerformanceTests.Web
                     web.ConfigureServices(services =>
                     {
                         var mvc = services
-                            .AddControllers()
+                            .AddControllers(options =>
+                            {
+                                if (streaming)
+                                {
+                                    //одна строка - вся цена включения; форматтер
+                                    //напечатан в эту же сборку
+                                    JsonGoddess.Compat.Generated.JsonGoddessStreamingExtensions
+                                        .AddJsonGoddess(options);
+                                }
+                            })
                             //BenchmarkDotNet запускает замер из СВОЕЙ сборки,
                             //и поиск контроллеров по входной сборке нашёл бы
                             //там ноль штук. Часть приложения называется явно
@@ -215,6 +239,10 @@ namespace JsonGoddess.WebPerformanceTests.Web
             return new Pipeline(host, host.GetTestClient(), formatter, configured, minimalOptions)
             {
                 MvcReadOptions = input.SerializerOptions,
+                InputFormatters = host.Services
+                    .GetRequiredService<IOptions<Microsoft.AspNetCore.Mvc.MvcOptions>>()
+                    .Value
+                    .InputFormatters,
             };
         }
 

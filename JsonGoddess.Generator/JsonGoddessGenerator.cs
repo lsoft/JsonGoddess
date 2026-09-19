@@ -117,11 +117,21 @@ namespace JsonGoddess.Generator
                 .Select(static (site, _) => site!.Value)
                 .Collect();
 
+            var streaming = context.AnalyzerConfigOptionsProvider
+                .Select(static (provider, _) => StreamingSettings.Read(provider.GlobalOptions));
+
             var compat = sites
                 .Combine(settings)
+                .Combine(streaming)
                 .Combine(context.CompilationProvider)
-                .Select(static (pair, token) => pair.Left.Right.Enabled
-                    ? CompatBinder.Bind(pair.Right, pair.Left.Left, pair.Left.Right, token)
+                .Select(static (pair, token) => pair.Left.Left.Right.Enabled
+                    ? CompatBinder.Bind(
+                        pair.Right,
+                        pair.Left.Left.Left,
+                        pair.Left.Left.Right,
+                        pair.Left.Right,
+                        token
+                        )
                     : GenerationResult.Empty);
 
             context.RegisterSourceOutput(compat, static (productionContext, result) => Emit(productionContext, result));

@@ -109,6 +109,10 @@ jobs:
       # Свойства JsonGoddessCompatWeb проект не ставит: веб-профиль обязан
       # включаться сам, по факту ссылки на ASP.NET Core, и этот шаг проверяет
       # заодно и это.
+      # Этим же прогоном проверяется порождённый входной форматтер (фаза 10,
+      # пункт 6г): он поднимается в том же приложении и обязан отвечать тем же,
+      # что штатный, - включая ключи ModelState в 400-м ответе и отступление на
+      # чужой кодировке.
       - name: The staircase agrees, and the bridge still reaches ASP.NET
         run: dotnet run -c Release --project JsonGoddess.WebPerformanceTests --no-build -- --verify
 

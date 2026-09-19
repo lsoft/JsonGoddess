@@ -91,6 +91,36 @@ namespace Sample
         }
 
         /// <summary>
+        /// Потоковому пути (фаза 10) веб-профиля мало: ему нужна <b>ссылка</b>
+        /// на ASP.NET Core, потому что форматтер наследует её тип. Веб-профиль
+        /// же осмыслен и без неё - это всего лишь другие правила имён, и
+        /// библиотека вправе печатать его для чужого веб-хоста.
+        ///
+        /// <para>
+        /// Что при настоящей ссылке оба файла появляются и работают,
+        /// проверяется там, где ссылка настоящая:
+        /// <c>JsonGoddess.WebPerformanceTests --verify</c> поднимает
+        /// приложение с порождённым форматтером и сверяет ответы со штатным.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_streaming_formatter_needs_a_real_reference_not_just_the_web_profile()
+        {
+            var run = Run(new Dictionary<string, string> { { "JsonGoddessCompatWeb", "enable" }, });
+
+            Assert.Contains(WebHostFile, run.GeneratedFiles.Keys);
+            Assert.DoesNotContain(
+                "JsonGoddess.Compat.Generated.JsonGoddessCompatWebHost.Streaming.g.cs",
+                run.GeneratedFiles.Keys
+                );
+            Assert.DoesNotContain(
+                "JsonGoddess.Compat.Generated.StreamingInputFormatter.g.cs",
+                run.GeneratedFiles.Keys
+                );
+            Assert.Empty(run.CompilationErrors);
+        }
+
+        /// <summary>
         /// Умолчательный вариант печатается в любом случае: веб-профиль - это
         /// добавка, а не замена.
         /// </summary>

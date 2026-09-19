@@ -117,6 +117,7 @@ namespace JsonGoddess.Generator.Binding
             Compilation compilation,
             ImmutableArray<CompatCallSite> sites,
             CompatSettings settings,
+            StreamingSettings streaming,
             CancellationToken token
             )
         {
@@ -367,6 +368,60 @@ namespace JsonGoddess.Generator.Binding
                                 )
                             );
                     }
+
+                    //Потоковый путь печатается от ВЕБ-профиля, и это не удобство
+                    //расположения. Набор стражей у него - CompatGuards, то есть
+                    //подтянутый к эталону; печатать форматтер от хоста с другим
+                    //набором значило бы принимать запросом документы, которых
+                    //не принимает System.Text.Json (найдено в пункте 6б: без
+                    //StrictNumbers проходило [{"id":01}]).
+                    //ReferencesAspNetCore спрашивается ещё раз: сюда можно
+                    //попасть и по явному JsonGoddessCompatWeb=enable в сборке,
+                    //где ASP.NET нет вовсе, - веб-профиль там осмысленный (это
+                    //всего лишь другие правила имён), а форматтеру не на чем
+                    //стоять
+                    if ((streaming.Enabled ?? true) && ReferencesAspNetCore(compilation))
+                    {
+                        //Своя сборка модели, а не webModel: у того инжекторов
+                        //нет вовсе - он печатается только на запись, - и
+                        //спанового читателя с ним не напечатать. Имена, стражи
+                        //и фичи здесь ровно те же; отличается один список.
+                        var streamingModel = BuildWebFor(
+                            webRegistrations
+                                .OrderBy(pair => pair.Key.ToDisplayString(), System.StringComparer.Ordinal)
+                                .Select(pair => new HostBinder.Registration(pair.Key, pair.Value))
+                                .ToList(),
+                            known,
+                            new List<DiagnosticInfo>(),
+                            new List<string> { Injector, }
+                            );
+
+                        var streamingText = streamingModel is null
+                            ? null
+                            : TryReaderProducer.Produce(streamingModel);
+
+                        if (streamingModel is not null && streamingText is not null)
+                        {
+                            files.Add(
+                                new GeneratedFile(
+                                    HostNamespace + "." + WebHostTypeName + ".Streaming.g.cs",
+                                    streamingText
+                                    )
+                                );
+
+                            files.Add(
+                                new GeneratedFile(
+                                    HostNamespace + ".StreamingInputFormatter.g.cs",
+                                    StreamingFormatterProducer.Produce(
+                                        streamingModel,
+                                        HostNamespace,
+                                        WebHostTypeName,
+                                        TryReaderProducer.Servable(streamingModel)
+                                        )
+                                    )
+                                );
+                        }
+                    }
                 }
             }
 
@@ -441,10 +496,17 @@ namespace JsonGoddess.Generator.Binding
         /// хост «только писатель», и мёртвого кода не печатается.
         /// </para>
         /// </summary>
+        /// <param name="injectors">
+        /// Пусто - веб-хост печатается <b>только на запись</b>: читает веб-путь
+        /// мостом, то есть из <c>Utf8JsonReader</c>, и спановый читатель ему
+        /// незачем. Непусто - модель для <b>потокового</b> чтения (пункт 6г):
+        /// имена и стражи те же самые, а читатель нужен свой, спановый.
+        /// </param>
         private static HostModel? BuildWebFor(
             IReadOnlyList<HostBinder.Registration> registrations,
             KnownSymbols known,
-            List<DiagnosticInfo> diagnostics
+            List<DiagnosticInfo> diagnostics,
+            List<string>? injectors = null
             )
         {
             return HostBinder.BuildModel(
@@ -463,7 +525,7 @@ namespace JsonGoddess.Generator.Binding
                 WebHostDeclaration,
                 HostNamespace + "." + WebHostTypeName,
                 new List<string> { WebExhauster },
-                new List<string>(),
+                injectors ?? new List<string>(),
                 diagnostics,
                 false
                 );

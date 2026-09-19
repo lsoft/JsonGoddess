@@ -19,6 +19,18 @@ namespace JsonGoddess.WebPerformanceTests
                 fixture.Cleanup();
 
                 Console.WriteLine("verify: every step of the staircase produces the same document.");
+
+                //Порождённый входной форматтер - здесь же, а не отдельным
+                //прогоном: это то же самое приложение и тот же вопрос
+                //«совпадаем ли мы с эталоном», только на чтении тела
+                Web.StreamingVerify.All().GetAwaiter().GetResult();
+
+                if (Web.StreamingVerify.Failures > 0)
+                {
+                    Console.WriteLine("ПРОВАЛОВ: " + Web.StreamingVerify.Failures);
+                    Environment.ExitCode = 1;
+                }
+
                 return;
             }
 
