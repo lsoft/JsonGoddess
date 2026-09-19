@@ -18,6 +18,7 @@ namespace JsonGoddess.Generator.Diagnostics
         public const string CompatTypeFallsBackId = "JGD001";
         public const string CompatGenerationFailedId = "JGD002";
         public const string CompatStrictValueIsNotRecognizedId = "JGD003";
+        public const string CompatWebProfileFailedId = "JGD004";
         public const string SinkIsNotSealedId = "JGD010";
         public const string HostIsNotPartialId = "JGD020";
         public const string SubjectIsNotSupportedId = "JGD021";
@@ -227,6 +228,21 @@ namespace JsonGoddess.Generator.Diagnostics
                 + "незамеченным."
             );
 
+        public static readonly DiagnosticDescriptor CompatWebProfileFailed = new DiagnosticDescriptor(
+            CompatWebProfileFailedId,
+            "The ASP.NET Core web profile was asked for but could not be generated",
+            "JsonGoddessCompatWeb is enabled, but the type graph could not be bound under the ASP.NET Core web profile: {0}. Serialization under web options goes through System.Text.Json.",
+            Category,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            description:
+                "Веб-профиль включает регистронезависимый матч имён, а он отвергает не-ASCII имя члена "
+                + "и пару имён, совпадающих после ASCII-свёртки (JGD030) - у эталона свёртка по Unicode, "
+                + "и молча разойтись с ним здесь нельзя. Под умолчаниями тот же граф при этом "
+                + "обслуживается: отказ относится только к веб-профилю. Молчать нельзя - человек "
+                + "просил его явно и не получил."
+            );
+
         private static readonly Dictionary<string, DiagnosticDescriptor> _all =
             new Dictionary<string, DiagnosticDescriptor>
             {
@@ -246,6 +262,7 @@ namespace JsonGoddess.Generator.Diagnostics
                 { CompatTypeFallsBackId, CompatTypeFallsBack },
                 { CompatGenerationFailedId, CompatGenerationFailed },
                 { CompatStrictValueIsNotRecognizedId, CompatStrictValueIsNotRecognized },
+                { CompatWebProfileFailedId, CompatWebProfileFailed },
             };
 
         public static DiagnosticDescriptor Get(string id) => _all[id];

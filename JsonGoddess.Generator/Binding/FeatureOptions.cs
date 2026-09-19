@@ -23,6 +23,16 @@ namespace JsonGoddess.Generator.Binding
             Features = features;
         }
 
+        /// <summary>
+        /// Набор, назначенный нами, а не прочитанный у автора хоста. Нужен
+        /// Compat-слою: там автора нет, и веб-профиль моста (§10) - это
+        /// фиксированный набор, установленный пробой поведения ASP.NET Core.
+        /// </summary>
+        public static FeatureOptions For(JsonFeature features)
+        {
+            return features == JsonFeature.None ? Default : new FeatureOptions(features);
+        }
+
         public static FeatureOptions Read(INamedTypeSymbol host, KnownSymbols known)
         {
             if (known.Feature is null)

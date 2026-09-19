@@ -34,9 +34,27 @@
     "ничего не менять", а выставь мы info явно, отличить "не просили" от
     "просили умолчание" стало бы нечем.
   -->
+  <!--
+    Веб-профиль моста (§10, маршрут B). ASP.NET Core строит опции не по
+    умолчаниям, а по JsonSerializerDefaults.Web - camelCase, имена без учёта
+    регистра, число можно строкой, - и под такие опции нужен ОТДЕЛЬНЫЙ
+    порождённый код: имена свойств преобразуются на компиляции, подменить их в
+    рантайме нечем.
+
+      <PropertyGroup>
+        <JsonGoddessCompatWeb>enable</JsonGoddessCompatWeb>
+      </PropertyGroup>
+
+    По умолчанию выключено, и это не осторожность, а арифметика: веб-вариант -
+    это второй писатель и второй читатель на каждый обслуженный тип.
+    Консольному приложению он не нужен ни разу, а веб-проекту нужен всегда, и
+    узнаёт он о свойстве из сообщения, которое мост печатает, отступая:
+    догадываться за человека, сколько кода ему напечатать, нечем.
+  -->
   <ItemGroup>
     <CompilerVisibleProperty Include="JsonGoddessCompat" />
     <CompilerVisibleProperty Include="JsonGoddessCompatStrict" />
+    <CompilerVisibleProperty Include="JsonGoddessCompatWeb" />
   </ItemGroup>
 
 </Project>

@@ -62,6 +62,16 @@ namespace JsonGoddess.Generator.Binding
         private const string HostDeclaration = "internal static partial class " + HostTypeName;
 
         /// <summary>
+        /// Веб-профиль печатается в <b>отдельный</b> тип, а не в тот же
+        /// частичный класс: имена методов у обоих одни и те же
+        /// (<c>Write_Order</c>, <c>BridgeRead_Order</c>), и различать их
+        /// суффиксом значило бы протащить понятие профиля через весь эмиттер,
+        /// который про Compat ничего не знает.
+        /// </summary>
+        private const string WebHostTypeName = "JsonGoddessCompatWebHost";
+        private const string WebHostDeclaration = "internal static partial class " + WebHostTypeName;
+
+        /// <summary>
         /// Строгость фасада. Ровно та, что у эталона с опциями по умолчанию, -
         /// и это <b>не</b> «включить всё», как было записано в §6.3 плана.
         ///
@@ -233,9 +243,106 @@ namespace JsonGoddess.Generator.Binding
                 files.Add(
                     new GeneratedFile(
                         HostNamespace + "." + HostTypeName + ".Bridge.g.cs",
-                        EmitBridge(model, bridged, served)
+                        EmitBridge(model, bridged, served, HostDeclaration, false)
                         )
                     );
+            }
+
+            //Веб-профиль - по просьбе, а не всегда: это второй писатель и
+            //второй читатель на каждый тип, то есть примерно удвоение
+            //порождаемого кода (§16.1), а консольному приложению он не нужен
+            //ни разу.
+            if (settings.Web)
+            {
+                //Корни пробуются поодиночке - ровно по той же причине, что и
+                //под умолчаниями: веб-профиль отвергает больше (не-ASCII имя
+                //члена при регистронезависимом матче), и уцелевшие корни
+                //обязаны уцелеть. Тип, не прошедший сюда, продолжает работать
+                //через эталон и продолжает быть быстрым под умолчаниями.
+                var webServed = new List<INamedTypeSymbol>();
+                var webRegistrations = new Dictionary<INamedTypeSymbol, bool>(SymbolEqualityComparer.Default);
+                var webRefusals = new List<DiagnosticInfo>();
+
+                foreach (var root in served)
+                {
+                    token.ThrowIfCancellationRequested();
+
+                    var closure = Closure(root, known);
+                    var trial = new List<DiagnosticInfo>();
+
+                    if (BuildWebFor(closure, known, trial) is null)
+                    {
+                        diagnostics.Add(
+                            new DiagnosticInfo(
+                                JsonGoddessDiagnostics.CompatWebProfileFailedId,
+                                roots[root],
+                                settings.Raise(DiagnosticSeverity.Warning),
+                                Explain(trial)
+                                )
+                            );
+                        continue;
+                    }
+
+                    webServed.Add(root);
+                    foreach (var registration in closure)
+                    {
+                        webRegistrations[registration.Type] =
+                            webRegistrations.TryGetValue(registration.Type, out var was)
+                                ? was || registration.IsRoot
+                                : registration.IsRoot;
+                    }
+                }
+
+                var webDiagnostics = new List<DiagnosticInfo>();
+                var webModel = webServed.Count == 0
+                    ? null
+                    : BuildWebFor(
+                        webRegistrations
+                            .OrderBy(pair => pair.Key.ToDisplayString(), System.StringComparer.Ordinal)
+                            .Select(pair => new HostBinder.Registration(pair.Key, pair.Value))
+                            .ToList(),
+                        known,
+                        webDiagnostics
+                        );
+
+                if (webModel is null)
+                {
+                    //Каждый корень поодиночке связался, а все вместе - нет.
+                    //Это дыра в генераторе, как и JGD002 под умолчаниями, и
+                    //молчать о ней нельзя: человек просил веб-профиль явно.
+                    if (webServed.Count > 0)
+                    {
+                        diagnostics.Add(
+                            new DiagnosticInfo(
+                                JsonGoddessDiagnostics.CompatWebProfileFailedId,
+                                roots[webServed[0]],
+                                settings.Raise(DiagnosticSeverity.Warning),
+                                Explain(webDiagnostics)
+                                )
+                            );
+                    }
+                }
+                else
+                {
+                    files.Add(
+                        new GeneratedFile(
+                            HostNamespace + "." + WebHostTypeName + ".g.cs",
+                            ClassSourceProducer.Produce(webModel)
+                            )
+                        );
+
+                    var webBridged = webModel.Subjects.Where(BridgeSourceProducer.CanServe).ToList();
+
+                    if (webBridged.Count > 0)
+                    {
+                        files.Add(
+                            new GeneratedFile(
+                                HostNamespace + "." + WebHostTypeName + ".Bridge.g.cs",
+                                EmitBridge(webModel, webBridged, webServed, WebHostDeclaration, true)
+                                )
+                            );
+                    }
+                }
             }
 
             //ModuleInitializerAttribute появился в .NET 5; компилятору довольно
@@ -275,6 +382,63 @@ namespace JsonGoddess.Generator.Binding
                 HostNamespace + "." + HostTypeName,
                 new List<string> { Exhauster },
                 new List<string> { Injector },
+                diagnostics,
+                false
+                );
+        }
+
+        /// <summary>
+        /// Тот же граф под <c>JsonSerializerDefaults.Web</c> - то, что строят
+        /// ASP.NET Core MVC и minimal API.
+        ///
+        /// <para>
+        /// Три отличия от умолчаний, и каждое установлено пробой
+        /// (<c>scratchpad/WebProfileProbe</c>): camelCase на именах членов -
+        /// но <b>не</b> на ключах словаря; имена без учёта регистра; число
+        /// можно строкой.
+        /// </para>
+        ///
+        /// <para>
+        /// <c>NamedFloatingPointLiterals</c> при этом брать нельзя, хотя
+        /// эталон с <c>AllowReadingFromString</c> и читает <c>"NaN"</c>. Наш
+        /// флаг двусторонний: с ним <c>NaN</c> <b>записался</b> бы строкой, а
+        /// эталон в веб-профиле на записи бросает <c>ArgumentException</c>.
+        /// Это расхождение в худшую сторону - валидный документ вместо отказа.
+        /// А <c>"NaN"</c> на чтении и так проходит: за строкой в обоих случаях
+        /// стои́т обычный числовой парсер платформы, и это уже закреплено
+        /// тестом <c>Numbers_from_strings_alone_also_happens_to_read_named_literals_via_the_shared_number_parser</c>.
+        /// </para>
+        ///
+        /// <para>
+        /// Инжекторов нет ни одного, и это не упущение: читатель маршрута A
+        /// веб-профилю не нужен - фасад быстрый путь на таких опциях всё равно
+        /// не берёт, - а мосту нужен свой, по токенам. Пустой список делает
+        /// хост «только писатель», и мёртвого кода не печатается.
+        /// </para>
+        /// </summary>
+        private static HostModel? BuildWebFor(
+            IReadOnlyList<HostBinder.Registration> registrations,
+            KnownSymbols known,
+            List<DiagnosticInfo> diagnostics
+            )
+        {
+            return HostBinder.BuildModel(
+                registrations,
+                known,
+                new SerializationOptions(
+                    JsonNamingStyle.CamelCase,
+                    JsonNamingStyle.None,
+                    escapeLikeReference: true
+                    ),
+                GuardOptions.For(CompatGuards, CompatMaxDepth),
+                FeatureOptions.For(JsonFeature.CaseInsensitiveNames | JsonFeature.NumbersFromStrings),
+                new Dictionary<ISymbol, string>(SymbolEqualityComparer.Default),
+                null,
+                HostNamespace,
+                WebHostDeclaration,
+                HostNamespace + "." + WebHostTypeName,
+                new List<string> { Exhauster },
+                new List<string>(),
                 diagnostics,
                 false
                 );
@@ -467,7 +631,9 @@ namespace JsonGoddess.Generator.Binding
         private static string EmitBridge(
             HostModel model,
             IReadOnlyList<SubjectModel> bridged,
-            IReadOnlyList<INamedTypeSymbol> served
+            IReadOnlyList<INamedTypeSymbol> served,
+            string declaration,
+            bool web
             )
         {
             var builder = new SourceBuilder();
@@ -483,12 +649,14 @@ namespace JsonGoddess.Generator.Binding
 
             builder.Line("namespace " + HostNamespace + ";");
             builder.Line();
-            builder.OpenBlock(HostDeclaration);
+            builder.OpenBlock(declaration);
 
-            BridgeSourceProducer.Emit(builder, bridged);
+            BridgeSourceProducer.Emit(builder, bridged, model.Features);
 
             builder.Line("[global::System.Runtime.CompilerServices.ModuleInitializer]");
-            builder.OpenBlock("internal static void RegisterWithTheBridge()");
+            builder.OpenBlock(
+                "internal static void " + (web ? "RegisterWithTheBridgeForTheWeb" : "RegisterWithTheBridge") + "()"
+                );
 
             var roots = served
                 .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
@@ -507,8 +675,9 @@ namespace JsonGoddess.Generator.Binding
 
                 registered++;
                 builder.Line(
-                    "global::JsonGoddess.Compat.Interop.BridgeBinding<" + full + ">.Register("
-                    + "Serialize, " + BridgeSourceProducer.ReaderName(subject) + ");"
+                    "global::JsonGoddess.Compat.Interop.BridgeBinding<" + full + ">."
+                    + (web ? "RegisterForTheWeb" : "Register")
+                    + "(Serialize, " + BridgeSourceProducer.ReaderName(subject) + ");"
                     );
             }
 

@@ -96,19 +96,29 @@ namespace JsonGoddess.Compat.Interop
                 throw new ArgumentNullException(nameof(type));
             }
 
-            if (!BridgeRegistry.TryGet(type, out _))
+            if (!BridgeRegistry.Knows(type))
             {
                 return "the bridge does not serve '" + type + "': the generator either refused the type or never saw it.";
             }
 
-            if (options is not null && !CompatOptions.IsDefaultApartFromTheResolver(options))
+            if (options is null || CompatOptions.IsDefaultApartFromTheResolver(options))
             {
-                return "the options differ from the defaults (" + Differences(options) + "),"
-                    + " and the generated code was produced for the defaults only;"
-                    + " serialization goes through System.Text.Json instead.";
+                return BridgeRegistry.TryGet(type, BridgeProfile.Default, out _)
+                    ? "the bridge serves '" + type + "' with the default profile."
+                    : "the options are the defaults, but no default-profile code was generated for '" + type + "'.";
             }
 
-            return "the bridge serves '" + type + "'.";
+            if (CompatOptions.IsWebApartFromTheResolver(options))
+            {
+                return BridgeRegistry.TryGet(type, BridgeProfile.Web, out _)
+                    ? "the bridge serves '" + type + "' with the ASP.NET Core web profile."
+                    : "the options are the ASP.NET Core web profile, but no web-profile code was generated;"
+                    + " set <JsonGoddessCompatWeb>enable</JsonGoddessCompatWeb> in the project that owns this type.";
+            }
+
+            return "the options match neither the defaults nor the ASP.NET Core web profile ("
+                + Differences(options) + " differ from the defaults);"
+                + " serialization goes through System.Text.Json instead.";
         }
 
         /// <summary>
@@ -154,8 +164,31 @@ namespace JsonGoddess.Compat.Interop
 
             handler(
                 type,
-                "the bridge stepped aside: the options differ from the defaults (" + Differences(options)
-                + "), and the generated code was produced for the defaults only."
+                "the bridge stepped aside: the options match neither the defaults nor the ASP.NET Core web profile"
+                + " (" + Differences(options) + " differ from the defaults),"
+                + " and the generated code was produced for those two only."
+                );
+        }
+
+        /// <summary>
+        /// Опции опознаны, а кода под них не напечатано. Случай отдельный от
+        /// <see cref="OnDeclined"/>, потому что и лечится он иначе: не
+        /// настройками приложения, а свойством сборки.
+        /// </summary>
+        internal static void OnProfileMissing(Type type, BridgeProfile profile)
+        {
+            var handler = Declined;
+            if (handler is null)
+            {
+                return;
+            }
+
+            handler(
+                type,
+                profile == BridgeProfile.Web
+                    ? "the options are the ASP.NET Core web profile, but no web-profile code was generated;"
+                    + " set <JsonGoddessCompatWeb>enable</JsonGoddessCompatWeb> in the project that owns this type."
+                    : "the options are the defaults, but no default-profile code was generated for this type."
                 );
         }
 
@@ -183,19 +216,34 @@ namespace JsonGoddess.Compat.Interop
 
         public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options)
         {
-            if (!BridgeRegistry.TryGet(type, out var factory))
+            if (!BridgeRegistry.Knows(type))
             {
                 //не наш тип - пусть его строит следующий в цепочке
                 return null;
             }
 
-            //Порождённый код написан под одно поведение - умолчания эталона.
-            //Отдать ему чужие опции значило бы выдать валидный документ,
-            //отличающийся от эталонного: тот самый худший исход, ради
-            //которого весь этот слой и обвешан проверками. Сомнение - «нет».
-            if (!CompatOptions.IsDefaultApartFromTheResolver(options))
+            //Порождённый код написан под КОНКРЕТНОЕ поведение, и профилей у
+            //него столько, сколько напечатал генератор. Отдать ему чужие опции
+            //значило бы выдать валидный документ, отличающийся от эталонного:
+            //тот самый худший исход, ради которого весь этот слой и обвешан
+            //проверками. Сомнение - «нет».
+            var profile =
+                CompatOptions.IsDefaultApartFromTheResolver(options) ? BridgeProfile.Default
+                : CompatOptions.IsWebApartFromTheResolver(options) ? BridgeProfile.Web
+                : (BridgeProfile?)null;
+
+            if (profile is null)
             {
                 JsonGoddess.OnDeclined(type, options);
+                return null;
+            }
+
+            if (!BridgeRegistry.TryGet(type, profile.Value, out var factory))
+            {
+                //профиль опознан, а кода под него нет: веб-вариант печатается
+                //не всегда, и молчать об этом нельзя - причина ровно та же,
+                //что и у чужих опций
+                JsonGoddess.OnProfileMissing(type, profile.Value);
                 return null;
             }
 

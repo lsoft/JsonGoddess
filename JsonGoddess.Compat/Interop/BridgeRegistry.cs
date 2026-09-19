@@ -27,20 +27,51 @@ namespace JsonGoddess.Compat.Interop
         /// резолвера, который может быть вызван из нескольких потоков сразу.
         /// Записей единицы и бывают они один раз, при инициализации модуля.
         /// </summary>
-        private static Dictionary<Type, Func<JsonSerializerOptions, JsonTypeInfo>> _factories =
-            new Dictionary<Type, Func<JsonSerializerOptions, JsonTypeInfo>>();
+        private static Dictionary<Type, Entry> _entries = new Dictionary<Type, Entry>();
 
-        internal static void Add<T>()
+        private sealed class Entry
+        {
+            public Func<JsonSerializerOptions, JsonTypeInfo>? Default;
+
+            public Func<JsonSerializerOptions, JsonTypeInfo>? Web;
+
+            public Entry Copy()
+            {
+                return new Entry { Default = Default, Web = Web, };
+            }
+        }
+
+        internal static void Add<T>(BridgeProfile profile)
         {
             lock (Gate)
             {
-                var copy = new Dictionary<Type, Func<JsonSerializerOptions, JsonTypeInfo>>(_factories)
-                {
-                    [typeof(T)] = static options =>
-                        JsonMetadataServices.CreateValueInfo<T>(options, new BridgeConverter<T>()),
-                };
+                var copy = new Dictionary<Type, Entry>(_entries);
 
-                _factories = copy;
+                var entry = copy.TryGetValue(typeof(T), out var existing)
+                    ? existing.Copy()
+                    : new Entry();
+
+                Func<JsonSerializerOptions, JsonTypeInfo> factory = profile == BridgeProfile.Web
+                    ? static options => JsonMetadataServices.CreateValueInfo<T>(
+                        options,
+                        new BridgeConverter<T>(BridgeProfile.Web)
+                        )
+                    : static options => JsonMetadataServices.CreateValueInfo<T>(
+                        options,
+                        new BridgeConverter<T>(BridgeProfile.Default)
+                        );
+
+                if (profile == BridgeProfile.Web)
+                {
+                    entry.Web = factory;
+                }
+                else
+                {
+                    entry.Default = factory;
+                }
+
+                copy[typeof(T)] = entry;
+                _entries = copy;
             }
         }
 
@@ -48,26 +79,43 @@ namespace JsonGoddess.Compat.Interop
         {
             lock (Gate)
             {
-                if (!_factories.ContainsKey(type))
+                if (!_entries.ContainsKey(type))
                 {
                     return;
                 }
 
-                var copy = new Dictionary<Type, Func<JsonSerializerOptions, JsonTypeInfo>>(_factories);
+                var copy = new Dictionary<Type, Entry>(_entries);
                 copy.Remove(type);
-                _factories = copy;
+                _entries = copy;
             }
         }
 
-        internal static bool TryGet(Type type, out Func<JsonSerializerOptions, JsonTypeInfo>? factory)
+        internal static bool TryGet(
+            Type type,
+            BridgeProfile profile,
+            out Func<JsonSerializerOptions, JsonTypeInfo>? factory
+            )
         {
-            return _factories.TryGetValue(type, out factory);
+            factory = null;
+
+            if (!_entries.TryGetValue(type, out var entry))
+            {
+                return false;
+            }
+
+            factory = profile == BridgeProfile.Web ? entry.Web : entry.Default;
+            return factory is not null;
+        }
+
+        internal static bool Knows(Type type)
+        {
+            return _entries.ContainsKey(type);
         }
 
         /// <summary>
         /// Сколько типов обслуживает мост. Существует ради тестов и ради
         /// человека, который хочет убедиться, что генератор вообще отработал.
         /// </summary>
-        public static int Count => _factories.Count;
+        public static int Count => _entries.Count;
     }
 }

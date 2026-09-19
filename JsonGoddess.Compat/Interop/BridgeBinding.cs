@@ -34,12 +34,22 @@ namespace JsonGoddess.Compat.Interop
     /// писателя и читателя эталона, потому что там мы вызваны изнутри его
     /// конвейера и обязаны вернуть управление в нужной точке.
     /// </para>
+    ///
+    /// <para>
+    /// Пар две, по числу профилей (<see cref="BridgeProfile"/>): имена
+    /// свойств печатаются на компиляции, и один и тот же код не может
+    /// обслужить и <c>Id</c>, и <c>id</c>.
+    /// </para>
     /// </summary>
     public static class BridgeBinding<T>
     {
         public static BridgeWriter<T>? Write;
 
         public static BridgeReader<T>? Read;
+
+        public static BridgeWriter<T>? WebWrite;
+
+        public static BridgeReader<T>? WebRead;
 
         /// <summary>
         /// Обе стороны на месте. Одной мало ровно по той же причине, что и у
@@ -48,12 +58,22 @@ namespace JsonGoddess.Compat.Interop
         /// </summary>
         public static bool IsBound => Write is not null && Read is not null;
 
+        public static bool IsBoundForTheWeb => WebWrite is not null && WebRead is not null;
+
         public static void Register(BridgeWriter<T> write, BridgeReader<T> read)
         {
             Write = write ?? throw new ArgumentNullException(nameof(write));
             Read = read ?? throw new ArgumentNullException(nameof(read));
 
-            BridgeRegistry.Add<T>();
+            BridgeRegistry.Add<T>(BridgeProfile.Default);
+        }
+
+        public static void RegisterForTheWeb(BridgeWriter<T> write, BridgeReader<T> read)
+        {
+            WebWrite = write ?? throw new ArgumentNullException(nameof(write));
+            WebRead = read ?? throw new ArgumentNullException(nameof(read));
+
+            BridgeRegistry.Add<T>(BridgeProfile.Web);
         }
 
         /// <summary>
@@ -64,6 +84,8 @@ namespace JsonGoddess.Compat.Interop
         {
             Write = null;
             Read = null;
+            WebWrite = null;
+            WebRead = null;
 
             BridgeRegistry.Remove(typeof(T));
         }

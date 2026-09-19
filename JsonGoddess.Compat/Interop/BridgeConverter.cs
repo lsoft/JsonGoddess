@@ -38,6 +38,13 @@ namespace JsonGoddess.Compat.Interop
     /// </summary>
     internal sealed class BridgeConverter<T> : JsonConverter<T>
     {
+        private readonly BridgeProfile _profile;
+
+        internal BridgeConverter(BridgeProfile profile)
+        {
+            _profile = profile;
+        }
+
         /// <summary>
         /// Раковина на поток. Конвертер живёт столько же, сколько
         /// <see cref="JsonSerializerOptions"/>, то есть обычно всё время
@@ -49,7 +56,9 @@ namespace JsonGoddess.Compat.Interop
 
         public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
-            return BridgeBinding<T>.Read!(ref reader);
+            var read = _profile == BridgeProfile.Web ? BridgeBinding<T>.WebRead : BridgeBinding<T>.Read;
+
+            return read!(ref reader);
         }
 
         public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options)
@@ -57,7 +66,9 @@ namespace JsonGoddess.Compat.Interop
             var exhauster = _exhauster ??= new CompatUtf8Exhauster();
             exhauster.Reset();
 
-            BridgeBinding<T>.Write!(exhauster, value);
+            var write = _profile == BridgeProfile.Web ? BridgeBinding<T>.WebWrite : BridgeBinding<T>.Write;
+
+            write!(exhauster, value);
 
             //skipInputValidation: проверять нечего. Байты написал порождённый
             //код, а не чужой ввод, и второй проход по ним был бы платой за

@@ -18,8 +18,9 @@ namespace JsonGoddess.Generator.Binding
     {
         public const string EnabledProperty = "build_property.JsonGoddessCompat";
         public const string StrictProperty = "build_property.JsonGoddessCompatStrict";
+        public const string WebProperty = "build_property.JsonGoddessCompatWeb";
 
-        public static readonly CompatSettings Default = new CompatSettings(true, null, null);
+        public static readonly CompatSettings Default = new CompatSettings(true, null, null, false);
 
         /// <summary>Перехват вызовов фасада включён.</summary>
         public readonly bool Enabled;
@@ -50,11 +51,28 @@ namespace JsonGoddess.Generator.Binding
         /// </summary>
         public readonly string? UnrecognizedStrictValue;
 
-        private CompatSettings(bool enabled, DiagnosticSeverity? floor, string? unrecognized)
+        /// <summary>
+        /// Печатать ли второй вариант кода - под <c>JsonSerializerDefaults.Web</c>,
+        /// то есть под то, что строят ASP.NET Core MVC и minimal API.
+        ///
+        /// <para>
+        /// По умолчанию <b>нет</b>, и это не осторожность, а арифметика:
+        /// веб-вариант - это второй писатель и второй читатель на каждый
+        /// обслуженный тип, то есть примерно удвоение порождаемого кода
+        /// (§16.1). Консольному приложению он не нужен ни разу, а веб-проект
+        /// включает его одной строкой - и узнаёт о ней из сообщения, которое
+        /// мост печатает, когда отступает: молча решать за человека, сколько
+        /// кода ему напечатать, здесь нечем.
+        /// </para>
+        /// </summary>
+        public readonly bool Web;
+
+        private CompatSettings(bool enabled, DiagnosticSeverity? floor, string? unrecognized, bool web)
         {
             Enabled = enabled;
             Floor = floor;
             UnrecognizedStrictValue = unrecognized;
+            Web = web;
         }
 
         public static CompatSettings Read(AnalyzerConfigOptions options)
@@ -62,9 +80,12 @@ namespace JsonGoddess.Generator.Binding
             var enabled = !options.TryGetValue(EnabledProperty, out var switchValue)
                 || !string.Equals(switchValue, "disable", StringComparison.OrdinalIgnoreCase);
 
+            var web = options.TryGetValue(WebProperty, out var webValue)
+                && string.Equals(webValue?.Trim(), "enable", StringComparison.OrdinalIgnoreCase);
+
             if (!options.TryGetValue(StrictProperty, out var strict) || string.IsNullOrWhiteSpace(strict))
             {
-                return new CompatSettings(enabled, null, null);
+                return new CompatSettings(enabled, null, null, web);
             }
 
             strict = strict.Trim();
@@ -74,20 +95,20 @@ namespace JsonGoddess.Generator.Binding
             //Directory.Build.props и переопределить в одном проекте обратно
             if (string.Equals(strict, "info", StringComparison.OrdinalIgnoreCase))
             {
-                return new CompatSettings(enabled, DiagnosticSeverity.Info, null);
+                return new CompatSettings(enabled, DiagnosticSeverity.Info, null, web);
             }
 
             if (string.Equals(strict, "warning", StringComparison.OrdinalIgnoreCase))
             {
-                return new CompatSettings(enabled, DiagnosticSeverity.Warning, null);
+                return new CompatSettings(enabled, DiagnosticSeverity.Warning, null, web);
             }
 
             if (string.Equals(strict, "error", StringComparison.OrdinalIgnoreCase))
             {
-                return new CompatSettings(enabled, DiagnosticSeverity.Error, null);
+                return new CompatSettings(enabled, DiagnosticSeverity.Error, null, web);
             }
 
-            return new CompatSettings(enabled, null, strict);
+            return new CompatSettings(enabled, null, strict, web);
         }
 
         /// <summary>
@@ -103,6 +124,7 @@ namespace JsonGoddess.Generator.Binding
         {
             return Enabled == other.Enabled
                 && Floor == other.Floor
+                && Web == other.Web
                 && string.Equals(UnrecognizedStrictValue, other.UnrecognizedStrictValue, StringComparison.Ordinal);
         }
 
@@ -111,6 +133,7 @@ namespace JsonGoddess.Generator.Binding
         public override int GetHashCode()
         {
             var hash = Enabled ? 1 : 0;
+            hash = unchecked((hash * 31) + (Web ? 1 : 0));
             hash = unchecked((hash * 31) + (Floor?.GetHashCode() ?? 0));
             return unchecked((hash * 31) + (UnrecognizedStrictValue?.GetHashCode() ?? 0));
         }

@@ -204,6 +204,101 @@ namespace JsonGoddess.Compat
         private static readonly ConditionalWeakTable<JsonSerializerOptions, object> BridgeVerdicts =
             new ConditionalWeakTable<JsonSerializerOptions, object>();
 
+        /// <summary>
+        /// Эталон веб-профиля: то, что строят ASP.NET Core MVC и minimal API.
+        /// </summary>
+        private static readonly JsonSerializerOptions FreshWeb =
+            new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+        private static readonly ConditionalWeakTable<JsonSerializerOptions, object> WebVerdicts =
+            new ConditionalWeakTable<JsonSerializerOptions, object>();
+
+        /// <summary>
+        /// Эти опции - веб-профиль и ничего сверх него?
+        ///
+        /// <para>
+        /// Вопрос тот же, что и у <see cref="IsDefaultApartFromTheResolver"/>,
+        /// только образцом служит <c>JsonSerializerDefaults.Web</c>. Нужен он
+        /// затем, что ASP.NET Core строит опции именно так, и без этой ветки
+        /// мост в вебе не включался бы вовсе - то есть молчал бы ровно там,
+        /// ради чего строился.
+        /// </para>
+        ///
+        /// <para>
+        /// <c>MaxDepth</c> из сравнения исключён намеренно, и это не
+        /// послабление. MVC выставляет 32, minimal API оставляет умолчание, и
+        /// требуй мы совпадения - пришлось бы держать два веб-варианта
+        /// порождённого кода. Держать их незачем: глубину проверяет
+        /// <c>Utf8JsonReader</c>, который создаёт эталон по своим же опциям, а
+        /// не мы. Это ровно то же основание, по которому в мосте нет ни одного
+        /// нашего стража.
+        /// </para>
+        /// </summary>
+        public static bool IsWebApartFromTheResolver(JsonSerializerOptions? options)
+        {
+            if (options is null)
+            {
+                return false;
+            }
+
+            if (WebVerdicts.TryGetValue(options, out var cached))
+            {
+                return (bool)cached;
+            }
+
+            var verdict = ComputeWeb(options);
+
+            if (options.IsReadOnly)
+            {
+                try
+                {
+                    WebVerdicts.Add(options, verdict ? Yes : No);
+                }
+                catch (ArgumentException)
+                {
+                    //кто-то успел раньше; вердикт у него тот же
+                }
+            }
+
+            return verdict;
+        }
+
+        private static bool ComputeWeb(JsonSerializerOptions options)
+        {
+            if (options.Converters.Count > 0 || !EncoderIsDefault(options))
+            {
+                return false;
+            }
+
+            foreach (var property in Compared)
+            {
+                if (property.Name == nameof(JsonSerializerOptions.MaxDepth))
+                {
+                    continue;
+                }
+
+                object? mine;
+                object? theirs;
+
+                try
+                {
+                    mine = property.GetValue(options);
+                    theirs = property.GetValue(FreshWeb);
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+
+                if (!Equals(mine, theirs))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private static bool ComputeApartFromTheResolver(JsonSerializerOptions options)
         {
             return options.Converters.Count == 0 && ComparedPropertiesAreDefault(options);

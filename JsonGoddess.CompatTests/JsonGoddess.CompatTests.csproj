@@ -17,10 +17,31 @@
       работает, и читателю csproj это должно быть видно.
     -->
     <JsonGoddessCompat>enable</JsonGoddessCompat>
+
+    <!--
+      Веб-профиль моста: здесь он включён, потому что проверять его больше
+      негде. Пакетный .props ставит это свойство потребителю, а тесты ссылаются
+      на проект напрямую и .props не получают.
+    -->
+    <JsonGoddessCompatWeb>enable</JsonGoddessCompatWeb>
+
+    <!--
+      JGD004 здесь - ожидаемый результат, а не помеха. Tricky объявляет член с
+      кириллическим именем, веб-профиль включает регистронезависимый матч, а он
+      такое имя отвергает (JGD030): эталон свернул бы регистр по Unicode, мы -
+      по ASCII, и совпадение зависело бы от алфавита. Диагностика об этом и
+      говорит, и молчать ей нельзя.
+
+      Заглушается только здесь и только потому, что проверяется тестом
+      The_web_profile_refuses_a_non_ascii_member_name - то есть утверждение не
+      исчезает, а переезжает туда, где его видно.
+    -->
+    <NoWarn>$(NoWarn);JGD004</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <CompilerVisibleProperty Include="JsonGoddessCompat" />
+    <CompilerVisibleProperty Include="JsonGoddessCompatWeb" />
   </ItemGroup>
 
   <ItemGroup>

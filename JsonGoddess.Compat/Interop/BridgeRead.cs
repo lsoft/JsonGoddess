@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Text;
 using System.Globalization;
 using System.Text.Json;
 
@@ -39,6 +40,46 @@ namespace JsonGoddess.Compat.Interop
         public static JsonException Fail(Type type)
         {
             return new JsonException("The JSON value could not be converted to " + type + ".");
+        }
+
+        /// <summary>
+        /// Число, приехавшее строкой (<c>JsonNumberHandling.AllowReadingFromString</c>,
+        /// он же веб-профиль ASP.NET Core).
+        ///
+        /// <para>
+        /// Отдаёт сырые байты внутри кавычек, чтобы разобрать их тем же
+        /// <c>Utf8Parser</c>, которым разбирается обычное число. Это не
+        /// экономия, а требование совместимости: правило «разобралось целиком
+        /// или не разобралось» даёт ровно тот набор принимаемых форм, который
+        /// установлен пробой у эталона - <c>"42"</c> и <c>"+42"</c> да,
+        /// <c>" 42"</c>, <c>"42 "</c>, <c>""</c>, <c>"0x2A"</c> нет.
+        /// </para>
+        ///
+        /// <para>
+        /// Экранированную или разрезанную строку сюда пускать нельзя - там
+        /// сырые байты не равны содержимому, - и такая форма честно уходит в
+        /// отказ. Числа с экранированием внутри (<c>"42"</c>) - случай,
+        /// которого в жизни не бывает, а молча прочесть его иначе, чем эталон,
+        /// нельзя.
+        /// </para>
+        /// </summary>
+        private static bool TryNumericText(ref Utf8JsonReader reader, out ReadOnlySpan<byte> raw)
+        {
+            raw = default;
+
+            if (reader.TokenType != JsonTokenType.String || reader.HasValueSequence)
+            {
+                return false;
+            }
+
+            var span = reader.ValueSpan;
+            if (span.Length == 0 || span.IndexOf((byte)'\\') >= 0)
+            {
+                return false;
+            }
+
+            raw = span;
+            return true;
         }
 
         private static JsonException Fail<T>()
@@ -416,6 +457,234 @@ namespace JsonGoddess.Compat.Interop
             }
 
             return reader.ValueSpan.IndexOf((byte)'\\') < 0;
+        }
+
+        // ---------- число, которое разрешено прислать строкой ----------
+        //
+        // Веб-профиль (JsonSerializerDefaults.Web) включает
+        // JsonNumberHandling.AllowReadingFromString, и под ним генератор
+        // печатает эти методы вместо строгих. Отдельные методы, а не флаг
+        // внутри строгих: флаг стоил бы ветки на каждое значение у всех, ради
+        // поведения, которого у большинства нет.
+
+        public static sbyte SByteLenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out sbyte fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<sbyte>();
+                }
+
+                return fromText;
+            }
+
+            return SByte(ref reader);
+        }
+
+        public static sbyte? SByteOrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : SByteLenient(ref reader);
+        }
+
+        public static byte ByteLenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out byte fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<byte>();
+                }
+
+                return fromText;
+            }
+
+            return Byte(ref reader);
+        }
+
+        public static byte? ByteOrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : ByteLenient(ref reader);
+        }
+
+        public static short Int16Lenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out short fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<short>();
+                }
+
+                return fromText;
+            }
+
+            return Int16(ref reader);
+        }
+
+        public static short? Int16OrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : Int16Lenient(ref reader);
+        }
+
+        public static ushort UInt16Lenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out ushort fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<ushort>();
+                }
+
+                return fromText;
+            }
+
+            return UInt16(ref reader);
+        }
+
+        public static ushort? UInt16OrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : UInt16Lenient(ref reader);
+        }
+
+        public static int Int32Lenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out int fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<int>();
+                }
+
+                return fromText;
+            }
+
+            return Int32(ref reader);
+        }
+
+        public static int? Int32OrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : Int32Lenient(ref reader);
+        }
+
+        public static uint UInt32Lenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out uint fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<uint>();
+                }
+
+                return fromText;
+            }
+
+            return UInt32(ref reader);
+        }
+
+        public static uint? UInt32OrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : UInt32Lenient(ref reader);
+        }
+
+        public static long Int64Lenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out long fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<long>();
+                }
+
+                return fromText;
+            }
+
+            return Int64(ref reader);
+        }
+
+        public static long? Int64OrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : Int64Lenient(ref reader);
+        }
+
+        public static ulong UInt64Lenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out ulong fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<ulong>();
+                }
+
+                return fromText;
+            }
+
+            return UInt64(ref reader);
+        }
+
+        public static ulong? UInt64OrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : UInt64Lenient(ref reader);
+        }
+
+        public static float SingleLenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out float fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<float>();
+                }
+
+                return fromText;
+            }
+
+            return Single(ref reader);
+        }
+
+        public static float? SingleOrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : SingleLenient(ref reader);
+        }
+
+        public static double DoubleLenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out double fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<double>();
+                }
+
+                return fromText;
+            }
+
+            return Double(ref reader);
+        }
+
+        public static double? DoubleOrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : DoubleLenient(ref reader);
+        }
+
+        public static decimal DecimalLenient(ref Utf8JsonReader reader)
+        {
+            if (TryNumericText(ref reader, out var raw))
+            {
+                if (!Utf8Parser.TryParse(raw, out decimal fromText, out var used) || used != raw.Length)
+                {
+                    throw Fail<decimal>();
+                }
+
+                return fromText;
+            }
+
+            return Decimal(ref reader);
+        }
+
+        public static decimal? DecimalOrNullLenient(ref Utf8JsonReader reader)
+        {
+            return reader.TokenType == JsonTokenType.Null ? null : DecimalLenient(ref reader);
         }
     }
 }

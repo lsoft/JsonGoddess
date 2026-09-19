@@ -297,7 +297,7 @@ namespace JsonGoddess.CompatTests
             Assert.Equal(Reference.Serialize(order, withoutBridge), Reference.Serialize(order, withBridge));
 
             Assert.Contains(
-                "the options differ",
+                "match neither the defaults nor",
                 JsonGoddess.Compat.Interop.JsonGoddess.Explain(typeof(Order), withBridge),
                 StringComparison.Ordinal
                 );
@@ -328,15 +328,150 @@ namespace JsonGoddess.CompatTests
             },
         };
 
+        // ---------- веб-профиль: то, ради чего мост и строился ----------
+
+        /// <summary>
+        /// Опции ASP.NET Core - и мост за них берётся.
+        ///
+        /// <para>
+        /// До веб-профиля мост в вебе молчал: MVC и minimal API строят опции по
+        /// <c>JsonSerializerDefaults.Web</c>, а резолвер на не-умолчательных
+        /// опциях отступает по построению. Этот тест - граница между «мост
+        /// есть» и «мост работает там, где нужен».
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_web_profile_is_served()
+        {
+            var web = new JsonSerializerOptions(JsonSerializerDefaults.Web).UseJsonGoddess();
+
+            Assert.Contains(
+                "web profile",
+                JsonGoddess.Compat.Interop.JsonGoddess.Explain(typeof(Order), web),
+                StringComparison.Ordinal
+                );
+        }
+
+        [Fact]
+        public void The_web_profile_writes_what_the_reference_writes()
+        {
+            var web = new JsonSerializerOptions(JsonSerializerDefaults.Web).UseJsonGoddess();
+            var plain = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+            var order = Order.CreateSample();
+
+            Assert.Equal(Reference.Serialize(order, plain), Reference.Serialize(order, web));
+
+            //camelCase применяется к именам членов и НЕ применяется к ключам
+            //словаря - проверено пробой у эталона, и здесь это видно глазами
+            var document = Reference.Serialize(order, web);
+            Assert.Contains("\"shipTo\"", document, StringComparison.Ordinal);
+            Assert.Contains("\"views\"", document, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void The_web_profile_reads_what_the_reference_reads()
+        {
+            var web = new JsonSerializerOptions(JsonSerializerDefaults.Web).UseJsonGoddess();
+            var plain = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+            var json = Reference.Serialize(Order.CreateSample(), plain);
+
+            Assert.Equal(
+                Reference.Serialize(Reference.Deserialize<Order>(json, plain), plain),
+                Reference.Serialize(Reference.Deserialize<Order>(json, web), plain)
+                );
+        }
+
+        /// <summary>
+        /// Регистр имени в веб-профиле не значит ничего, и число можно
+        /// прислать строкой. Обе поблажки - часть
+        /// <c>JsonSerializerDefaults.Web</c>, и обе обязаны работать одинаково
+        /// у нас и у эталона.
+        /// </summary>
+        [Theory]
+        [InlineData("{\"ID\":7}")]
+        [InlineData("{\"id\":7}")]
+        [InlineData("{\"Id\":7}")]
+        [InlineData("{\"iD\":\"7\"}")]
+        [InlineData("{\"id\":\"+7\"}")]
+        [InlineData("{\"id\":\"7\",\"SHIPTO\":{\"CiTy\":\"Псков\"}}")]
+        [InlineData("{\"id\":\" 7\"}")]
+        [InlineData("{\"id\":\"\"}")]
+        [InlineData("{\"id\":\"0x7\"}")]
+        [InlineData("{\"id\":\"7.0\"}")]
+        public void The_web_profile_accepts_exactly_what_the_reference_accepts(string json)
+        {
+            var web = new JsonSerializerOptions(JsonSerializerDefaults.Web).UseJsonGoddess();
+            var plain = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+            var theirs = Outcome(() => Reference.Deserialize<Order>(json, plain), plain);
+            var ours = Outcome(() => Reference.Deserialize<Order>(json, web), plain);
+
+            Assert.Equal(theirs, ours);
+        }
+
+        /// <summary>
+        /// Результат вызова в сравнимом виде: документ при успехе, имя типа
+        /// исключения при отказе. Сравнивать только успехи было бы
+        /// подтасовкой - половина случаев здесь именно про отказ.
+        /// </summary>
+        private static string Outcome(Func<Order?> call, JsonSerializerOptions write)
+        {
+            try
+            {
+                return "ok:" + Reference.Serialize(call(), write);
+            }
+            catch (Exception error)
+            {
+                return "threw:" + error.GetType().Name;
+            }
+        }
+
+        /// <summary>
+        /// Тип с не-ASCII именем члена веб-профилю недоступен, и это объявлено,
+        /// а не случилось: эталон свернул бы регистр по Unicode, мы - по ASCII,
+        /// и совпадение зависело бы от алфавита (JGD030, а на сборке - JGD004).
+        ///
+        /// <para>
+        /// Работать он при этом продолжает - через эталон, - и под умолчаниями
+        /// остаётся быстрым. Это и проверяется: отказ касается одного профиля,
+        /// а не типа.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_web_profile_refuses_a_non_ascii_member_name()
+        {
+            var web = new JsonSerializerOptions(JsonSerializerDefaults.Web).UseJsonGoddess();
+            var plain = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+            Assert.Contains(
+                "no web-profile code was generated",
+                JsonGoddess.Compat.Interop.JsonGoddess.Explain(typeof(Tricky), web),
+                StringComparison.Ordinal
+                );
+
+            //и всё равно работает
+            var value = Tricky.CreateSample();
+            Assert.Equal(Reference.Serialize(value, plain), Reference.Serialize(value, web));
+
+            //а под умолчаниями тот же тип обслуживается мостом
+            Assert.Contains(
+                "default profile",
+                JsonGoddess.Compat.Interop.JsonGoddess.Explain(typeof(Tricky), Bridge),
+                StringComparison.Ordinal
+                );
+        }
+
         /// <summary>
         /// Отступление слышно, и слышно по делу: в сообщении названы те самые
         /// свойства, из-за которых мост отступил.
         ///
         /// <para>
-        /// Набор опций взят не выдуманный, а тот, что строит ASP.NET Core
-        /// (<c>JsonSerializerDefaults.Web</c>). Человек, у которого «не
-        /// ускорилось», должен увидеть в сообщении настройки, которых он сам не
-        /// ставил, - иначе искать ему нечего.
+        /// Набор опций - веб-профиль ASP.NET Core <b>плюс отступы</b>, то есть
+        /// ровно тот случай, когда человек подправил одну настройку и потерял
+        /// ускорение. Он должен увидеть в сообщении и свою правку, и те
+        /// настройки, которых сам не ставил, - иначе искать ему нечего.
         /// </para>
         /// </summary>
         [Fact]
@@ -348,9 +483,12 @@ namespace JsonGoddess.CompatTests
             JsonGoddess.Compat.Interop.JsonGoddess.Declined += Listen;
             try
             {
-                var web = new JsonSerializerOptions(JsonSerializerDefaults.Web).UseJsonGoddess();
+                var neither = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                {
+                    WriteIndented = true,
+                }.UseJsonGoddess();
 
-                Reference.Serialize(Order.CreateSample(), web);
+                Reference.Serialize(Order.CreateSample(), neither);
             }
             finally
             {
@@ -367,6 +505,7 @@ namespace JsonGoddess.CompatTests
                 StringComparison.Ordinal
                 );
             Assert.Contains(nameof(JsonSerializerOptions.NumberHandling), message, StringComparison.Ordinal);
+            Assert.Contains(nameof(JsonSerializerOptions.WriteIndented), message, StringComparison.Ordinal);
         }
 
         /// <summary>

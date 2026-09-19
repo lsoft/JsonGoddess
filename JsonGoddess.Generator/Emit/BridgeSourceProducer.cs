@@ -100,11 +100,11 @@ namespace JsonGoddess.Generator.Emit
         /// частичный класс, где лежит порождённый писатель: регистрации нужны
         /// оба, и разносить их по типам незачем.
         /// </summary>
-        public static void Emit(SourceBuilder builder, IReadOnlyList<SubjectModel> subjects)
+        public static void Emit(SourceBuilder builder, IReadOnlyList<SubjectModel> subjects, JsonFeature features)
         {
             foreach (var subject in subjects)
             {
-                EmitSubjectReader(builder, subject);
+                EmitSubjectReader(builder, subject, features);
             }
 
             //Коллекции и строковые enum'ы печатаются по одному разу на форму, а
@@ -123,7 +123,7 @@ namespace JsonGoddess.Generator.Emit
                 .Select(g => g.First())
                 .OrderBy(v => v.MethodSuffix, System.StringComparer.Ordinal))
             {
-                EmitCollectionReader(builder, collection);
+                EmitCollectionReader(builder, collection, features);
             }
 
             foreach (var enumModel in values
@@ -162,7 +162,7 @@ namespace JsonGoddess.Generator.Emit
         /// что отдают: массиву нужен <c>ToArray</c>, остальным довольно самого
         /// списка, который и есть искомый тип либо законно им притворяется.
         /// </summary>
-        private static void EmitCollectionReader(SourceBuilder builder, ValueModel value)
+        private static void EmitCollectionReader(SourceBuilder builder, ValueModel value, JsonFeature features)
         {
             var element = value.Element!;
 
@@ -178,18 +178,23 @@ namespace JsonGoddess.Generator.Emit
 
             if (value.Form == ValueForm.Dictionary)
             {
-                EmitDictionaryBody(builder, value, element);
+                EmitDictionaryBody(builder, value, element, features);
             }
             else
             {
-                EmitListBody(builder, value, element);
+                EmitListBody(builder, value, element, features);
             }
 
             builder.CloseBlock();
             builder.Line();
         }
 
-        private static void EmitListBody(SourceBuilder builder, ValueModel value, ValueModel element)
+        private static void EmitListBody(
+            SourceBuilder builder,
+            ValueModel value,
+            ValueModel element,
+            JsonFeature features
+            )
         {
             builder.Line(Read + ".ExpectStartArray(ref reader, typeof(" + value.TypeName + "));");
             builder.Line();
@@ -204,14 +209,19 @@ namespace JsonGoddess.Generator.Emit
             builder.Line("break;");
             builder.CloseBlock();
             builder.Line();
-            builder.Line("items.Add(" + ValueExpression(element) + ");");
+            builder.Line("items.Add(" + ValueExpression(element, features) + ");");
             builder.CloseBlock();
             builder.Line();
 
             builder.Line(value.Form == ValueForm.Array ? "return items.ToArray();" : "return items;");
         }
 
-        private static void EmitDictionaryBody(SourceBuilder builder, ValueModel value, ValueModel element)
+        private static void EmitDictionaryBody(
+            SourceBuilder builder,
+            ValueModel value,
+            ValueModel element,
+            JsonFeature features
+            )
         {
             builder.Line(Read + ".ExpectStartObject(ref reader, typeof(" + value.TypeName + "));");
             builder.Line();
@@ -234,7 +244,7 @@ namespace JsonGoddess.Generator.Emit
             //заранее известного списка.
             builder.Line("var key = reader.GetString()!;");
             builder.Line("reader.Read();");
-            builder.Line("map[key] = " + ValueExpression(element) + ";");
+            builder.Line("map[key] = " + ValueExpression(element, features) + ";");
             builder.CloseBlock();
             builder.Line();
 
@@ -245,7 +255,7 @@ namespace JsonGoddess.Generator.Emit
 
         private static string EnumReaderName(EnumModel model) => "BridgeReadEnum_" + model.MethodSuffix;
 
-        private static void EmitSubjectReader(SourceBuilder builder, SubjectModel subject)
+        private static void EmitSubjectReader(SourceBuilder builder, SubjectModel subject, JsonFeature features)
         {
             var members = subject.Members.Where(m => m.CanRead).ToList();
             var required = members.Where(m => m.IsRequired).ToList();
@@ -330,8 +340,8 @@ namespace JsonGoddess.Generator.Emit
                 NameDispatcher.Emit(
                     builder,
                     members,
-                    JsonFeature.None,
-                    member => EmitMemberRead(builder, member, required, deferred)
+                    features,
+                    member => EmitMemberRead(builder, member, required, deferred, features)
                     );
 
                 if (emptyName)
@@ -351,12 +361,31 @@ namespace JsonGoddess.Generator.Emit
                 //незнакомом, экранированном или разрезанном имени.
                 builder.OpenBlock("if (!" + Read + ".NameIsPlain(ref reader))");
 
+                var caseInsensitive = (features & JsonFeature.CaseInsensitiveNames) != 0;
+
+                if (caseInsensitive)
+                {
+                    //ValueTextEquals сравнивает точно, а здесь регистр значить
+                    //не должен. Строка на этом пути не стои́т ничего: он и так
+                    //редкий, а имена в нём - экранированные или разрезанные.
+                    //
+                    //OrdinalIgnoreCase, а не культурная свёртка, - потому что
+                    //так сворачивает эталон (проверено пробой: ЁЖИК находит
+                    //член Ёжик). На ASCII-литералах, а других генератор под
+                    //этой фичей не печатает, оба правила совпадают.
+                    builder.Line("var text = reader.GetString();");
+                    builder.Line();
+                }
+
                 foreach (var member in members)
                 {
                     builder.OpenBlock(
-                        "if (reader.ValueTextEquals(" + SourceBuilder.Utf8Literal(member.JsonName) + "))"
+                        caseInsensitive
+                            ? "if (string.Equals(text, " + SourceBuilder.Literal(member.JsonName)
+                                + ", global::System.StringComparison.OrdinalIgnoreCase))"
+                            : "if (reader.ValueTextEquals(" + SourceBuilder.Utf8Literal(member.JsonName) + "))"
                         );
-                    EmitMemberRead(builder, member, required, deferred);
+                    EmitMemberRead(builder, member, required, deferred, features);
                     builder.Line("goto next;");
                     builder.CloseBlock();
                     builder.Line();
@@ -404,7 +433,8 @@ namespace JsonGoddess.Generator.Emit
             SourceBuilder builder,
             MemberModel member,
             IReadOnlyList<MemberModel> required,
-            bool deferred
+            bool deferred,
+            JsonFeature features
             )
         {
             //Отметка присутствия - ДО чтения значения, как и у маршрута A:
@@ -415,7 +445,7 @@ namespace JsonGoddess.Generator.Emit
             }
 
             builder.Line("reader.Read();");
-            builder.Line(Target(member, deferred) + " = " + ValueExpression(member.Value) + ";");
+            builder.Line(Target(member, deferred) + " = " + ValueExpression(member.Value, features) + ";");
 
             if (deferred && !member.IsConstructorParameter)
             {
@@ -428,15 +458,15 @@ namespace JsonGoddess.Generator.Emit
         /// отдельные методы, скаляры - в помощник: тело читателя обязано
         /// оставаться коротким, иначе JIT перестанет его встраивать (§12.6.1).
         /// </summary>
-        private static string ValueExpression(ValueModel value)
+        private static string ValueExpression(ValueModel value, JsonFeature features)
         {
             switch (value.Form)
             {
                 case ValueForm.Builtin:
-                    return Read + "." + BuiltinMethod(value) + "(ref reader)";
+                    return Read + "." + BuiltinMethod(value, features) + "(ref reader)";
 
                 case ValueForm.Enum:
-                    return EnumExpression(value);
+                    return EnumExpression(value, features);
 
                 case ValueForm.Subject:
                     return "BridgeRead_" + value.MethodSuffix + "(ref reader)";
@@ -446,7 +476,7 @@ namespace JsonGoddess.Generator.Emit
             }
         }
 
-        private static string BuiltinMethod(ValueModel value)
+        private static string BuiltinMethod(ValueModel value, JsonFeature features)
         {
             var name = value.Builtin.ToString();
 
@@ -456,10 +486,45 @@ namespace JsonGoddess.Generator.Emit
                 && value.Builtin != BuiltinKind.String
                 && value.Builtin != BuiltinKind.ByteArray;
 
-            return nullable ? name + "OrNull" : name;
+            if (nullable)
+            {
+                name += "OrNull";
+            }
+
+            //Число, которое разрешено прислать строкой, читается отдельным
+            //методом, а не строгим с флагом: флаг стоил бы ветки на каждое
+            //значение у всех ради поведения, которого у большинства нет.
+            //Строк, дат, GUID'ов и логических это не касается - у эталона
+            //AllowReadingFromString тоже только про числа (проверено пробой:
+            //"true" на bool он отвергает).
+            return (features & JsonFeature.NumbersFromStrings) != 0 && IsNumeric(value.Builtin)
+                ? name + "Lenient"
+                : name;
         }
 
-        private static string EnumExpression(ValueModel value)
+        private static bool IsNumeric(BuiltinKind kind)
+        {
+            switch (kind)
+            {
+                case BuiltinKind.SByte:
+                case BuiltinKind.Byte:
+                case BuiltinKind.Int16:
+                case BuiltinKind.UInt16:
+                case BuiltinKind.Int32:
+                case BuiltinKind.UInt32:
+                case BuiltinKind.Int64:
+                case BuiltinKind.UInt64:
+                case BuiltinKind.Single:
+                case BuiltinKind.Double:
+                case BuiltinKind.Decimal:
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        private static string EnumExpression(ValueModel value, JsonFeature features)
         {
             var model = value.Enum!;
 
@@ -470,7 +535,9 @@ namespace JsonGoddess.Generator.Emit
 
             //числовой режим: эталон читает подлежащее число и приводит его к
             //типу enum'а, не проверяя, объявлен ли такой член
-            var read = Read + "." + model.Underlying + "(ref reader)";
+            var read = Read + "." + model.Underlying
+                + ((features & JsonFeature.NumbersFromStrings) != 0 ? "Lenient" : string.Empty)
+                + "(ref reader)";
 
             return value.IsNullable
                 ? "(reader.TokenType == " + TokenType + ".Null ? (" + value.TypeName + "?)null : ("
