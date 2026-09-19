@@ -8,6 +8,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.Unicode;
 using JsonGoddess.Compat;
 using JsonGoddess.Tests.Generated;
 using Xunit;
@@ -223,17 +224,24 @@ namespace JsonGoddess.Tests.Compat
         [Fact]
         public void A_custom_encoder_sends_a_bound_type_to_the_reference()
         {
-            //наш набор экранируемого намеренно расходится с их энкодером по
-            //умолчанию (docs/stj-divergences.md §1.1), поэтому здесь видно, что
-            //фасад именно отдал работу, а не сделал её сам
-            var value = new Flat { Customer = "a<b>c", };
+            //Энкодер, у которого разрешена только базовая латиница: кириллица
+            //уходит у него в \uXXXX, а наш sink пишет её как есть
+            //(docs/stj-divergences.md §1.1). На этой паре и видно, что фасад
+            //именно отдал работу, а не сделал её сам.
+            //
+            //Раньше здесь стоял JavaScriptEncoder.Default, и это перестало
+            //быть примером: явно выписанное умолчание - не чужая настройка, и
+            //CompatOptions теперь засчитывает его умолчанием. Пример
+            //потребовался настоящий.
+            var value = new Flat { Customer = "Ёжик", };
             var options = new JsonSerializerOptions
             {
-                Encoder = JavaScriptEncoder.Default,
+                Encoder = JavaScriptEncoder.Create(UnicodeRanges.BasicLatin),
             };
 
+            Assert.False(CompatOptions.IsDefault(options));
             Assert.Equal(Reference.Serialize(value, options), Facade.Serialize(value, options));
-            Assert.Contains("\\u003C", Facade.Serialize(value, options));
+            Assert.Contains("\\u0401", Facade.Serialize(value, options));
         }
 
         [Theory]
@@ -264,19 +272,76 @@ namespace JsonGoddess.Tests.Compat
             Assert.True(CompatOptions.IsDefault(options));
         }
 
+        // ---------- энкодер: одно послабление, и оно доказано ----------
+
+        /// <summary>
+        /// <c>Encoder = JavaScriptEncoder.Default</c> - это не чужая
+        /// настройка, а умолчание, выписанное явно.
+        ///
+        /// <para>
+        /// Ложный отказ здесь не теоретический: minimal API выставляет
+        /// энкодер именно так, и без этого послабления Compat-слой отступал бы
+        /// в ASP.NET по причине, которой нет.
+        /// </para>
+        ///
+        /// <para>
+        /// Утверждение снимается с эталона, а не объявляется: сперва
+        /// проверяется, что байты совпадают, и только потом - что вердикт
+        /// «умолчание». Порядок важен. Если эталон однажды разведёт эти два
+        /// энкодера, первый <c>Assert</c> покраснеет раньше, чем послабление
+        /// успеет пропустить чужое поведение на быстрый путь.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_default_encoder_written_out_explicitly_is_still_the_default()
+        {
+            var explicitEncoder = new JsonSerializerOptions
+            {
+                Encoder = JavaScriptEncoder.Default,
+            };
+
+            var value = new Unserved { Name = "Ёжик <b>&</b> 'кавычки' + плюс", };
+
+            Assert.Equal(
+                Reference.Serialize(value),
+                Reference.Serialize(value, explicitEncoder)
+                );
+
+            Assert.True(CompatOptions.IsDefault(explicitEncoder));
+        }
+
+        /// <summary>
+        /// Послабление узкое: засчитывается ровно один экземпляр. Любой другой
+        /// энкодер меняет байты, и <c>UnsafeRelaxedJsonEscaping</c> - первый
+        /// тому пример.
+        /// </summary>
+        [Fact]
+        public void Any_other_encoder_is_still_a_no()
+        {
+            var relaxed = new JsonSerializerOptions
+            {
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            };
+
+            var value = new Unserved { Name = "Ёжик", };
+
+            Assert.NotEqual(Reference.Serialize(value), Reference.Serialize(value, relaxed));
+            Assert.False(CompatOptions.IsDefault(relaxed));
+        }
+
         // ---------- «сравниваем всё» - проверено, а не обещано ----------
 
         [Fact]
         public void Every_option_of_the_reference_is_either_compared_or_handled_by_name()
         {
-            //четыре свойства разобраны отдельно, остальные сравниваются в лоб.
+            //пять свойств разобраны отдельно, остальные сравниваются в лоб.
             //Если эталон заведёт новое - оно попадёт в сравнение само, и это
             //число сойдётся; если кто-то добавит исключение руками - разойдётся
             var all = typeof(JsonSerializerOptions)
                 .GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Count(p => p.CanRead && p.GetIndexParameters().Length == 0);
 
-            Assert.Equal(all - 4, CompatOptions.ComparedPropertyCount);
+            Assert.Equal(all - 5, CompatOptions.ComparedPropertyCount);
         }
 
         private sealed class OwnResolver : IJsonTypeInfoResolver

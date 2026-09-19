@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
@@ -80,7 +81,32 @@ namespace JsonGoddess.Compat
             return name == nameof(JsonSerializerOptions.IsReadOnly)
                 || name == nameof(JsonSerializerOptions.TypeInfoResolver)
                 || name == "TypeInfoResolverChain"
-                || name == nameof(JsonSerializerOptions.Converters);
+                || name == nameof(JsonSerializerOptions.Converters)
+                || name == nameof(JsonSerializerOptions.Encoder);
+        }
+
+        /// <summary>
+        /// Энкодер: <c>null</c> либо тот самый, который эталон подставляет
+        /// вместо <c>null</c> сам.
+        ///
+        /// <para>
+        /// Сравнение «в лоб» здесь давало ложный отказ, и не в теории:
+        /// minimal API выставляет <c>Encoder</c> явно в
+        /// <c>JavaScriptEncoder.Default</c> - то есть ровно в умолчание, - а
+        /// «объект против <c>null</c>» даёт «не равно». Поведение при этом
+        /// одно и то же, и <c>CompatUtf8Exhauster</c> писался именно под него.
+        /// </para>
+        ///
+        /// <para>
+        /// Послабление узкое нарочно: засчитывается <b>только</b> этот
+        /// экземпляр. Любой другой энкодер - включая
+        /// <c>UnsafeRelaxedJsonEscaping</c>, который отличается от умолчания
+        /// набором экранируемого, - по-прежнему означает «нет».
+        /// </para>
+        /// </summary>
+        private static bool EncoderIsDefault(JsonSerializerOptions options)
+        {
+            return options.Encoder is null || ReferenceEquals(options.Encoder, JavaScriptEncoder.Default);
         }
 
         /// <summary>
@@ -213,8 +239,74 @@ namespace JsonGoddess.Compat
         /// отличались ровно тем, чем они отличаются, - и ни одним свойством
         /// больше.
         /// </summary>
+        /// <summary>
+        /// Чем именно эти опции отличаются от умолчаний - именами свойств.
+        ///
+        /// <para>
+        /// Существует ради одного: «опции не умолчательные» - бесполезный
+        /// ответ. Человек, у которого не ускорилось, должен увидеть
+        /// <c>PropertyNamingPolicy, PropertyNameCaseInsensitive,
+        /// NumberHandling</c> и узнать в этом списке настройки ASP.NET,
+        /// которых он сам не ставил.
+        /// </para>
+        ///
+        /// <para>
+        /// Резолвер этого не зовёт: там довольно <c>true</c>/<c>false</c>, а
+        /// перечисление стои́т рефлексии по всем свойствам. Зовётся только
+        /// тогда, когда ответ понадобился словами.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> DifferencesFromDefault(JsonSerializerOptions? options)
+        {
+            if (options is null)
+            {
+                return Array.Empty<string>();
+            }
+
+            var differences = new List<string>();
+
+            if (options.Converters.Count > 0)
+            {
+                differences.Add(nameof(JsonSerializerOptions.Converters));
+            }
+
+            if (!EncoderIsDefault(options))
+            {
+                differences.Add(nameof(JsonSerializerOptions.Encoder));
+            }
+
+            foreach (var property in Compared)
+            {
+                object? mine;
+                object? theirs;
+
+                try
+                {
+                    mine = property.GetValue(options);
+                    theirs = property.GetValue(Fresh);
+                }
+                catch (Exception)
+                {
+                    differences.Add(property.Name);
+                    continue;
+                }
+
+                if (!Equals(mine, theirs))
+                {
+                    differences.Add(property.Name);
+                }
+            }
+
+            return differences;
+        }
+
         private static bool ComparedPropertiesAreDefault(JsonSerializerOptions options)
         {
+            if (!EncoderIsDefault(options))
+            {
+                return false;
+            }
+
             foreach (var property in Compared)
             {
                 object? mine;

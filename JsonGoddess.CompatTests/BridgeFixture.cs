@@ -258,6 +258,33 @@ namespace JsonGoddess.CompatTests
         /// выдать валидный документ, отличающийся от эталонного, - худший из
         /// исходов.
         /// </summary>
+        /// <summary>
+        /// Энкодер, выписанный явно в умолчание, мост берёт.
+        ///
+        /// Так поступает minimal API, и без этого мост отступал бы там по
+        /// причине, которой нет. Одного этого, впрочем, мало: остальные
+        /// веб-умолчания (camelCase, регистр, числа из строк) он всё ещё не
+        /// умеет - см. PLAN.md §10.
+        /// </summary>
+        [Fact]
+        public void The_default_encoder_written_out_explicitly_does_not_disable_the_bridge()
+        {
+            var options = new JsonSerializerOptions
+            {
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Default,
+            }.UseJsonGoddess();
+
+            var order = Order.CreateSample();
+
+            Assert.Contains(
+                "serves",
+                JsonGoddess.Compat.Interop.JsonGoddess.Explain(typeof(Order), options),
+                StringComparison.Ordinal
+                );
+
+            Assert.Equal(Reference.Serialize(order), Reference.Serialize(order, options));
+        }
+
         [Theory]
         [MemberData(nameof(NonDefaultOptions))]
         public void Non_default_options_go_to_the_reference(string what, JsonSerializerOptions options)
@@ -300,6 +327,64 @@ namespace JsonGoddess.CompatTests
                 },
             },
         };
+
+        /// <summary>
+        /// Отступление слышно, и слышно по делу: в сообщении названы те самые
+        /// свойства, из-за которых мост отступил.
+        ///
+        /// <para>
+        /// Набор опций взят не выдуманный, а тот, что строит ASP.NET Core
+        /// (<c>JsonSerializerDefaults.Web</c>). Человек, у которого «не
+        /// ускорилось», должен увидеть в сообщении настройки, которых он сам не
+        /// ставил, - иначе искать ему нечего.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_bridge_says_out_loud_why_it_stepped_aside()
+        {
+            var heard = new List<string>();
+            void Listen(Type type, string why) => heard.Add(type.Name + ": " + why);
+
+            JsonGoddess.Compat.Interop.JsonGoddess.Declined += Listen;
+            try
+            {
+                var web = new JsonSerializerOptions(JsonSerializerDefaults.Web).UseJsonGoddess();
+
+                Reference.Serialize(Order.CreateSample(), web);
+            }
+            finally
+            {
+                JsonGoddess.Compat.Interop.JsonGoddess.Declined -= Listen;
+            }
+
+            var message = Assert.Single(heard);
+
+            Assert.Contains("Order", message, StringComparison.Ordinal);
+            Assert.Contains(nameof(JsonSerializerOptions.PropertyNamingPolicy), message, StringComparison.Ordinal);
+            Assert.Contains(
+                nameof(JsonSerializerOptions.PropertyNameCaseInsensitive),
+                message,
+                StringComparison.Ordinal
+                );
+            Assert.Contains(nameof(JsonSerializerOptions.NumberHandling), message, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Без подписчика не должно случаться ничего - ни исключения, ни
+        /// перечисления свойств рефлексией. Событие обязано быть бесплатным для
+        /// того, кто им не пользуется.
+        /// </summary>
+        [Fact]
+        public void Nobody_listening_costs_nothing_and_breaks_nothing()
+        {
+            var web = new JsonSerializerOptions(JsonSerializerDefaults.Web).UseJsonGoddess();
+            var order = Order.CreateSample();
+
+            Assert.Equal(
+                Reference.Serialize(order, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                Reference.Serialize(order, web)
+                );
+        }
 
         /// <summary>
         /// Поток, отдающий по кусочку за раз. Существует затем, чтобы читатель

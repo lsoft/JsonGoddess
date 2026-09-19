@@ -103,11 +103,69 @@ namespace JsonGoddess.Compat.Interop
 
             if (options is not null && !CompatOptions.IsDefaultApartFromTheResolver(options))
             {
-                return "the options differ from the defaults, and the generated code was produced for the defaults only;"
+                return "the options differ from the defaults (" + Differences(options) + "),"
+                    + " and the generated code was produced for the defaults only;"
                     + " serialization goes through System.Text.Json instead.";
             }
 
             return "the bridge serves '" + type + "'.";
+        }
+
+        /// <summary>
+        /// Мост отступил: тип он обслуживает, но эти опции - не те, под
+        /// которые напечатан код.
+        ///
+        /// <para>
+        /// Событие, а не запись в лог, по двум причинам. Библиотека, пишущая
+        /// в чужой <c>Console</c>, невежлива, а ссылаться из
+        /// netstandard2.0-пакета на <c>Microsoft.Extensions.Logging</c> ради
+        /// одной строки - дорого. Подписчику остаётся одна строка:
+        /// </para>
+        ///
+        /// <code>
+        /// JsonGoddess.Declined += (type, why) => logger.LogWarning("JsonGoddess: {Type}: {Why}", type, why);
+        /// </code>
+        ///
+        /// <para>
+        /// Молчать было нельзя. Человек подключил пакет, позвал
+        /// <see cref="UseJsonGoddess"/>, ничего не ускорилось - и узнать
+        /// почему неоткуда. Это ровно та же мысль, из-за которой в маршруте A
+        /// появились <c>JGD001</c> и <c>JsonGoddessCompatStrict</c>: молча
+        /// принятое решение хуже громкого.
+        /// </para>
+        ///
+        /// <para>
+        /// Срабатывает один раз на пару «тип и экземпляр опций»: резолвера
+        /// эталон спрашивает однажды и ответ кеширует. Не срабатывает на типах,
+        /// которых мост не обслуживает вовсе, - там подписчик получил бы
+        /// <c>System.Int32</c> и прочий шум, а про настоящую причину генератор
+        /// уже сказал диагностикой на сборке.
+        /// </para>
+        /// </summary>
+        public static event Action<Type, string>? Declined;
+
+        internal static void OnDeclined(Type type, JsonSerializerOptions options)
+        {
+            var handler = Declined;
+            if (handler is null)
+            {
+                return;
+            }
+
+            handler(
+                type,
+                "the bridge stepped aside: the options differ from the defaults (" + Differences(options)
+                + "), and the generated code was produced for the defaults only."
+                );
+        }
+
+        private static string Differences(JsonSerializerOptions options)
+        {
+            var names = CompatOptions.DifferencesFromDefault(options);
+
+            return names.Count == 0
+                ? "no property differs, but the verdict is still negative"
+                : string.Join(", ", names);
         }
     }
 
@@ -137,6 +195,7 @@ namespace JsonGoddess.Compat.Interop
             //которого весь этот слой и обвешан проверками. Сомнение - «нет».
             if (!CompatOptions.IsDefaultApartFromTheResolver(options))
             {
+                JsonGoddess.OnDeclined(type, options);
                 return null;
             }
 
