@@ -20,6 +20,13 @@ namespace JsonGoddess.WebPerformanceTests
 
                 Console.WriteLine("verify: every step of the staircase produces the same document.");
 
+                //Звенья пути записи - здесь же и по той же причине: узнать,
+                //что экзостер пишет не тот документ, надо за секунды, а не в
+                //конце получасового прогона
+                var write = new WritePathFixture();
+                write.Setup();
+                write.Cleanup();
+
                 //Порождённый входной форматтер - здесь же, а не отдельным
                 //прогоном: это то же самое приложение и тот же вопрос
                 //«совпадаем ли мы с эталоном», только на чтении тела

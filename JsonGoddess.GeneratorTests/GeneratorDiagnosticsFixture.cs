@@ -960,6 +960,88 @@ namespace Demo
         }
 
         /// <summary>
+        /// Корень-массив отказывает <b>вслух</b>, и это починка молчания, а не
+        /// новое ограничение.
+        ///
+        /// <para>
+        /// Раньше <c>[JsonSubject(typeof(T[]), true)]</c> роняли в самом начале
+        /// - в <c>CollectRegistrations</c>, где регистрация сопоставлялась с
+        /// <c>INamedTypeSymbol</c>, а массив это <c>IArrayTypeSymbol</c>.
+        /// Сборка шла с нулём предупреждений, кода не порождалось, и не
+        /// говорилось ни слова: узнать об этом можно было только по
+        /// ненайденной перегрузке <c>Serialize</c>, а через мост - вообще
+        /// никак.
+        /// </para>
+        ///
+        /// <para>
+        /// Упирается массив в читателя, а не в писателя: читатель
+        /// коллекции-субъекта строит результат <c>new</c>'ом и наполняет через
+        /// <c>ICollection&lt;T&gt;.Add</c>, а у массива нет ни того, ни
+        /// другого. Поэтому сообщение обязано говорить, <b>что делать</b>, и
+        /// тест это требует: в нём должно стоять слово про элемент.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Array_subject_is_refused_out_loud()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Payload
+    {
+        public int Id { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload[]), true)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Contains("JGD021", run.DiagnosticIds);
+
+            var message = run.GeneratorDiagnostics.Single(d => d.Id == "JGD021").GetMessage();
+
+            Assert.Contains("arrays cannot be registered as subjects", message);
+            Assert.Contains("element type", message);
+        }
+
+        /// <summary>
+        /// Тот же массив <b>на месте члена</b> обслуживается и обязан
+        /// продолжать обслуживаться: отказ касается только регистрации
+        /// субъектом. Без этой пары предыдущий тест читался бы как «массивы не
+        /// поддерживаются», что неправда.
+        /// </summary>
+        [Fact]
+        public void Array_member_is_served_as_before()
+        {
+            var run = GeneratorHarness.Run(@"
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Line
+    {
+        public int Id { get; set; }
+    }
+
+    public class Payload
+    {
+        public Line[] Lines { get; set; }
+    }
+
+    [JsonSubject(typeof(Payload), true)]
+    [JsonSubject(typeof(Line), false)]
+    public partial class Serializer { }
+}
+");
+
+            Assert.Empty(run.GeneratorDiagnostics);
+            Assert.Contains("ArrayOf_Demo_Line", run.SingleGeneratedFile);
+        }
+
+        /// <summary>
         /// readonly-поле с <c>[JsonInclude]</c> эталон <b>пишет</b> и молча
         /// роняет на чтении - проверено прогоном. Раньше мы на нём отказывали,
         /// то есть отвергали то, что он обслуживает; теперь оно только на

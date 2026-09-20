@@ -168,16 +168,19 @@ namespace JsonGoddess.Generator.Binding
             var exhausters = BindSinks(host, known.Exhauster, known.ExhausterBase, "an exhauster", diagnostics);
             var injectors = BindSinks(host, known.Injector, known.InjectorBase, "an injector", diagnostics);
 
+            var failedBeforeSubjects = false;
+
             //Регистрации собираются целиком до того, как связан хоть один член:
             //член может сослаться на субъект, объявленный ниже по списку
             //атрибутов, и порядок объявления не должен ни на что влиять.
-            var registered = CollectRegistrations(host, known);
+            var registered = CollectRegistrations(
+                host, known, location, diagnostics, ref failedBeforeSubjects
+                );
             if (registered.Count == 0)
             {
                 return null;
             }
 
-            var failedBeforeSubjects = false;
             var options = SerializationOptions.Read(host, known, diagnostics, ref failedBeforeSubjects);
             var guardOptions = GuardOptions.Read(host, known, diagnostics, ref failedBeforeSubjects);
             var featureOptions = FeatureOptions.Read(host, known);
@@ -386,7 +389,13 @@ namespace JsonGoddess.Generator.Binding
         /// естественное следствие того, что корень объявляют явно: признак
         /// корня складывается, методы печатаются один раз.
         /// </summary>
-        private static List<Registration> CollectRegistrations(INamedTypeSymbol host, KnownSymbols known)
+        private static List<Registration> CollectRegistrations(
+            INamedTypeSymbol host,
+            KnownSymbols known,
+            LocationInfo? hostLocation,
+            List<DiagnosticInfo> diagnostics,
+            ref bool failed
+            )
         {
             var result = new List<Registration>();
             var seen = new Dictionary<ISymbol, int>(SymbolEqualityComparer.Default);
@@ -398,9 +407,22 @@ namespace JsonGoddess.Generator.Binding
                     continue;
                 }
 
-                if (attribute.ConstructorArguments.Length < 2
-                    || attribute.ConstructorArguments[0].Value is not INamedTypeSymbol subjectType)
+                if (attribute.ConstructorArguments.Length < 2)
                 {
+                    continue;
+                }
+
+                if (attribute.ConstructorArguments[0].Value is not INamedTypeSymbol subjectType)
+                {
+                    //Ненаименованный тип - массив, указатель, обобщённый
+                    //параметр. Сюда управление доходило и раньше, и раньше
+                    //здесь стоял молчаливый continue: [JsonSubject(typeof(T[]))]
+                    //компилировался с нулём предупреждений, не порождал ничего
+                    //и не говорил ни слова. Человек узнавал об этом либо по
+                    //ненайденной перегрузке Serialize, либо - если звал не
+                    //напрямую, а через мост - не узнавал вовсе. Ровно тот
+                    //молчаливый исход, который §1 плана называет худшим.
+                    RefuseRegistration(attribute, hostLocation, diagnostics, ref failed);
                     continue;
                 }
 
@@ -421,6 +443,64 @@ namespace JsonGoddess.Generator.Binding
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Регистрация типа, который субъектом быть не может, - названная
+        /// вслух.
+        ///
+        /// <para>
+        /// Массив сюда попадает чаще прочего, и отказ ему нужен <b>не</b>
+        /// потому, что массив нам непосилен: на месте члена он обслуживается
+        /// давно, и писатель коллекции-субъекта (<c>foreach</c> по значению)
+        /// работал бы на нём как есть. Упирается всё в читателя: читатель
+        /// коллекции-субъекта строит результат <c>new</c>'ом и наполняет через
+        /// <c>ICollection&lt;T&gt;.Add</c>, а массив не поддерживает ни того,
+        /// ни другого - <c>Add</c> на нём бросает <c>NotSupportedException</c>.
+        /// Массиву нужен свой читатель, через пул и <c>Finish</c>, и это
+        /// отдельная работа, а не пропуск типа через регистрацию.
+        /// </para>
+        ///
+        /// <para>
+        /// Пока её нет, человеку надо сказать <b>что делать</b>, а не только
+        /// «нельзя»: элемент регистрируется субъектом и обслуживается, массив
+        /// из него работает на месте члена, а корень-массив в вебе пишет мост -
+        /// у эталона свой конвертер массива, и наш зовётся из него поэлементно.
+        /// </para>
+        /// </summary>
+        private static void RefuseRegistration(
+            AttributeData attribute,
+            LocationInfo? hostLocation,
+            List<DiagnosticInfo> diagnostics,
+            ref bool failed
+            )
+        {
+            if (attribute.ConstructorArguments[0].Value is not ITypeSymbol subjectType)
+            {
+                //Ни типа, ни имени: атрибут сам по себе не собрался, и об этом
+                //компилятор уже сказал своей ошибкой. Второе сообщение о том же
+                //месте только сбивало бы с толку.
+                return;
+            }
+
+            var refusal = subjectType is IArrayTypeSymbol
+                ? "arrays cannot be registered as subjects: the generated reader for a collection subject builds "
+                    + "its result with 'new' and fills it through ICollection<T>.Add, and an array supports "
+                    + "neither. Register the element type instead - an array of a registered subject is served "
+                    + "wherever it appears as a member, and a root array is written through the System.Text.Json "
+                    + "bridge, which drives its own array converter element by element"
+                : "only named types can be registered as subjects";
+
+            diagnostics.Add(
+                new DiagnosticInfo(
+                    JsonGoddessDiagnostics.SubjectIsNotSupportedId,
+                    hostLocation,
+                    subjectType.ToDisplayString(),
+                    refusal
+                    )
+                );
+
+            failed = true;
         }
 
         /// <summary>
