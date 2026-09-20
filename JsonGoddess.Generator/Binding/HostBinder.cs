@@ -108,14 +108,23 @@ namespace JsonGoddess.Generator.Binding
                     //пришлось бы искать замером
                     var streamable = TryReaderProducer.Servable(model);
 
-                    foreach (var root in model.Subjects.Where(s => s.IsRoot && !streamable.Contains(s.MethodSuffix)))
+                    foreach (var root in model.Subjects.Where(s => s.IsRoot))
                     {
+                        var shortfall = TryReaderProducer.WhyTheFormatterFallsShort(
+                            model, root, streamable, model.Guards
+                            );
+
+                        if (shortfall is null)
+                        {
+                            continue;
+                        }
+
                         diagnostics.Add(
                             new DiagnosticInfo(
                                 JsonGoddessDiagnostics.StreamingTypeIsNotServedId,
                                 reference.Location,
                                 root.FullName.Replace("global::", string.Empty),
-                                TryReaderProducer.WhyNotServed(model, root, streamable)
+                                shortfall
                                 )
                             );
                     }

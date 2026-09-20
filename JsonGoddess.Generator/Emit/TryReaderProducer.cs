@@ -58,9 +58,14 @@ namespace JsonGoddess.Generator.Emit
         /// </summary>
         public static HashSet<string> Servable(HostModel host)
         {
-            var servable = new HashSet<string>(
-                host.Subjects.Where(ServableAlone).Select(s => s.MethodSuffix)
-                );
+            //Посев - ВСЕ субъекты, и отказа «сам по себе» больше нет ни
+            //одного. Их было два - полиморфный субъект и субъект-коллекция, -
+            //и оба ушли не в поддержку «как-нибудь», а в условие на граф ниже:
+            //у полиморфного это «все производные обслужены», у коллекции -
+            //«обслужен элемент». Корнем одиночным значением ни тот, ни другой
+            //по-прежнему не читаются, но это решает ReadsByProperty, а не
+            //обслуживаемость: корень-массив работает у обоих.
+            var servable = new HashSet<string>(host.Subjects.Select(s => s.MethodSuffix));
 
             bool changed;
 
@@ -77,9 +82,14 @@ namespace JsonGoddess.Generator.Emit
 
                     //производные - такие же члены графа, как и свойства: тело
                     //производного печатается парным читателем, и необслуженное
-                    //тело снимает обслуживание с базы целиком
+                    //тело снимает обслуживание с базы целиком.
+                    //
+                    //У субъекта-коллекции членов нет вовсе (§9.10), и весь его
+                    //граф - это элемент
                     if (subject.Members.Any(m => m.CanRead && !ValueIsServable(m.Value, servable))
-                        || Dispatchable(subject).Any(d => !DerivedIsServable(host, d, servable)))
+                        || Dispatchable(subject).Any(d => !DerivedIsServable(host, d, servable))
+                        || (subject.CollectionShape is not null
+                            && !ValueIsServable(subject.CollectionShape.Element, servable)))
                     {
                         servable.Remove(subject.MethodSuffix);
                         changed = true;
@@ -124,9 +134,16 @@ namespace JsonGoddess.Generator.Emit
                     continue;
                 }
 
-                foreach (var member in bySuffix[suffix].Members.Where(m => m.CanRead))
+                var reachedValues = bySuffix[suffix].Members.Where(m => m.CanRead).Select(m => m.Value);
+
+                if (bySuffix[suffix].CollectionShape is not null)
                 {
-                    foreach (var referenced in Referenced(member.Value))
+                    reachedValues = reachedValues.Concat(new[] { bySuffix[suffix].CollectionShape!.Element, });
+                }
+
+                foreach (var value in reachedValues)
+                {
+                    foreach (var referenced in Referenced(value))
                     {
                         if (servable.Contains(referenced) && !reached.Contains(referenced))
                         {
@@ -219,11 +236,66 @@ namespace JsonGoddess.Generator.Emit
         /// которого весь §1 плана.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// Чего форматтеру не хватает, чтобы обслужить этот корень <b>целиком</b>,
+        /// или <c>null</c>, если хватает всего. Это и есть условие <c>JGD005</c>.
+        ///
+        /// <para>
+        /// Исходов два, и раньше назывался только первый. <b>Тип не
+        /// обслуживается вовсе</b> - после O11 (а) и (б) такого исхода в
+        /// природе не осталось: всё, что принимает связыватель, потоковый
+        /// читатель печатает. Проверка оставлена потому, что следующая форма
+        /// типа, буде она появится, встанет именно сюда, а не потому, что
+        /// сегодня срабатывает.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>Тип не читается корнем-одиночкой</b> - вот что осталось, и вот
+        /// что молчало. Массив и список такого типа форматтер читает, а
+        /// одиночное значение отдаёт эталону, и причин тому четыре: отложенная
+        /// сборка, страж повторов, полиморфизм и форма коллекции. Молчать об
+        /// этом нельзя ровно по тем же соображениям, по которым не молчит
+        /// первый исход.
+        /// </para>
+        /// </summary>
+        public static string? WhyTheFormatterFallsShort(
+            HostModel host, SubjectModel root, HashSet<string> servable, JsonGuard guards
+            )
+        {
+            if (!servable.Contains(root.MethodSuffix))
+            {
+                return "the streaming reader does not serve it: " + WhyNotServed(host, root, servable)
+                    + ". Request bodies of this type are read by System.Text.Json as before";
+            }
+
+            if (ReadsByProperty(root, guards))
+            {
+                return null;
+            }
+
+            var why = root.CollectionShape is not null
+                ? "it is a collection subject, and the streaming driver has no root automaton for one yet"
+                : root.IsPolymorphic
+                    ? "it is polymorphic, and the concrete type is not known until the discriminator has been read"
+                    : root.NeedsDeferredConstruction
+                        ? "it needs deferred construction, so there is no object to put a property into until "
+                            + "the whole body has been read"
+                        : "the duplicate-property guard keeps its flags inside the reader body";
+
+            return "an array or a list of it is read by the streaming formatter, but a single one is not, because "
+                + why + ". A request body carrying a single one is read by System.Text.Json as before";
+        }
+
         public static string WhyNotServed(HostModel host, SubjectModel subject, HashSet<string> servable)
         {
-            if (subject.CollectionShape is not null)
+            if (subject.CollectionShape is not null
+                && !ValueIsServable(subject.CollectionShape.Element, servable))
             {
-                return "it is a collection subject, and the streaming reader does not print those yet";
+                var offender = host.Subjects
+                    .FirstOrDefault(s => s.MethodSuffix == Offender(subject.CollectionShape.Element));
+
+                return "it is a collection subject whose element type is not served"
+                    + (offender is null ? string.Empty : " (" + WhyNotServed(host, offender, servable) + ")");
             }
 
             foreach (var derived in Dispatchable(subject))
@@ -277,28 +349,6 @@ namespace JsonGoddess.Generator.Emit
             }
         }
 
-        /// <summary>
-        /// Что не печатается <b>само по себе</b>, без оглядки на членов.
-        ///
-        /// <para>
-        /// Остался один субъект-коллекция: единицей переигрывания у него был бы
-        /// элемент, а этого драйвера ещё нет. Работа, а не преграда.
-        /// </para>
-        ///
-        /// <para>
-        /// Полиморфный субъект отсюда ушёл: его читатель печатается (откат
-        /// позиции к дискриминатору плюс парный читатель тела), и условие у
-        /// него не «сам по себе», а «все производные обслужены» - оно живёт в
-        /// неподвижной точке <see cref="Servable(HostModel)"/>. Корнем
-        /// <b>одиночным объектом</b> такой тип по-прежнему не читается, но это
-        /// решает уже <see cref="ReadsByProperty"/>, а не обслуживаемость:
-        /// корень-массив полиморфных элементов работает.
-        /// </para>
-        /// </summary>
-        private static bool ServableAlone(SubjectModel subject)
-        {
-            return subject.CollectionShape is null;
-        }
 
         private static bool ValueIsServable(ValueModel value, HashSet<string> servable)
         {
@@ -353,6 +403,17 @@ namespace JsonGoddess.Generator.Emit
             {
                 foreach (var subject in host.Subjects.Where(s => servable.Contains(s.MethodSuffix)))
                 {
+                    //Субъект-коллекция (§9.10) полиморфным не бывает -
+                    //связыватель отказывает на этой комбинации, - и членов у
+                    //него нет вовсе: весь читатель - это цикл по элементам
+                    if (subject.CollectionShape is not null)
+                    {
+                        EmitCollectionSubjectReader(
+                            builder, subject, injector, host.Guards, host.MaxDepth, host.Features
+                            );
+                        continue;
+                    }
+
                     EmitSubjectReader(
                         builder, subject, injector, null,
                         subject.IsPolymorphic ? subject.DiscriminatorName : null,
@@ -948,6 +1009,13 @@ namespace JsonGoddess.Generator.Emit
         /// </para>
         ///
         /// <para>
+        /// Субъект-коллекция - четвёртый случай, и у него «свойства» нет
+        /// вовсе: единицей переигрывания был бы элемент, а такого драйвера на
+        /// корень ещё нет (PLAN.md §15, O11 (б)). Членом, элементом и
+        /// элементом корневого массива он при этом читается.
+        /// </para>
+        ///
+        /// <para>
         /// Полиморфный субъект - третий случай, и он отклонён <b>числом</b>, а
         /// не сложностью. Объект здесь создаётся до чтения свойств, а тип
         /// известен только после дискриминатора: автомат свойств пришлось бы
@@ -961,6 +1029,7 @@ namespace JsonGoddess.Generator.Emit
         {
             return !subject.NeedsDeferredConstruction
                 && !subject.IsPolymorphic
+                && subject.CollectionShape is null
                 && (guards & JsonGuard.DuplicateProperties) == 0;
         }
 
@@ -1369,6 +1438,118 @@ namespace JsonGoddess.Generator.Emit
             builder.Line("injector.Parse(ref context, rawNumber, out " + underlying + " number);");
             builder.Line("value = (" + enumModel.FullName + ")number;");
             builder.Line("return true;");
+
+            builder.CloseBlock();
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Читатель субъекта-коллекции (§9.10) - двойник
+        /// <c>ClassSourceProducer.EmitCollectionSubjectReaderBody</c>.
+        ///
+        /// <para>
+        /// От обычного читателя коллекции, стоящего ниже, отличается ровно
+        /// двумя подстановками: результат строится <c>NewExpression</c>'ом
+        /// субъекта, а не <c>new List&lt;T&gt;()</c>, и элемент кладётся
+        /// <b>через явное приведение к интерфейсу</b>. Приведение не для
+        /// красоты: субъект мог реализовать <c>ICollection&lt;T&gt;</c> явно,
+        /// без открытого метода на самом себе, и тогда прямой вызов
+        /// <c>Add</c> не скомпилировался бы.
+        /// </para>
+        /// </summary>
+        private static void EmitCollectionSubjectReader(
+            SourceBuilder builder,
+            SubjectModel subject,
+            string injector,
+            JsonGuard guards,
+            int maxDepth,
+            JsonFeature features
+            )
+        {
+            var shape = subject.CollectionShape!;
+            var element = shape.Element;
+            var isMap = shape.IsDictionary;
+            var guardsDepth = (guards & JsonGuard.MaxDepth) != 0;
+
+            var open = TryScan + (isMap ? ".OpenBrace" : ".OpenBracket");
+            var close = TryScan + (isMap ? ".CloseBrace" : ".CloseBracket");
+
+            var sink = isMap
+                ? "((global::System.Collections.Generic.IDictionary<string, " + element.Declaration + ">)result)"
+                : "((global::System.Collections.Generic.ICollection<" + element.Declaration + ">)result)";
+
+            EmitSignature(builder, SubjectMethod(subject), injector, subject.Declaration);
+
+            builder.Line("value = default!;");
+            builder.Line();
+
+            EmitTrivia(builder, features);
+
+            if (!subject.IsValueType)
+            {
+                Fail(builder, TryScan + ".TryReadNull(json, ref position, final, out var __null)");
+                builder.OpenBlock("if (__null)");
+                builder.Line("return true;");
+                builder.CloseBlock();
+                builder.Line();
+            }
+
+            Fail(builder, TryScan + ".Expect(json, ref position, " + open + ", final)");
+            EmitDepthOpen(builder, guardsDepth, maxDepth);
+
+            EmitTrivia(builder, features);
+            Fail(builder, TryScan + ".TryConsume(json, ref position, " + close + ", final, out var __empty)");
+            builder.OpenBlock("if (__empty)");
+            builder.Line("value = " + subject.NewExpression + ";");
+            builder.Line("return true;");
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line("var result = " + subject.NewExpression + ";");
+            builder.Line();
+
+            builder.OpenBlock("while (true)");
+
+            if (isMap)
+            {
+                //ключ приходится материализовать строкой - положить спан в
+                //чужую реализацию IDictionary<string,V> нечем
+                EmitTrivia(builder, features);
+                Fail(builder, StringRead(guards) + "(json, ref position, final, out var rawKey, out var keyEscaped)");
+
+                if ((guards & JsonGuard.InvalidUtf8) != 0)
+                {
+                    builder.Line(ValueSourceProducer.StringDecoder + ".EnsureValidUtf8(rawKey, keyEscaped);");
+                }
+
+                builder.Line("injector.ParseText(ref context, rawKey, keyEscaped, out string key);");
+                Fail(builder, TryScan + ".Expect(json, ref position, " + TryScan + ".Colon, final)");
+            }
+
+            builder.Line(element.Declaration + " item;");
+            EmitValueRead(builder, element, "item", new Temps());
+            builder.Line();
+
+            builder.Line(isMap ? sink + "[key] = item;" : sink + ".Add(item);");
+            builder.Line();
+
+            EmitTrivia(builder, features);
+            Fail(builder, TryScan + ".TryConsume(json, ref position, " + TryScan + ".Comma, final, out var __more)");
+            builder.OpenBlock("if (!__more)");
+            builder.Line("break;");
+            builder.CloseBlock();
+
+            EmitTrailingCommaCheck(builder, features, TokenKind + (isMap ? ".EndObject" : ".EndArray"));
+
+            builder.CloseBlock();
+            builder.Line();
+
+            Fail(builder, TryScan + ".Expect(json, ref position, " + close + ", final)");
+
+            builder.Line("value = result;");
+            builder.Line("return true;");
+
+            EmitDepthClose(builder, guardsDepth);
 
             builder.CloseBlock();
             builder.Line();

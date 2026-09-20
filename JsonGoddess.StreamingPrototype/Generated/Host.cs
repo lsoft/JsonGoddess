@@ -93,6 +93,9 @@ namespace JsonGoddess.StreamingPrototype.Generated
     [JsonSubject(typeof(Circle), false)]
     [JsonSubject(typeof(Square), false)]
     [JsonSubject(typeof(Drawing), true)]
+    [JsonSubject(typeof(Canvas), true)]
+    [JsonSubject(typeof(Palette), false)]
+    [JsonSubject(typeof(Weights), false)]
     internal partial class ShapeHost
     {
     }

@@ -1,13 +1,11 @@
-using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
-using System.Threading.Tasks;
-using Reference = System.Text.Json.JsonSerializer;
 
 namespace JsonGoddess.StreamingPrototype
 {
     /// <summary>
-    /// Полиморфный корень и полиморфный член - потоком (PLAN.md §15, O11 (а)).
+    /// Формы субъекта, которых потоковый читатель не брал до O11: полиморфный
+    /// тип и субъект-коллекция (PLAN.md §15, O11 а и б).
     ///
     /// <para>
     /// Модель своя, а не общая с лестницей, и это не удобство: добавить
@@ -47,5 +45,29 @@ namespace JsonGoddess.StreamingPrototype
         public Shape? Cover { get; set; }
 
         public List<Shape>? Shapes { get; set; }
+    }
+
+    /// <summary>
+    /// Субъект-коллекция (§9.10, PLAN.md §15 O11 (б)) - обе формы, список и
+    /// словарь.
+    /// </summary>
+    public class Palette : List<string>
+    {
+    }
+
+    public class Weights : Dictionary<string, int>
+    {
+    }
+
+    /// <summary>Держатель: до починки один такой член снимал обслуживание со всего графа над собой.</summary>
+    public class Canvas
+    {
+        public int Id { get; set; }
+
+        public Palette? Colors { get; set; }
+
+        public Weights? Weights { get; set; }
+
+        public Shape? Cover { get; set; }
     }
 }

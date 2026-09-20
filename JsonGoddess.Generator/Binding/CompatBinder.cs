@@ -443,7 +443,11 @@ namespace JsonGoddess.Generator.Binding
 
                             foreach (var root in streamingModel.Subjects.Where(s => s.IsRoot))
                             {
-                                if (streamable.Contains(root.MethodSuffix))
+                                var shortfall = TryReaderProducer.WhyTheFormatterFallsShort(
+                                    streamingModel, root, streamable, streamingModel.Guards
+                                    );
+
+                                if (shortfall is null)
                                 {
                                     continue;
                                 }
@@ -456,7 +460,7 @@ namespace JsonGoddess.Generator.Binding
                                         JsonGoddessDiagnostics.StreamingTypeIsNotServedId,
                                         symbol is null ? null : roots[symbol],
                                         root.FullName.Replace("global::", string.Empty),
-                                        TryReaderProducer.WhyNotServed(streamingModel, root, streamable)
+                                        shortfall
                                         )
                                     );
                             }

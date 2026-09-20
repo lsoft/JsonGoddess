@@ -75,9 +75,12 @@ namespace JsonGoddess.Generator.Emit
         /// </summary>
         public static HashSet<string> Servable(HostModel host)
         {
-            var servable = new HashSet<string>(
-                host.Subjects.Where(ServableAlone).Select(s => s.MethodSuffix)
-                );
+            //Посев - ВСЕ субъекты: отказа «сам по себе» больше нет ни одного.
+            //Полиморфный и субъект-коллекция стоя́ли здесь и ушли в условие на
+            //граф ниже - «все производные обслужены» и «обслужен элемент».
+            //Полиморфный корень эталону по-прежнему не отдаётся, но это решает
+            //CanRegisterRoot, а не обслуживаемость.
+            var servable = new HashSet<string>(host.Subjects.Select(s => s.MethodSuffix));
 
             bool changed;
 
@@ -95,8 +98,12 @@ namespace JsonGoddess.Generator.Emit
                     //производные - такие же члены графа, как и свойства: тело
                     //производного печатается парным читателем, и необслуженное
                     //тело снимает обслуживание с базы целиком
+                    //У субъекта-коллекции членов нет вовсе (§9.10), и весь его
+                    //граф - это элемент
                     if (subject.Members.Any(m => m.CanRead && !ValueIsServable(m.Value, servable))
-                        || Dispatchable(subject).Any(d => !DerivedIsServable(host, d, servable)))
+                        || Dispatchable(subject).Any(d => !DerivedIsServable(host, d, servable))
+                        || (subject.CollectionShape is not null
+                            && !ValueIsServable(subject.CollectionShape.Element, servable)))
                     {
                         servable.Remove(subject.MethodSuffix);
                         changed = true;
@@ -106,22 +113,6 @@ namespace JsonGoddess.Generator.Emit
             while (changed);
 
             return servable;
-        }
-
-        /// <summary>
-        /// Что мост не берёт <b>само по себе</b>, без оглядки на членов.
-        /// Остался субъект-коллекция: чтение у него устроено иначе, и делать
-        /// его заодно значило бы отложить всё остальное.
-        ///
-        /// <para>
-        /// Полиморфный субъект отсюда ушёл: его читатель печатается, и условие
-        /// у него не «сам по себе», а «все производные обслужены» - оно живёт
-        /// в неподвижной точке <see cref="Servable(HostModel)"/>.
-        /// </para>
-        /// </summary>
-        private static bool ServableAlone(SubjectModel subject)
-        {
-            return subject.CollectionShape is null;
         }
 
         /// <summary>
@@ -192,9 +183,14 @@ namespace JsonGoddess.Generator.Emit
                     + "root. Generated code still reads it wherever it appears inside another served type";
             }
 
-            if (subject.CollectionShape is not null)
+            if (subject.CollectionShape is not null
+                && !ValueIsServable(subject.CollectionShape.Element, servable))
             {
-                return "it is a collection subject, and the bridge does not print those yet";
+                var offender = host.Subjects
+                    .FirstOrDefault(s => s.MethodSuffix == Offender(subject.CollectionShape.Element));
+
+                return "it is a collection subject whose element type is not served"
+                    + (offender is null ? string.Empty : " (" + WhyNotServed(host, offender, servable) + ")");
             }
 
             foreach (var derived in Dispatchable(subject))
@@ -279,6 +275,14 @@ namespace JsonGoddess.Generator.Emit
         {
             foreach (var subject in subjects)
             {
+                //Субъект-коллекция (§9.10) полиморфным не бывает - связыватель
+                //отказывает на этой комбинации, - и членов у него нет вовсе
+                if (subject.CollectionShape is not null)
+                {
+                    EmitCollectionSubjectReader(builder, subject, features);
+                    continue;
+                }
+
                 EmitSubjectReader(builder, subject, features, null, null);
 
                 //Тело каждого производного - отдельным читателем. Обслужен он
@@ -403,6 +407,83 @@ namespace JsonGoddess.Generator.Emit
             builder.Line();
 
             builder.Line(value.Form == ValueForm.Array ? "return items.ToArray();" : "return items;");
+        }
+
+        /// <summary>
+        /// Читатель субъекта-коллекции (§9.10, PLAN.md §15 O11 (б)).
+        ///
+        /// <para>
+        /// От читателя обычной коллекции, стоящего выше, отличается двумя
+        /// подстановками: результат строится <c>NewExpression</c>'ом субъекта,
+        /// а не <c>new List&lt;T&gt;()</c>, и элемент кладётся <b>через явное
+        /// приведение к интерфейсу</b> - субъект мог реализовать
+        /// <c>ICollection&lt;T&gt;</c> явно, без открытого метода на самом
+        /// себе.
+        /// </para>
+        /// </summary>
+        private static void EmitCollectionSubjectReader(
+            SourceBuilder builder, SubjectModel subject, JsonFeature features
+            )
+        {
+            var shape = subject.CollectionShape!;
+            var element = shape.Element;
+            var isMap = shape.IsDictionary;
+
+            var sink = isMap
+                ? "((global::System.Collections.Generic.IDictionary<string, " + element.Declaration + ">)result)"
+                : "((global::System.Collections.Generic.ICollection<" + element.Declaration + ">)result)";
+
+            builder.Line(
+                "internal static " + subject.Declaration + " " + ReaderName(subject) + "(" + Reader + ")"
+                );
+            builder.OpenBlock();
+
+            if (!subject.IsValueType)
+            {
+                builder.OpenBlock("if (reader.TokenType == " + TokenType + ".Null)");
+                builder.Line("return null;");
+                builder.CloseBlock();
+                builder.Line();
+            }
+
+            builder.Line(
+                Read + (isMap ? ".ExpectStartObject" : ".ExpectStartArray")
+                + "(ref reader, typeof(" + subject.FullName + "));"
+                );
+            builder.Line();
+
+            builder.Line("var result = " + subject.NewExpression + ";");
+            builder.Line();
+
+            builder.OpenBlock("while (true)");
+            builder.Line("reader.Read();");
+            builder.OpenBlock(
+                "if (reader.TokenType == " + TokenType + (isMap ? ".EndObject)" : ".EndArray)")
+                );
+            builder.Line("break;");
+            builder.CloseBlock();
+            builder.Line();
+
+            if (isMap)
+            {
+                //ключ словаря берётся через GetString: он разэкранирует и
+                //соберёт разрезанное имя, а имя тут произвольное, не из
+                //заранее известного списка
+                builder.Line("var key = reader.GetString()!;");
+                builder.Line("reader.Read();");
+                builder.Line(sink + "[key] = " + ValueExpression(element, features) + ";");
+            }
+            else
+            {
+                builder.Line(sink + ".Add(" + ValueExpression(element, features) + ");");
+            }
+
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line("return result;");
+            builder.CloseBlock();
+            builder.Line();
         }
 
         private static void EmitDictionaryBody(

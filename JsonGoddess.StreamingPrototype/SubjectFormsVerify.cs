@@ -7,8 +7,8 @@ using Reference = System.Text.Json.JsonSerializer;
 namespace JsonGoddess.StreamingPrototype
 {
     /// <summary>
-    /// Полиморфный тип потоком: корнем-массивом и на месте члена (PLAN.md §15,
-    /// O11 (а)).
+    /// Формы субъекта, которых потоковый читатель не брал до O11: полиморфный
+    /// тип и субъект-коллекция (PLAN.md §15, O11 а и б).
     ///
     /// <para>
     /// Проверяется не то, что порождённый код компилируется, - это сказал бы и
@@ -25,19 +25,64 @@ namespace JsonGoddess.StreamingPrototype
     /// доложить наполовину разобранный тип.
     /// </para>
     /// </summary>
-    internal static class PolymorphicVerify
+    internal static class SubjectFormsVerify
     {
         private static readonly int[] Chunks = { 1, 2, 3, 7, 13, 64, 4096, int.MaxValue, };
 
         internal static async Task All()
         {
-            Console.WriteLine("=== Полиморфный тип потоком ===");
+            Console.WriteLine("=== Полиморфный тип и субъект-коллекция потоком ===");
 
             await Roots();
             await Members();
+            await CollectionSubjects();
             await Refusals();
 
             Console.WriteLine();
+        }
+
+        /// <summary>
+        /// Субъект-коллекция членом - обе формы сразу (PLAN.md §15, O11 (б)).
+        ///
+        /// <para>
+        /// Вместе с полиморфным членом в одном типе нарочно: это два разных
+        /// условия в одной неподвижной точке, и проверять их порознь значило бы
+        /// не проверить, что они уживаются.
+        /// </para>
+        /// </summary>
+        private static async Task CollectionSubjects()
+        {
+            var canvas = new Canvas
+            {
+                Id = 11,
+                Colors = new Palette { "красный", "зелёный", "с кавычкой \" и юникодом é中😀", },
+                Weights = new Weights { ["толщина"] = 3, ["прозрачность"] = 70, },
+                Cover = new Square { Id = 12, Label = "обложка", Side = 8, },
+            };
+
+            var body = Reference.SerializeToUtf8Bytes(canvas, Verify.Web);
+            var expected = Reference.Serialize(Reference.Deserialize<Canvas>(body, Verify.Web), Verify.Web);
+
+            foreach (var chunk in Chunks)
+            {
+                var pipe = new Dribble(body, true, chunk);
+
+                try
+                {
+                    var one = await ShapeHost.StreamReadOne_JsonGoddess_StreamingPrototype_Canvas(
+                        DefaultInjector.Instance, pipe
+                        );
+
+                    Verify.Check(
+                        Reference.Serialize(one, Verify.Web) == expected,
+                        "субъект-коллекция членом, кусок " + Name(chunk)
+                        );
+                }
+                catch (Exception error)
+                {
+                    Verify.Check(false, "субъект-коллекция членом, кусок " + Name(chunk) + ": " + error.Message);
+                }
+            }
         }
 
         /// <summary>

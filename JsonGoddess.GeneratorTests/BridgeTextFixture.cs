@@ -146,12 +146,13 @@ namespace Sample
         }
 
         /// <summary>
-        /// Субъект-коллекция членом - вторая форма той же болезни, и проверять
-        /// её отдельно обязательно: причина отказа у них общая, а путь в
-        /// связывателе разный.
+        /// Субъект-коллекция членом - обслуживается вместе с держателем
+        /// (PLAN.md §15, O11 (б)). Проверяется отдельно от полиморфного: путь
+        /// в связывателе у них разный, хоть условие и стои́т в одной
+        /// неподвижной точке.
         /// </summary>
         [Fact]
-        public void A_collection_subject_member_takes_its_holder_out_of_the_bridge()
+        public void A_collection_subject_member_is_served_and_so_is_its_holder()
         {
             var run = GeneratorHarness.Run(@"
 using System.Collections.Generic;
@@ -177,13 +178,22 @@ namespace Sample
 ");
 
             Assert.Empty(run.CompilationErrors);
-            Assert.Contains("JGD006", run.DiagnosticIds);
+            Assert.DoesNotContain("JGD006", run.DiagnosticIds);
 
-            var said = run.GeneratorDiagnostics.First(d => d.Id == "JGD006").GetMessage();
+            var bridge = run.GeneratedFiles
+                .Where(f => f.Key.Contains(".Bridge."))
+                .Select(f => f.Value)
+                .FirstOrDefault();
 
-            Assert.Contains("Sample.Owner", said);
-            Assert.Contains("Items", said);
-            Assert.Contains("collection subject", said);
+            Assert.True(bridge is not null, "файлы: " + string.Join(", ", run.GeneratedFiles.Keys));
+
+            Assert.Contains("BridgeRead_Sample_Basket", bridge);
+            Assert.Contains("BridgeRead_Sample_Owner", bridge);
+
+            //элемент кладётся через приведение к интерфейсу, а не прямым
+            //вызовом: субъект мог реализовать его явно
+            Assert.Contains("global::System.Collections.Generic.ICollection<", bridge);
+            Assert.Contains(")result).Add(", bridge);
         }
 
         /// <summary>

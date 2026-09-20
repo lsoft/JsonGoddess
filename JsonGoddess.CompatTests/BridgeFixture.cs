@@ -183,6 +183,54 @@ namespace JsonGoddess.CompatTests
             Assert.Throws<JsonException>(() => Reference.Deserialize<Shelter>(json, Bridge));
         }
 
+        /// <summary>
+        /// Субъект-коллекция мостом - обе формы и держатель (PLAN.md §15,
+        /// O11 б). До этого мост его не брал, а держатель такого типа ронял
+        /// сборку потребителя.
+        /// </summary>
+        [Fact]
+        public void A_collection_subject_goes_through_the_bridge_both_ways()
+        {
+            var canvas = Canvas.CreateSample();
+
+            Assert.Equal(Reference.Serialize(canvas), JsonSerializer.Serialize(canvas));
+            Assert.Equal(Reference.Serialize(canvas), Reference.Serialize(canvas, Bridge));
+
+            var json = Reference.Serialize(canvas);
+
+            Assert.Equal(
+                Reference.Serialize(Reference.Deserialize<Canvas>(json)),
+                Reference.Serialize(Reference.Deserialize<Canvas>(json, Bridge))
+                );
+        }
+
+        /// <summary>
+        /// И то же самое, но <b>корнем</b>. Спрашивается отдельно, потому что
+        /// у полиморфного типа ровно здесь и вскрылось, что эталон чужой
+        /// конвертер в этой роли не принимает вовсе; у коллекции ответ может
+        /// быть другим, и выяснять его надо пробой, а не рассуждением.
+        /// </summary>
+        [Fact]
+        public void A_collection_subject_as_a_root_goes_through_the_bridge_too()
+        {
+            var palette = new Palette { "красный", "зелёный", };
+
+            Assert.Equal(Reference.Serialize(palette), JsonSerializer.Serialize(palette));
+
+            var said = JsonGoddess.Compat.Interop.JsonGoddess.Explain(typeof(Palette), Bridge);
+
+            Assert.True(said.Contains("serves"), said);
+
+            Assert.Equal(Reference.Serialize(palette), Reference.Serialize(palette, Bridge));
+
+            var json = Reference.Serialize(palette);
+
+            Assert.Equal(
+                Reference.Serialize(Reference.Deserialize<Palette>(json)),
+                Reference.Serialize(Reference.Deserialize<Palette>(json, Bridge))
+                );
+        }
+
         [Fact]
         public void Reading_through_the_bridge_gives_what_the_reference_reads()
         {

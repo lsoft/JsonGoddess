@@ -256,6 +256,49 @@ namespace JsonGoddess.CompatTests
     }
 
     /// <summary>
+    /// Субъект-коллекция (§9.10) - обе формы, список и словарь, - и держатель
+    /// (PLAN.md §15, O11 б).
+    /// </summary>
+    public class Palette : List<string>
+    {
+    }
+
+    public class Weights : Dictionary<string, int>
+    {
+    }
+
+    public class Canvas
+    {
+        public int Id
+        {
+            get;
+            set;
+        }
+
+        public Palette? Colors
+        {
+            get;
+            set;
+        }
+
+        public Weights? Marks
+        {
+            get;
+            set;
+        }
+
+        public static Canvas CreateSample()
+        {
+            return new Canvas
+            {
+                Id = 5,
+                Colors = new Palette { "красный", "зелёный", },
+                Marks = new Weights { ["толщина"] = 3, },
+            };
+        }
+    }
+
+    /// <summary>
     /// Тип, который обслужить нельзя: член несёт чужой конвертер, и
     /// воспроизвести его мы не можем. Обход графа обязан отступить именно
     /// здесь и именно с <c>JGD001</c>, а не уронить сборку.

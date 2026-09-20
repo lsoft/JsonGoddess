@@ -356,11 +356,77 @@ namespace Demo
         }
 
         /// <summary>
-        /// Хост, где обслуживать нечего, не печатает пустого файла: файл,
-        /// которого может не быть, лучше видно отсутствующим.
+        /// Субъект-коллекция обслуживается: членом, элементом и элементом
+        /// корневого массива (PLAN.md §15, O11 (б)). Раньше не обслуживался
+        /// вовсе, и неспособность была заразна - вместе с ним выпадал весь
+        /// граф над ним.
         /// </summary>
         [Fact]
-        public void A_host_with_nothing_servable_prints_no_file_at_all()
+        public void A_collection_subject_is_served_and_so_is_its_holder()
+        {
+            var source = @"
+using System;
+using System.Collections.Generic;
+using JsonGoddess;
+
+namespace Demo
+{
+    public class Basket : List<string>
+    {
+    }
+
+    public class Tags : Dictionary<string, int>
+    {
+    }
+
+    public class Cart
+    {
+        public int Id { get; set; }
+        public Basket? Items { get; set; }
+        public Tags? Marks { get; set; }
+    }
+
+    [JsonSubject(typeof(Cart), true)]
+    [JsonSubject(typeof(Basket), false)]
+    [JsonSubject(typeof(Tags), false)]
+    public partial class SubjectSerializer
+    {
+    }
+}
+";
+
+            var run = Run(source, On);
+            var text = Streaming(run);
+
+            Assert.Empty(run.CompilationErrors);
+            Assert.True(text is not null, "файлы: " + string.Join(", ", run.GeneratedFiles.Keys));
+
+            //обе формы субъекта-коллекции и держатель
+            Assert.Contains("TryRead_Demo_Basket", text);
+            Assert.Contains("TryRead_Demo_Tags", text);
+            Assert.Contains("TryRead_Demo_Cart", text);
+
+            //элемент кладётся через приведение к интерфейсу, а не прямым
+            //вызовом: субъект мог реализовать его явно
+            Assert.Contains("global::System.Collections.Generic.ICollection<", text);
+            Assert.Contains(")result).Add(item);", text);
+            Assert.Contains("global::System.Collections.Generic.IDictionary<string, ", text);
+            Assert.Contains(")result)[key] = item;", text);
+
+            //держатель читается корнем-одиночкой как ни в чём не бывало
+            Assert.Contains("StreamReadOne_Demo_Cart", text);
+            Assert.DoesNotContain("JGD005", run.DiagnosticIds);
+        }
+
+        /// <summary>
+        /// А вот корнем-одиночкой субъект-коллекция не читается - единицей
+        /// переигрывания был бы элемент, и такого драйвера ещё нет, - и
+        /// <b>об этом сказано</b>. Молчаливого отказа здесь быть не должно:
+        /// массив такого типа форматтер читает, одиночное значение отдаёт
+        /// эталону, и разницу иначе пришлось бы искать замером.
+        /// </summary>
+        [Fact]
+        public void A_collection_subject_root_is_read_as_an_array_but_not_alone_and_that_is_said()
         {
             var source = @"
 using System;
@@ -380,7 +446,22 @@ namespace Demo
 }
 ";
 
-            Assert.Null(Streaming(Run(source, On)));
+            var run = Run(source, On);
+            var text = Streaming(run);
+
+            Assert.Empty(run.CompilationErrors);
+            Assert.True(text is not null, "файлы: " + string.Join(", ", run.GeneratedFiles.Keys));
+
+            Assert.Contains("StreamReadArray_Demo_Basket", text);
+            Assert.DoesNotContain("StreamReadOne_Demo_Basket", text);
+
+            Assert.Contains("JGD005", run.DiagnosticIds);
+
+            var said = run.GeneratorDiagnostics.First(d => d.Id == "JGD005").GetMessage();
+
+            Assert.Contains("Demo.Basket", said);
+            Assert.Contains("collection subject", said);
+            Assert.Contains("a single one is not", said);
         }
     }
 }
