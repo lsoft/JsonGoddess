@@ -135,13 +135,19 @@ namespace JsonGoddess.GeneratorTests
         }
 
         /// <summary>
-        /// Полиморфный субъект потоковый читатель пока не печатает, и
-        /// неспособность <b>заразна</b>: тип, у которого такой тип членом,
-        /// прочитан потоком тоже быть не может. Отказ молчаливый в том смысле,
-        /// что работа уходит обычному пути; голос ему даст пункт 8.
+        /// Полиморфный субъект обслуживается - и сам, и на месте члена
+        /// (PLAN.md §15, O11 (а)). До этого он не читался потоком вовсе, и
+        /// неспособность была <b>заразна</b>: один <c>[JsonDerivedType]</c> на
+        /// дне графа снимал обслуживание со всех, кто до него дотягивался.
+        ///
+        /// <para>
+        /// Утверждений здесь два, и второе не слабее первого: печатается тело
+        /// каждого производного отдельным читателем, а держатель полиморфного
+        /// члена обслуживается наравне с прочими - то есть каскад снят.
+        /// </para>
         /// </summary>
         [Fact]
-        public void A_polymorphic_subject_is_not_served_and_the_refusal_spreads_upwards()
+        public void A_polymorphic_subject_is_served_and_so_is_its_holder()
         {
             var source = @"
 using System;
@@ -191,22 +197,70 @@ namespace Demo
                 + "; диагностики: " + string.Join(", ", run.DiagnosticIds)
                 );
 
-            //сам полиморфный тип и тот, кто держит его членом, - не обслужены
-            Assert.DoesNotContain("TryRead_Demo_Animal", text);
-            Assert.DoesNotContain("TryRead_Demo_Shelter", text);
+            //сам полиморфный тип, тело его производного и тот, кто держит
+            //полиморфный тип членом
+            Assert.Contains("TryRead_Demo_Animal", text);
+            Assert.Contains("TryReadBody_Demo_Dog_As_Demo_Animal", text);
+            Assert.Contains("TryRead_Demo_Shelter", text);
 
-            //а сосед по хосту от этого не страдает
+            //сосед по хосту как был, так и остался
             Assert.Contains("TryRead_Demo_Plain", text);
 
-            //и об этом сказано - иначе ускорение, которого не случилось,
-            //пришлось бы искать замером
-            Assert.Contains("JGD005", run.DiagnosticIds);
+            //диспетчер дискриминатора: имя, откат позиции и уход в тело
+            Assert.Contains("__hasDiscriminator", text);
+            Assert.Contains("position = __discriminatorStart;", text);
 
-            var said = run.GeneratorDiagnostics.Single(d => d.Id == "JGD005").GetMessage();
+            //каскада больше нет - жаловаться не на что
+            Assert.DoesNotContain("JGD005", run.DiagnosticIds);
+        }
 
-            Assert.Contains("Demo.Shelter", said);
-            Assert.Contains("Tenant", said);
-            Assert.Contains("polymorphic", said);
+        /// <summary>
+        /// Корнем полиморфный тип читается <b>массивом</b>, но не одиночным
+        /// объектом, и это отказ по числу, а не по сложности: поимущественный
+        /// драйвер создаёт объект до чтения свойств, а тип известен только
+        /// после дискриминатора. Одиночный объект корнем даёт 0.96 по лестнице
+        /// - выигрывать там нечего (PLAN.md §15, O11 (в)).
+        /// </summary>
+        [Fact]
+        public void A_polymorphic_root_gets_the_array_driver_but_not_the_single_one()
+        {
+            var source = @"
+using System;
+using JsonGoddess;
+using System.Text.Json.Serialization;
+
+namespace Demo
+{
+    [JsonDerivedType(typeof(Dog), ""dog"")]
+    public class Animal
+    {
+        public int Id { get; set; }
+    }
+
+    public class Dog : Animal
+    {
+        public bool Good { get; set; }
+    }
+
+    [JsonSubject(typeof(Animal), true)]
+    [JsonSubject(typeof(Dog), false)]
+    public partial class SubjectSerializer
+    {
+    }
+}
+";
+
+            var run = Run(source, On);
+            var text = Streaming(run);
+
+            Assert.Empty(run.CompilationErrors);
+            Assert.True(text is not null, "файлы: " + string.Join(", ", run.GeneratedFiles.Keys));
+
+            Assert.Contains("StreamReadArray_Demo_Animal", text);
+            Assert.Contains("StreamReadList_Demo_Animal", text);
+
+            Assert.DoesNotContain("StreamReadOne_Demo_Animal", text);
+            Assert.DoesNotContain("TryReadName_Demo_Animal", text);
         }
 
         /// <summary>
@@ -310,24 +364,16 @@ namespace Demo
         {
             var source = @"
 using System;
+using System.Collections.Generic;
 using JsonGoddess;
-using System.Text.Json.Serialization;
 
 namespace Demo
 {
-    [JsonDerivedType(typeof(Dog), ""dog"")]
-    public class Animal
+    public class Basket : List<string>
     {
-        public int Id { get; set; }
     }
 
-    public class Dog : Animal
-    {
-        public bool Good { get; set; }
-    }
-
-    [JsonSubject(typeof(Animal), true)]
-    [JsonSubject(typeof(Dog), false)]
+    [JsonSubject(typeof(Basket), true)]
     public partial class SubjectSerializer
     {
     }

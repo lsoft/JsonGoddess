@@ -40,6 +40,7 @@ namespace JsonGoddess.StreamingPrototype
             }
 
             await Verify.All();
+            await PolymorphicVerify.All();
             await Web.WebVerify.All();
 
             Console.WriteLine();

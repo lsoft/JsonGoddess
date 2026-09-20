@@ -61,4 +61,39 @@ namespace JsonGoddess.StreamingPrototype.Generated
     internal partial class OrderHostWithoutGuards
     {
     }
+
+    /// <summary>
+    /// Полиморфный тип - корнем и членом (PLAN.md §15, O11 (а)).
+    ///
+    /// <para>
+    /// Профиль тот же, что у <see cref="OrderHost"/>, и это условие проверки,
+    /// а не оформление: сравнивать нас с эталоном можно только на одинаковых
+    /// правилах имён и одинаковых стражах, иначе расхождение объяснялось бы
+    /// профилем, а не чтением.
+    /// </para>
+    ///
+    /// <para>
+    /// <see cref="Drawing"/> зарегистрирован корнем ради второй половины
+    /// вопроса: полиморфный тип <b>на месте члена</b> читается вложенным
+    /// вызовом, и до починки один такой член снимал обслуживание со всего
+    /// графа над собой.
+    /// </para>
+    /// </summary>
+    [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    [JsonFeature(JsonFeature.CaseInsensitiveNames)]
+    [JsonGuard(
+        JsonGuard.TrailingContent
+        | JsonGuard.ControlCharsInStrings
+        | JsonGuard.StrictNumbers
+        | JsonGuard.InvalidUtf8
+        | JsonGuard.MaxDepth,
+        MaxDepth = 64
+        )]
+    [JsonSubject(typeof(Shape), true)]
+    [JsonSubject(typeof(Circle), false)]
+    [JsonSubject(typeof(Square), false)]
+    [JsonSubject(typeof(Drawing), true)]
+    internal partial class ShapeHost
+    {
+    }
 }

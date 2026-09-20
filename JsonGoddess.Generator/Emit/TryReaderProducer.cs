@@ -75,7 +75,11 @@ namespace JsonGoddess.Generator.Emit
                         continue;
                     }
 
-                    if (subject.Members.Any(m => m.CanRead && !ValueIsServable(m.Value, servable)))
+                    //производные - такие же члены графа, как и свойства: тело
+                    //производного печатается парным читателем, и необслуженное
+                    //тело снимает обслуживание с базы целиком
+                    if (subject.Members.Any(m => m.CanRead && !ValueIsServable(m.Value, servable))
+                        || Dispatchable(subject).Any(d => !DerivedIsServable(host, d, servable)))
                     {
                         servable.Remove(subject.MethodSuffix);
                         changed = true;
@@ -130,9 +134,59 @@ namespace JsonGoddess.Generator.Emit
                         }
                     }
                 }
+
+                //до производного дотягивается тот, кто дотянулся до базы:
+                //звать его будут через её диспетчер дискриминатора, и своего
+                //пути сюда у него может не быть вовсе
+                foreach (var derived in Dispatchable(bySuffix[suffix]))
+                {
+                    var derivedSuffix = DerivedSuffix(bySuffix, derived);
+
+                    if (derivedSuffix is not null
+                        && servable.Contains(derivedSuffix)
+                        && !reached.Contains(derivedSuffix))
+                    {
+                        pending.Push(derivedSuffix);
+                    }
+                }
             }
 
             return reached;
+        }
+
+        /// <summary>
+        /// Производные, до которых диспетчер дискриминатора вообще способен
+        /// добраться. <c>[JsonDerivedType(typeof(D))]</c> без значения эталон
+        /// пишет без дискриминатора - прочитать такой документ обратно
+        /// производным не по чему, у него просто нет имени. Печатать таким
+        /// парный читатель значило бы печатать мёртвый код, а требовать их
+        /// обслуживаемости - отказывать из-за того, что всё равно не читается.
+        /// </summary>
+        private static IEnumerable<DerivedTypeModel> Dispatchable(SubjectModel subject)
+        {
+            return subject.Derived.Where(d => d.DiscriminatorLiteral is not null);
+        }
+
+        private static string? DerivedSuffix(IReadOnlyDictionary<string, SubjectModel> bySuffix, DerivedTypeModel derived)
+        {
+            foreach (var pair in bySuffix)
+            {
+                if (pair.Value.FullName == derived.FullName)
+                {
+                    return pair.Key;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool DerivedIsServable(HostModel host, DerivedTypeModel derived, HashSet<string> servable)
+        {
+            var subject = host.Subjects.FirstOrDefault(s => s.FullName == derived.FullName);
+
+            //производного нет среди субъектов - звать его нечем, и это не
+            //повод молчать: база уходит эталону целиком
+            return subject is not null && servable.Contains(subject.MethodSuffix);
         }
 
         private static IEnumerable<string> Referenced(ValueModel value)
@@ -167,14 +221,25 @@ namespace JsonGoddess.Generator.Emit
         /// </summary>
         public static string WhyNotServed(HostModel host, SubjectModel subject, HashSet<string> servable)
         {
-            if (subject.IsPolymorphic)
-            {
-                return "it is polymorphic, and the streaming reader does not print polymorphic readers yet";
-            }
-
             if (subject.CollectionShape is not null)
             {
                 return "it is a collection subject, and the streaming reader does not print those yet";
+            }
+
+            foreach (var derived in Dispatchable(subject))
+            {
+                if (DerivedIsServable(host, derived, servable))
+                {
+                    continue;
+                }
+
+                var nested = host.Subjects.FirstOrDefault(s => s.FullName == derived.FullName);
+
+                return "its derived type '" + derived.FullName.Replace("global::", string.Empty)
+                    + "' is not served"
+                    + (nested is null
+                        ? " (it is not registered as a subject of this host)"
+                        : " (" + WhyNotServed(host, nested, servable) + ")");
             }
 
             foreach (var member in subject.Members)
@@ -216,16 +281,23 @@ namespace JsonGoddess.Generator.Emit
         /// Что не печатается <b>само по себе</b>, без оглядки на членов.
         ///
         /// <para>
-        /// Полиморфный субъект - потому что его читатель начинается с отката
-        /// позиции к дискриминатору и вызова парного читателя; форма рабочая,
-        /// но проверить её нечем, пока нет драйвера на такой корень.
-        /// Субъект-коллекция - потому что единицей переигрывания у него был бы
-        /// элемент, а этого драйвера тоже ещё нет. Оба - работа, а не преграда.
+        /// Остался один субъект-коллекция: единицей переигрывания у него был бы
+        /// элемент, а этого драйвера ещё нет. Работа, а не преграда.
+        /// </para>
+        ///
+        /// <para>
+        /// Полиморфный субъект отсюда ушёл: его читатель печатается (откат
+        /// позиции к дискриминатору плюс парный читатель тела), и условие у
+        /// него не «сам по себе», а «все производные обслужены» - оно живёт в
+        /// неподвижной точке <see cref="Servable(HostModel)"/>. Корнем
+        /// <b>одиночным объектом</b> такой тип по-прежнему не читается, но это
+        /// решает уже <see cref="ReadsByProperty"/>, а не обслуживаемость:
+        /// корень-массив полиморфных элементов работает.
         /// </para>
         /// </summary>
         private static bool ServableAlone(SubjectModel subject)
         {
-            return !subject.IsPolymorphic && subject.CollectionShape is null;
+            return subject.CollectionShape is null;
         }
 
         private static bool ValueIsServable(ValueModel value, HashSet<string> servable)
@@ -281,7 +353,29 @@ namespace JsonGoddess.Generator.Emit
             {
                 foreach (var subject in host.Subjects.Where(s => servable.Contains(s.MethodSuffix)))
                 {
-                    EmitSubjectReader(builder, subject, injector, host.Guards, host.MaxDepth, host.Features);
+                    EmitSubjectReader(
+                        builder, subject, injector, null,
+                        subject.IsPolymorphic ? subject.DiscriminatorName : null,
+                        host.Guards, host.MaxDepth, host.Features
+                        );
+
+                    //Тело каждого производного - отдельным читателем, как и у
+                    //буферного. Своя копия тела, а не разделение с обычным
+                    //читателем: разделить их значило бы добавить вызов на
+                    //каждое чтение каждого объекта ради экономии текста у
+                    //полиморфных типов.
+                    foreach (var derived in Dispatchable(subject))
+                    {
+                        EmitSubjectReader(
+                            builder,
+                            host.Subjects.First(s => s.FullName == derived.FullName),
+                            injector,
+                            PairReaderName(subject, derived),
+                            subject.DiscriminatorName,
+                            host.Guards, host.MaxDepth, host.Features,
+                            subject
+                            );
+                    }
 
                     //половинки поимущественного чтения печатаются только
                     //корню: спускаться по свойствам имеет смысл там, где
@@ -325,6 +419,13 @@ namespace JsonGoddess.Generator.Emit
         /// само говорило, какой читатель зовут: в одном классе живут оба.
         /// </summary>
         public static string SubjectMethod(SubjectModel subject) => "TryRead_" + subject.MethodSuffix;
+
+        /// <summary>
+        /// Читатель <b>тела</b> производного: его зовут уже внутри объекта,
+        /// сразу после значения дискриминатора.
+        /// </summary>
+        private static string PairReaderName(SubjectModel subject, DerivedTypeModel derived) =>
+            "TryReadBody_" + derived.MethodSuffix + "_As_" + subject.MethodSuffix;
 
         private static string ValueMethod(ValueModel value)
         {
@@ -428,6 +529,112 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
         }
 
+        /// <summary>
+        /// Диспетчер дискриминатора в Try-форме.
+        ///
+        /// <para>
+        /// Устроен он ровно как у буферного читателя: заглянуть первому
+        /// свойству в имя, и если это дискриминатор - разобрать его значение и
+        /// уйти в парный читатель тела; иначе <b>откатить позицию</b> к началу
+        /// и читать базу как обычный объект. Отличие одно и механическое -
+        /// каждый вызов сканера двухисходен, и «не хватило байт» уходит наверх
+        /// через <see cref="Fail"/>.
+        /// </para>
+        ///
+        /// <para>
+        /// Откат здесь не спорит с «переигрывать, а не возобновляться», а
+        /// пользуется им: позиция, испорченная неудачной попыткой, никого не
+        /// волнует - драйвер вернётся к границе, которую сам же и запомнил, а
+        /// вложенный читатель переиграется целиком.
+        /// </para>
+        ///
+        /// <para>
+        /// Значение дискриминатора сравнивается <b>сырым текстом</b>, вместе с
+        /// кавычками, если они есть: <c>"dog"</c> и <c>7</c> различаются как
+        /// байты и без разбора лексемы.
+        /// </para>
+        /// </summary>
+        private static void EmitDiscriminatorDispatch(
+            SourceBuilder builder, SubjectModel subject, JsonGuard guards, JsonFeature features
+            )
+        {
+            builder.Line("var __discriminatorStart = position;");
+            builder.Line("var __hasDiscriminator = false;");
+            builder.Line();
+
+            EmitTrivia(builder, features);
+            Fail(builder, TryScan + ".Peek(json, ref position, final, out var __firstKind)");
+
+            builder.OpenBlock("if (__firstKind == " + TokenKind + ".String)");
+            Fail(
+                builder,
+                StringRead(guards) + "(json, ref position, final, out var __firstName, out var __firstEscaped)"
+                );
+            builder.OpenBlock("if (__firstEscaped)");
+            builder.Line(
+                "__firstName = context.UnescapeName(__firstName"
+                + ((guards & JsonGuard.InvalidUtf8) != 0 ? ", true" : string.Empty) + ");"
+                );
+            builder.CloseBlock();
+            builder.Line();
+            builder.Line(
+                "__hasDiscriminator = " + Mem + ".SequenceEqual(__firstName, "
+                + SourceBuilder.Utf8Literal(subject.DiscriminatorName) + ");"
+                );
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.OpenBlock("if (__hasDiscriminator)");
+            Fail(builder, TryScan + ".Expect(json, ref position, " + TryScan + ".Colon, final)");
+
+            //пробелы перед значением снимаются отдельно: __valueStart обязан
+            //указывать на само значение, иначе в сравнение уехал бы пробел
+            Fail(builder, Trivia(features) + "(json, ref position, final)");
+
+            builder.Line("var __valueStart = position;");
+            Fail(builder, TryScan + ".SkipValue(json, ref position, final)");
+            builder.Line("var __discriminator = json.Slice(__valueStart, position - __valueStart);");
+            builder.Line();
+
+            foreach (var derived in Dispatchable(subject))
+            {
+                builder.OpenBlock(
+                    "if (" + Mem + ".SequenceEqual(__discriminator, "
+                    + SourceBuilder.Utf8Literal(derived.DiscriminatorLiteral!) + "))"
+                    );
+                builder.Line(
+                    "return " + PairReaderName(subject, derived)
+                    + "(injector, json, ref position, ref context, final, out value);"
+                    );
+                builder.CloseBlock();
+                builder.Line();
+            }
+
+            builder.Line(
+                "throw new " + DocumentException + "(\"unrecognized type discriminator for '"
+                + subject.FullName.Replace("global::", string.Empty) + "'\", __valueStart);"
+                );
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line("position = __discriminatorStart;");
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Пропуск пробелов <b>безусловный</b>, в отличие от
+        /// <see cref="EmitTrivia"/>: там он печатается только под
+        /// <c>JsonFeature.Comments</c>, потому что следующий вызов сканера
+        /// скользит по пробелам сам, - а здесь следующего вызова нет, есть
+        /// запоминание позиции.
+        /// </summary>
+        private static string Trivia(JsonFeature features)
+        {
+            return TryScan + ((features & JsonFeature.Comments) != 0
+                ? ".SkipWhitespaceAndComments"
+                : ".SkipWhitespace");
+        }
+
         private static void EmitDepthOpen(SourceBuilder builder, bool guardsDepth, int maxDepth)
         {
             if (!guardsDepth)
@@ -463,37 +670,70 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
         }
 
+        /// <param name="bodyName">
+        /// Не <c>null</c> - печатается <b>тело</b>: читатель, которого позвали
+        /// уже внутри объекта, сразу после значения дискриминатора. Скобку и
+        /// <c>null</c> разобрал звавший, и первое, что здесь бывает, - запятая
+        /// или закрывающая скобка. Зеркало <c>bodyName</c> у буферного
+        /// читателя, вплоть до порядка печатаемого.
+        /// </param>
+        /// <param name="discriminatorGuard">
+        /// Имя дискриминатора, встреча которого <b>не первым</b> свойством -
+        /// отказ. Эталон здесь отказывает тоже, и принять такой документ
+        /// значило бы прочесть то, чего не читает он.
+        /// </param>
+        /// <param name="declaredAs">
+        /// Чем результат <b>объявлен</b>, если это не сам субъект. У тела
+        /// производного он объявлен базой, и здесь этого не обойти: у
+        /// буферного читателя тело <c>return</c>'ом поднимает тип само, а у
+        /// нас результат уезжает через <c>out</c>, а тот инвариантен -
+        /// <c>out Dog</c> в <c>out Animal</c> не передать. Присваивание внутри
+        /// поднимает тип как обычно.
+        /// </param>
         private static void EmitSubjectReader(
             SourceBuilder builder,
             SubjectModel subject,
             string injector,
+            string? bodyName,
+            string? discriminatorGuard,
             JsonGuard guards,
             int maxDepth,
-            JsonFeature features
+            JsonFeature features,
+            SubjectModel? declaredAs = null
             )
         {
             var members = subject.Members.Where(m => m.CanRead).ToList();
             var required = members.Where(m => m.IsRequired).ToList();
             var deferred = subject.NeedsDeferredConstruction;
-            var guardsDepth = (guards & JsonGuard.MaxDepth) != 0;
+            var body = bodyName is not null;
 
-            EmitSignature(builder, SubjectMethod(subject), injector, subject.Declaration);
+            //счётчик глубины общий на весь документ, поэтому увеличивается
+            //только на «своём» входе в объект: у тела его увеличил звавший
+            var guardsDepth = (guards & JsonGuard.MaxDepth) != 0 && !body;
+
+            EmitSignature(
+                builder, bodyName ?? SubjectMethod(subject), injector, (declaredAs ?? subject).Declaration
+                );
 
             builder.Line("value = default!;");
             builder.Line();
 
-            EmitTrivia(builder, features);
-
-            if (!subject.IsValueType)
+            if (!body)
             {
-                Fail(builder, TryScan + ".TryReadNull(json, ref position, final, out var __null)");
-                builder.OpenBlock("if (__null)");
-                builder.Line("return true;");
-                builder.CloseBlock();
-                builder.Line();
+                EmitTrivia(builder, features);
+
+                if (!subject.IsValueType)
+                {
+                    Fail(builder, TryScan + ".TryReadNull(json, ref position, final, out var __null)");
+                    builder.OpenBlock("if (__null)");
+                    builder.Line("return true;");
+                    builder.CloseBlock();
+                    builder.Line();
+                }
+
+                Fail(builder, TryScan + ".Expect(json, ref position, " + TryScan + ".OpenBrace, final)");
             }
 
-            Fail(builder, TryScan + ".Expect(json, ref position, " + TryScan + ".OpenBrace, final)");
             EmitDepthOpen(builder, guardsDepth, maxDepth);
 
             if (deferred)
@@ -525,9 +765,29 @@ namespace JsonGoddess.Generator.Emit
                 builder.Line();
             }
 
+            if (subject.IsPolymorphic && !body)
+            {
+                EmitDiscriminatorDispatch(builder, subject, guards, features);
+            }
+
+            //Фреш-точка та же, что у буферного: у не-body читателя
+            //дискриминатор (если был) откатил позицию обратно, а у body-
+            //читателя это первое обращение к сканеру в методе - комментарий
+            //между значением дискриминатора и запятой.
             EmitTrivia(builder, features);
-            Fail(builder, TryScan + ".TryConsume(json, ref position, " + TryScan + ".CloseBrace, final, out var __empty)");
-            builder.OpenBlock("if (__empty)");
+
+            if (body)
+            {
+                Fail(builder, TryScan + ".TryConsume(json, ref position, " + TryScan + ".Comma, final, out var __next)");
+                builder.OpenBlock("if (!__next)");
+                Fail(builder, TryScan + ".Expect(json, ref position, " + TryScan + ".CloseBrace, final)");
+            }
+            else
+            {
+                Fail(builder, TryScan + ".TryConsume(json, ref position, " + TryScan + ".CloseBrace, final, out var __empty)");
+                builder.OpenBlock("if (__empty)");
+            }
+
             ClassSourceProducer.EmitRequiredCheck(builder, subject, required);
             builder.Line("value = " + (deferred ? ClassSourceProducer.Construct(subject, members) : "result") + ";");
             builder.Line("return true;");
@@ -548,6 +808,23 @@ namespace JsonGoddess.Generator.Emit
                 builder.Unindent();
                 builder.Line("dispatch:");
                 builder.Indent();
+
+                //Дискриминатор, встреченный не первым свойством, - отказ, и
+                //проверка стои́т после ярлыка, чтобы сработать и на
+                //разэкранированном имени. Ровно то же и там же у буферного.
+                if (discriminatorGuard is not null)
+                {
+                    builder.OpenBlock(
+                        "if (" + Mem + ".SequenceEqual(name, "
+                        + SourceBuilder.Utf8Literal(discriminatorGuard) + "))"
+                        );
+                    builder.Line(
+                        "throw new " + DocumentException
+                        + "(\"the type discriminator must be the first property\", position);"
+                        );
+                    builder.CloseBlock();
+                    builder.Line();
+                }
 
                 var temps = new Temps();
 
@@ -669,10 +946,21 @@ namespace JsonGoddess.Generator.Emit
         /// живут в теле читателя, а тут тела нет, есть отдельные вызовы.
         /// Оба случая не отказ, а возврат к прежней единице - объекту целиком.
         /// </para>
+        ///
+        /// <para>
+        /// Полиморфный субъект - третий случай, и он отклонён <b>числом</b>, а
+        /// не сложностью. Объект здесь создаётся до чтения свойств, а тип
+        /// известен только после дискриминатора: автомат свойств пришлось бы
+        /// умножить на число производных. Одиночный объект корнем даёт 0.96 по
+        /// лестнице (§12.9) - выигрывать там нечего, а корень-массив
+        /// полиморфных элементов обслуживается драйвером массива и так, без
+        /// единой правки в нём. PLAN.md §15, O11 (в).
+        /// </para>
         /// </summary>
         public static bool ReadsByProperty(SubjectModel subject, JsonGuard guards)
         {
             return !subject.NeedsDeferredConstruction
+                && !subject.IsPolymorphic
                 && (guards & JsonGuard.DuplicateProperties) == 0;
         }
 
