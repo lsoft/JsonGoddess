@@ -246,7 +246,31 @@ namespace JsonGoddess.Generator.Binding
             //Мост (маршрут B). Отдельным файлом по той же причине, по которой
             //отдельным файлом идёт регистрация: общий эмиттер про Compat
             //ничего не знает, а мост - целиком его дело.
-            var bridged = model.Subjects.Where(BridgeSourceProducer.CanServe).ToList();
+            var bridgeable = BridgeSourceProducer.Servable(model);
+            var bridged = model.Subjects.Where(s => bridgeable.Contains(s.MethodSuffix)).ToList();
+
+            //JGD006: корень, которого мост не берёт. Не поломка - значение
+            //такого типа эталон пишет и читает ровно как писал, - но молчать
+            //нельзя: ускорение, которого не случилось, иначе пришлось бы
+            //искать замером.
+            //
+            //Говорится один раз, от умолчательного профиля, а не от каждого:
+            //полиморфизм и форма коллекции - свойства ТИПА, а не профиля, и
+            //веб-профиль отказал бы по той же причине теми же словами.
+            foreach (var root in model.Subjects.Where(s => s.IsRoot && !bridgeable.Contains(s.MethodSuffix)))
+            {
+                var symbol = served
+                    .FirstOrDefault(s => s.ToDisplayString() == root.FullName.Replace("global::", string.Empty));
+
+                diagnostics.Add(
+                    new DiagnosticInfo(
+                        JsonGoddessDiagnostics.BridgeTypeIsNotServedId,
+                        symbol is null ? null : roots[symbol],
+                        root.FullName.Replace("global::", string.Empty),
+                        BridgeSourceProducer.WhyNotServed(model, root, bridgeable)
+                        )
+                    );
+            }
 
             if (bridged.Count > 0)
             {
@@ -357,7 +381,12 @@ namespace JsonGoddess.Generator.Binding
                             )
                         );
 
-                    var webBridged = webModel.Subjects.Where(BridgeSourceProducer.CanServe).ToList();
+                    //Та же неподвижная точка, что и под умолчаниями, и по той
+                    //же причине; диагностики здесь нет - она уже сказана выше
+                    var webBridgeable = BridgeSourceProducer.Servable(webModel);
+                    var webBridged = webModel.Subjects
+                        .Where(s => webBridgeable.Contains(s.MethodSuffix))
+                        .ToList();
 
                     if (webBridged.Count > 0)
                     {

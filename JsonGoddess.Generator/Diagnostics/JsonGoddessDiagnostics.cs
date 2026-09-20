@@ -20,6 +20,7 @@ namespace JsonGoddess.Generator.Diagnostics
         public const string CompatStrictValueIsNotRecognizedId = "JGD003";
         public const string CompatWebProfileFailedId = "JGD004";
         public const string StreamingTypeIsNotServedId = "JGD005";
+        public const string BridgeTypeIsNotServedId = "JGD006";
         public const string SinkIsNotSealedId = "JGD010";
         public const string HostIsNotPartialId = "JGD020";
         public const string SubjectIsNotSupportedId = "JGD021";
@@ -261,6 +262,21 @@ namespace JsonGoddess.Generator.Diagnostics
                 + "этом затем, чтобы ускорение, которого не случилось, не пришлось искать замером."
             );
 
+        public static readonly DiagnosticDescriptor BridgeTypeIsNotServed = new DiagnosticDescriptor(
+            BridgeTypeIsNotServedId,
+            "The System.Text.Json bridge does not serve this type",
+            "'{0}' is served by JsonGoddess, but the bridge does not hand it to System.Text.Json: {1}. Values of this type keep going through System.Text.Json as before.",
+            Category,
+            DiagnosticSeverity.Info,
+            isEnabledByDefault: true,
+            description:
+                "Мост (§10, маршрут B) обслуживает не всякий тип: полиморфный субъект и "
+                + "субъект-коллекция пока не печатаются, и неспособность заразна - тип, у которого "
+                + "такой тип членом, тоже не обслуживается. Это не поломка: значение такого типа "
+                + "System.Text.Json пишет и читает ровно как писал и читал. Сказано об этом затем, "
+                + "чтобы ускорение, которого не случилось, не пришлось искать замером."
+            );
+
         private static readonly Dictionary<string, DiagnosticDescriptor> _all =
             new Dictionary<string, DiagnosticDescriptor>
             {
@@ -282,6 +298,7 @@ namespace JsonGoddess.Generator.Diagnostics
                 { CompatStrictValueIsNotRecognizedId, CompatStrictValueIsNotRecognized },
                 { CompatWebProfileFailedId, CompatWebProfileFailed },
                 { StreamingTypeIsNotServedId, StreamingTypeIsNotServed },
+                { BridgeTypeIsNotServedId, BridgeTypeIsNotServed },
             };
 
         public static DiagnosticDescriptor Get(string id) => _all[id];

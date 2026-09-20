@@ -58,37 +58,135 @@ namespace JsonGoddess.Generator.Emit
         }
 
         /// <summary>
-        /// Можно ли обслужить субъект мостом. Сказать «нет» здесь ничего не
-        /// стоит: тип просто не попадёт в мост и продолжит работать через
-        /// эталон - ровно так же, как при отказе маршрута A.
+        /// Субъекты, которых мост берёт на себя. Сказать «нет» здесь ничего не
+        /// стои́т: тип просто не попадёт в мост и продолжит работать через
+        /// эталон - ровно так же, как при отказе dropin.
+        ///
+        /// <para>
+        /// <b>Неподвижная точка, а не проверка по одному</b>, и это не
+        /// аккуратность ради аккуратности. Неспособность <b>заразна</b>:
+        /// читатель субъекта зовёт <c>BridgeRead_</c> на каждого члена формы
+        /// «субъект», и если тот сам не напечатан, получается не медленный
+        /// код, а несобирающийся - <c>CS0103</c> в сборке потребителя. Ровно
+        /// та же неподвижная точка давно написана для потока
+        /// (<see cref="TryReaderProducer.Servable"/>); мост её не получил, и
+        /// пробой это стоило двух сломанных сборок.
+        /// </para>
         /// </summary>
-        public static bool CanServe(SubjectModel subject)
+        public static HashSet<string> Servable(HostModel host)
         {
-            //Полиморфизм и субъект-коллекция ждут своей очереди: у обоих
-            //чтение устроено иначе, и делать их заодно значило бы отложить
-            //всё остальное.
-            if (subject.IsPolymorphic || subject.CollectionShape is not null)
-            {
-                return false;
-            }
+            var servable = new HashSet<string>(
+                host.Subjects.Where(ServableAlone).Select(s => s.MethodSuffix)
+                );
 
-            return subject.Members.Where(m => m.CanRead).All(m => CanServe(m.Value));
+            bool changed;
+
+            do
+            {
+                changed = false;
+
+                foreach (var subject in host.Subjects)
+                {
+                    if (!servable.Contains(subject.MethodSuffix))
+                    {
+                        continue;
+                    }
+
+                    if (subject.Members.Any(m => m.CanRead && !ValueIsServable(m.Value, servable)))
+                    {
+                        servable.Remove(subject.MethodSuffix);
+                        changed = true;
+                    }
+                }
+            }
+            while (changed);
+
+            return servable;
         }
 
-        private static bool CanServe(ValueModel value)
+        /// <summary>
+        /// Что мост не берёт <b>само по себе</b>, без оглядки на членов.
+        /// Полиморфизм и субъект-коллекция ждут своей очереди: у обоих чтение
+        /// устроено иначе, и делать их заодно значило бы отложить всё
+        /// остальное.
+        /// </summary>
+        private static bool ServableAlone(SubjectModel subject)
+        {
+            return !subject.IsPolymorphic && subject.CollectionShape is null;
+        }
+
+        /// <summary>
+        /// Почему тип не обслуживается - словами, для <c>JGD006</c>.
+        ///
+        /// <para>
+        /// Причину называть обязательно: «не обслуживается» без неё
+        /// превращается в «неизвестно почему», а это ровно то молчание, против
+        /// которого весь §1 плана.
+        /// </para>
+        /// </summary>
+        public static string WhyNotServed(HostModel host, SubjectModel subject, HashSet<string> servable)
+        {
+            if (subject.IsPolymorphic)
+            {
+                return "it is polymorphic, and the bridge does not print polymorphic readers yet";
+            }
+
+            if (subject.CollectionShape is not null)
+            {
+                return "it is a collection subject, and the bridge does not print those yet";
+            }
+
+            foreach (var member in subject.Members)
+            {
+                if (!member.CanRead || ValueIsServable(member.Value, servable))
+                {
+                    continue;
+                }
+
+                var nested = host.Subjects
+                    .FirstOrDefault(s => s.MethodSuffix == Offender(member.Value));
+
+                return "its member '" + member.MemberName + "' is of a type that is not served"
+                    + (nested is null ? string.Empty : " (" + WhyNotServed(host, nested, servable) + ")");
+            }
+
+            return "the root it belongs to is not served";
+        }
+
+        private static string? Offender(ValueModel value)
         {
             switch (value.Form)
             {
-                case ValueForm.Builtin:
-                case ValueForm.Enum:
                 case ValueForm.Subject:
-                    return true;
+                    return value.MethodSuffix;
 
                 case ValueForm.List:
                 case ValueForm.Array:
                 case ValueForm.Enumerable:
                 case ValueForm.Dictionary:
-                    return value.Element is not null && CanServe(value.Element);
+                    return Offender(value.Element!);
+
+                default:
+                    return null;
+            }
+        }
+
+        private static bool ValueIsServable(ValueModel value, HashSet<string> servable)
+        {
+            switch (value.Form)
+            {
+                case ValueForm.Builtin:
+                case ValueForm.Enum:
+                    return true;
+
+                case ValueForm.Subject:
+                    return servable.Contains(value.MethodSuffix);
+
+                case ValueForm.List:
+                case ValueForm.Array:
+                case ValueForm.Enumerable:
+                case ValueForm.Dictionary:
+                    return value.Element is not null && ValueIsServable(value.Element, servable);
 
                 default:
                     return false;
