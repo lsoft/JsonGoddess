@@ -92,7 +92,11 @@ namespace JsonGoddess.Generator.Emit
                         continue;
                     }
 
-                    if (subject.Members.Any(m => m.CanRead && !ValueIsServable(m.Value, servable)))
+                    //производные - такие же члены графа, как и свойства: тело
+                    //производного печатается парным читателем, и необслуженное
+                    //тело снимает обслуживание с базы целиком
+                    if (subject.Members.Any(m => m.CanRead && !ValueIsServable(m.Value, servable))
+                        || Dispatchable(subject).Any(d => !DerivedIsServable(host, d, servable)))
                     {
                         servable.Remove(subject.MethodSuffix);
                         changed = true;
@@ -106,13 +110,68 @@ namespace JsonGoddess.Generator.Emit
 
         /// <summary>
         /// Что мост не берёт <b>само по себе</b>, без оглядки на членов.
-        /// Полиморфизм и субъект-коллекция ждут своей очереди: у обоих чтение
-        /// устроено иначе, и делать их заодно значило бы отложить всё
-        /// остальное.
+        /// Остался субъект-коллекция: чтение у него устроено иначе, и делать
+        /// его заодно значило бы отложить всё остальное.
+        ///
+        /// <para>
+        /// Полиморфный субъект отсюда ушёл: его читатель печатается, и условие
+        /// у него не «сам по себе», а «все производные обслужены» - оно живёт
+        /// в неподвижной точке <see cref="Servable(HostModel)"/>.
+        /// </para>
         /// </summary>
         private static bool ServableAlone(SubjectModel subject)
         {
-            return !subject.IsPolymorphic && subject.CollectionShape is null;
+            return subject.CollectionShape is null;
+        }
+
+        /// <summary>
+        /// Производные, до которых диспетчер дискриминатора вообще способен
+        /// добраться: <c>[JsonDerivedType(typeof(D))]</c> без значения эталон
+        /// пишет без дискриминатора, и прочитать документ обратно производным
+        /// не по чему.
+        /// </summary>
+        private static IEnumerable<DerivedTypeModel> Dispatchable(SubjectModel subject)
+        {
+            return subject.Derived.Where(d => d.DiscriminatorLiteral is not null);
+        }
+
+        private static bool DerivedIsServable(HostModel host, DerivedTypeModel derived, HashSet<string> servable)
+        {
+            var subject = host.Subjects.FirstOrDefault(s => s.FullName == derived.FullName);
+
+            return subject is not null && servable.Contains(subject.MethodSuffix);
+        }
+
+        /// <summary>
+        /// Можно ли отдать тип эталону <b>корнем</b> - то есть зарегистрировать
+        /// его читатель и писатель в реестре моста.
+        ///
+        /// <para>
+        /// Полиморфный - нельзя, и это <b>не наше ограничение, а его</b>.
+        /// Снято пробой: <c>Deserialize&lt;Animal&gt;(json, мост)</c> на типе с
+        /// <c>[JsonDerivedType]</c> бросает
+        /// <c>NotSupportedException: The converter for derived type 'Animal'
+        /// does not support metadata writes or reads</c> - и бросает ДО того,
+        /// как управление дойдёт до нас. Чужой конвертер в свою полиморфную
+        /// машинерию эталон не пускает вовсе.
+        /// </para>
+        ///
+        /// <para>
+        /// Это отказ, а не поломка, но зарегистрировать такой тип было бы
+        /// хуже отказа: вместо тихого отступления к эталону потребитель
+        /// получил бы исключение на ровном месте.
+        /// </para>
+        ///
+        /// <para>
+        /// Читатель при этом печатается и работает - но там, где дискриминатор
+        /// разбирает <b>не эталон, а мы</b>: полиморфный член внутри
+        /// обслуженного типа читается порождённым кодом как любой другой, и
+        /// ровно в этом весь смысл снятого каскада.
+        /// </para>
+        /// </summary>
+        public static bool CanRegisterRoot(SubjectModel subject)
+        {
+            return !subject.IsPolymorphic;
         }
 
         /// <summary>
@@ -126,14 +185,32 @@ namespace JsonGoddess.Generator.Emit
         /// </summary>
         public static string WhyNotServed(HostModel host, SubjectModel subject, HashSet<string> servable)
         {
-            if (subject.IsPolymorphic)
+            if (!CanRegisterRoot(subject))
             {
-                return "it is polymorphic, and the bridge does not print polymorphic readers yet";
+                return "System.Text.Json refuses a third-party converter for a type that carries polymorphic "
+                    + "metadata, and throws rather than falling back, so the bridge does not register it as a "
+                    + "root. Generated code still reads it wherever it appears inside another served type";
             }
 
             if (subject.CollectionShape is not null)
             {
                 return "it is a collection subject, and the bridge does not print those yet";
+            }
+
+            foreach (var derived in Dispatchable(subject))
+            {
+                if (DerivedIsServable(host, derived, servable))
+                {
+                    continue;
+                }
+
+                var nestedDerived = host.Subjects.FirstOrDefault(s => s.FullName == derived.FullName);
+
+                return "its derived type '" + derived.FullName.Replace("global::", string.Empty)
+                    + "' is not served"
+                    + (nestedDerived is null
+                        ? " (it is not registered as a subject of this host)"
+                        : " (" + WhyNotServed(host, nestedDerived, servable) + ")");
             }
 
             foreach (var member in subject.Members)
@@ -202,7 +279,21 @@ namespace JsonGoddess.Generator.Emit
         {
             foreach (var subject in subjects)
             {
-                EmitSubjectReader(builder, subject, features);
+                EmitSubjectReader(builder, subject, features, null, null);
+
+                //Тело каждого производного - отдельным читателем. Обслужен он
+                //наверняка: неподвижная точка не пустила бы сюда базу, у
+                //которой производное не обслужено.
+                foreach (var derived in Dispatchable(subject))
+                {
+                    EmitSubjectReader(
+                        builder,
+                        subjects.First(s => s.FullName == derived.FullName),
+                        features,
+                        PairReaderName(subject, derived),
+                        subject
+                        );
+                }
             }
 
             //Коллекции и строковые enum'ы печатаются по одному разу на форму, а
@@ -353,30 +444,58 @@ namespace JsonGoddess.Generator.Emit
 
         private static string EnumReaderName(EnumModel model) => "BridgeReadEnum_" + model.MethodSuffix;
 
-        private static void EmitSubjectReader(SourceBuilder builder, SubjectModel subject, JsonFeature features)
+        /// <param name="bodyName">
+        /// Не <c>null</c> - печатается <b>тело</b> производного: читатель,
+        /// которого позвали, когда читатель эталона стои́т на значении
+        /// дискриминатора. Скобку и <c>null</c> разобрал звавший.
+        /// </param>
+        /// <param name="declaredAs">
+        /// Чем результат объявлен, если это не сам субъект: у тела
+        /// производного он объявлен базой.
+        /// </param>
+        private static void EmitSubjectReader(
+            SourceBuilder builder,
+            SubjectModel subject,
+            JsonFeature features,
+            string? bodyName,
+            SubjectModel? declaredAs
+            )
         {
             var members = subject.Members.Where(m => m.CanRead).ToList();
             var required = members.Where(m => m.IsRequired).ToList();
             var deferred = subject.NeedsDeferredConstruction;
+            var body = bodyName is not null;
+            var discriminatorGuard = (declaredAs ?? subject).IsPolymorphic
+                ? (declaredAs ?? subject).DiscriminatorName
+                : null;
 
             builder.Line(
-                "internal static " + subject.Declaration + " " + ReaderName(subject) + "(" + Reader + ")"
+                "internal static " + (declaredAs ?? subject).Declaration + " "
+                + (bodyName ?? ReaderName(subject)) + "(" + Reader + ")"
                 );
             builder.OpenBlock();
 
-            //null на месте ссылочного типа - законное значение; на месте
-            //структуры - отказ, и отказывает он тем же сообщением, что и
-            //эталон
-            if (!subject.IsValueType)
+            if (!body)
             {
-                builder.OpenBlock("if (reader.TokenType == " + TokenType + ".Null)");
-                builder.Line("return null;");
-                builder.CloseBlock();
-                builder.Line();
-            }
+                //null на месте ссылочного типа - законное значение; на месте
+                //структуры - отказ, и отказывает он тем же сообщением, что и
+                //эталон
+                if (!subject.IsValueType)
+                {
+                    builder.OpenBlock("if (reader.TokenType == " + TokenType + ".Null)");
+                    builder.Line("return null;");
+                    builder.CloseBlock();
+                    builder.Line();
+                }
 
-            builder.Line(Read + ".ExpectStartObject(ref reader, typeof(" + subject.FullName + "));");
-            builder.Line();
+                builder.Line(Read + ".ExpectStartObject(ref reader, typeof(" + subject.FullName + "));");
+                builder.Line();
+
+                if (subject.IsPolymorphic)
+                {
+                    EmitDiscriminatorDispatch(builder, subject);
+                }
+            }
 
             if (deferred)
             {
@@ -401,6 +520,24 @@ namespace JsonGoddess.Generator.Emit
             builder.Line("break;");
             builder.CloseBlock();
             builder.Line();
+
+            //Дискриминатор, встреченный не первым свойством, - отказ. Эталон
+            //здесь отказывает тоже, и принять такой документ значило бы
+            //прочесть то, чего не читает он. Без этой проверки имя просто не
+            //нашло бы члена и уехало бы в Skip, то есть документ был бы принят
+            //молча. Платят за неё только полиморфные типы.
+            if (discriminatorGuard is not null)
+            {
+                builder.OpenBlock(
+                    "if (reader.ValueTextEquals(" + SourceBuilder.Utf8Literal(discriminatorGuard) + "))"
+                    );
+                builder.Line(
+                    "throw new global::System.Text.Json.JsonException("
+                    + "\"the type discriminator must be the first property\");"
+                    );
+                builder.CloseBlock();
+                builder.Line();
+            }
 
             if (members.Count > 0)
             {
@@ -526,6 +663,88 @@ namespace JsonGoddess.Generator.Emit
             builder.CloseBlock();
             builder.Line();
         }
+
+        /// <summary>
+        /// Диспетчер дискриминатора над читателем эталона.
+        ///
+        /// <para>
+        /// Откат здесь устроен иначе, чем у двух наших читателей, и это не
+        /// выдумка: <c>Utf8JsonReader</c> - структура, и его <b>копия</b> есть
+        /// полноценное сохранённое состояние. Присвоили копию обратно -
+        /// вернулись на открывающую скобку, и дальше объект читается базой как
+        /// ни в чём не бывало.
+        /// </para>
+        ///
+        /// <para>
+        /// Значение сравнивается не сырыми байтами, как у буферного читателя,
+        /// а <c>ValueTextEquals</c> и <c>TryGetInt32</c> - тем же, чем сравнил
+        /// бы его сам эталон. Сырых байтов здесь и нет: документ нам не
+        /// принадлежит, а кусок значения приезжает разрезанным.
+        /// </para>
+        /// </summary>
+        private static void EmitDiscriminatorDispatch(SourceBuilder builder, SubjectModel subject)
+        {
+            builder.Line("var __beforeDiscriminator = reader;");
+            builder.Line();
+            builder.Line("reader.Read();");
+            builder.Line();
+
+            builder.OpenBlock(
+                "if (reader.TokenType == " + TokenType + ".PropertyName && reader.ValueTextEquals("
+                + SourceBuilder.Utf8Literal(subject.DiscriminatorName) + "))"
+                );
+            builder.Line("reader.Read();");
+            builder.Line();
+
+            var index = 0;
+
+            foreach (var derived in Dispatchable(subject))
+            {
+                builder.OpenBlock("if (" + DiscriminatorTest(derived.DiscriminatorLiteral!, index) + ")");
+                builder.Line("return " + PairReaderName(subject, derived) + "(ref reader);");
+                builder.CloseBlock();
+                builder.Line();
+                index++;
+            }
+
+            builder.Line(
+                "throw new global::System.Text.Json.JsonException("
+                + "\"unrecognized type discriminator for '"
+                + subject.FullName.Replace("global::", string.Empty) + "'\");"
+                );
+            builder.CloseBlock();
+            builder.Line();
+
+            builder.Line("reader = __beforeDiscriminator;");
+            builder.Line();
+        }
+
+        /// <summary>
+        /// Сравнение значения дискриминатора. Литерал приезжает готовым к
+        /// печати в документ - <c>"dog"</c> с кавычками либо <c>7</c> без них,
+        /// - и по кавычке видно, какого он рода. Третьего рода не бывает:
+        /// связыватель принимает только строку и <c>int</c>.
+        /// </summary>
+        private static string DiscriminatorTest(string literal, int index)
+        {
+            if (literal.Length > 1 && literal[0] == '"')
+            {
+                var text = literal.Substring(1, literal.Length - 2);
+
+                return "reader.TokenType == " + TokenType + ".String && reader.ValueTextEquals("
+                    + SourceBuilder.Utf8Literal(text) + ")";
+            }
+
+            //имя переменной по номеру, а не по значению: у отрицательного
+            //дискриминатора значение в идентификатор не годится
+            var temp = "__discriminator" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            return "reader.TokenType == " + TokenType + ".Number && reader.TryGetInt32(out var " + temp
+                + ") && " + temp + " == " + literal;
+        }
+
+        private static string PairReaderName(SubjectModel subject, DerivedTypeModel derived) =>
+            "BridgeReadBody_" + derived.MethodSuffix + "_As_" + subject.MethodSuffix;
 
         private static void EmitMemberRead(
             SourceBuilder builder,

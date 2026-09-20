@@ -27,11 +27,12 @@ namespace JsonGoddess.GeneratorTests
         }
 
         /// <summary>
-        /// Полиморфный субъект членом. Мост его не берёт (это объявлено), но
-        /// обязан не взять и того, кто его держит.
+        /// Полиморфный субъект членом - обслуживается вместе с держателем
+        /// (PLAN.md §15, O11 (а)). До этого не обслуживался ни тот, ни другой,
+        /// и держатель при этом ронял сборку.
         /// </summary>
         [Fact]
-        public void A_polymorphic_member_takes_its_holder_out_of_the_bridge()
+        public void A_polymorphic_member_is_served_and_so_is_its_holder()
         {
             var run = GeneratorHarness.Run(@"
 using System.Text.Json.Serialization;
@@ -71,22 +72,77 @@ namespace Sample
                 .Select(f => f.Value)
                 .FirstOrDefault();
 
-            //ни самого полиморфного типа, ни его держателя
-            if (bridge is not null)
-            {
-                Assert.DoesNotContain("BridgeRead_Sample_Animal", bridge);
-                Assert.DoesNotContain("BridgeRead_Sample_Owner", bridge);
-            }
+            Assert.True(bridge is not null, "файлы: " + string.Join(", ", run.GeneratedFiles.Keys));
 
-            //и об этом сказано - иначе ускорение, которого не случилось,
-            //пришлось бы искать замером
+            Assert.Contains("BridgeRead_Sample_Animal", bridge);
+            Assert.Contains("BridgeRead_Sample_Owner", bridge);
+            Assert.Contains("BridgeReadBody_Sample_Dog_As_Sample_Animal", bridge);
+
+            //откат у моста - копия читателя: он структура, и копия есть
+            //полноценное сохранённое состояние
+            Assert.Contains("var __beforeDiscriminator = reader;", bridge);
+            Assert.Contains("reader = __beforeDiscriminator;", bridge);
+
+            //дискриминатор не первым свойством - отказ, как у эталона
+            Assert.Contains("the type discriminator must be the first property", bridge);
+
+            Assert.DoesNotContain("JGD006", run.DiagnosticIds);
+        }
+
+        /// <summary>
+        /// Полиморфный тип <b>корнем</b> в реестр моста не попадает, и это
+        /// отказ эталона, а не наш: чужой конвертер в свою полиморфную
+        /// машинерию он не пускает, причём не отступает к себе, а бросает
+        /// <c>NotSupportedException</c> (снято пробой в
+        /// <c>JsonGoddess.CompatTests</c>). Зарегистрировать такой тип значило
+        /// бы поменять тихое отступление на исключение у потребителя.
+        /// </summary>
+        [Fact]
+        public void A_polymorphic_root_is_not_registered_and_the_reason_is_named()
+        {
+            var run = GeneratorHarness.Run(@"
+using System.Text.Json.Serialization;
+using JsonGoddess.Compat;
+
+namespace Sample
+{
+    [JsonDerivedType(typeof(Dog), ""dog"")]
+    public class Animal
+    {
+        public string? Name { get; set; }
+    }
+
+    public class Dog : Animal
+    {
+        public bool Barks { get; set; }
+    }
+
+    public static class Caller
+    {
+        public static string Write(Animal animal) => JsonSerializer.Serialize(animal);
+    }
+}
+");
+
+            Assert.Empty(run.CompilationErrors);
             Assert.Contains("JGD006", run.DiagnosticIds);
 
             var said = run.GeneratorDiagnostics.First(d => d.Id == "JGD006").GetMessage();
 
-            Assert.Contains("Sample.Owner", said);
-            Assert.Contains("Pet", said);
-            Assert.Contains("polymorphic", said);
+            Assert.Contains("Sample.Animal", said);
+            Assert.Contains("polymorphic metadata", said);
+
+            var bridge = run.GeneratedFiles
+                .Where(f => f.Key.Contains(".Bridge."))
+                .Select(f => f.Value)
+                .FirstOrDefault();
+
+            //читатель напечатан - он нужен везде, где дискриминатор разбираем
+            //мы, - а регистрации нет
+            if (bridge is not null)
+            {
+                Assert.DoesNotContain("BridgeBinding<global::Sample.Animal>", bridge);
+            }
         }
 
         /// <summary>

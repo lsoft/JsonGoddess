@@ -257,7 +257,10 @@ namespace JsonGoddess.Generator.Binding
             //Говорится один раз, от умолчательного профиля, а не от каждого:
             //полиморфизм и форма коллекции - свойства ТИПА, а не профиля, и
             //веб-профиль отказал бы по той же причине теми же словами.
-            foreach (var root in model.Subjects.Where(s => s.IsRoot && !bridgeable.Contains(s.MethodSuffix)))
+            foreach (var root in model.Subjects.Where(
+                s => s.IsRoot
+                    && (!bridgeable.Contains(s.MethodSuffix) || !BridgeSourceProducer.CanRegisterRoot(s))
+                    ))
             {
                 var symbol = served
                     .FirstOrDefault(s => s.ToDisplayString() == root.FullName.Replace("global::", string.Empty));
@@ -911,7 +914,13 @@ namespace JsonGoddess.Generator.Binding
             foreach (var full in roots)
             {
                 var subject = bridged.FirstOrDefault(s => s.FullName == full);
-                if (subject is null)
+
+                //Полиморфный корень не регистрируется, и это отказ эталона, а
+                //не наш: чужой конвертер в свою полиморфную машинерию он не
+                //пускает и бросает NotSupportedException вместо отступления.
+                //Зарегистрировать такой тип значило бы поменять тихое
+                //отступление на исключение у потребителя
+                if (subject is null || !BridgeSourceProducer.CanRegisterRoot(subject))
                 {
                     continue;
                 }

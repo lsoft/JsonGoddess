@@ -63,6 +63,126 @@ namespace JsonGoddess.CompatTests
             Assert.Equal(Reference.Serialize(batch), Reference.Serialize(batch, Bridge));
         }
 
+        /// <summary>
+        /// Полиморфный тип мостом - и корнем, и членом, и элементом списка
+        /// (PLAN.md §15, O11 а). До этого мост его не брал вовсе, а держатель
+        /// такого типа ронял сборку потребителя.
+        ///
+        /// <para>
+        /// Вызов фасада здесь не для проверки, а для <b>регистрации</b>: граф
+        /// попадает в порождённый хост ровно из таких вызовов, и без него мост
+        /// не узнал бы об этих типах ничего.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Writing_a_polymorphic_graph_through_the_bridge_gives_the_reference_document()
+        {
+            var shelter = Shelter.CreateSample();
+
+            Assert.Equal(Reference.Serialize(shelter), JsonSerializer.Serialize(shelter));
+            Assert.Equal(Reference.Serialize(shelter), Reference.Serialize(shelter, Bridge));
+        }
+
+        /// <summary>
+        /// И это утверждение <b>сильнее</b> всех соседних: совпадение
+        /// документов ничего не доказывает само по себе - отступивший мост
+        /// отдал бы работу эталону, и документ сошёлся бы тем более. Здесь
+        /// спрашивается прямо, берёт ли мост эти типы на себя.
+        ///
+        /// <para>
+        /// Спрашивается о <b>держателе</b>: с мостом регистрируются корни, а
+        /// полиморфный член обслуживается внутри его читателя и своей записи в
+        /// реестре не имеет. Сам полиморфный тип корнем не регистрируется
+        /// вовсе - см. соседний тест и причину в нём.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_bridge_actually_serves_the_polymorphic_holder_rather_than_declining_it()
+        {
+            var said = JsonGoddess.Compat.Interop.JsonGoddess.Explain(typeof(Shelter), Bridge);
+
+            Assert.True(said.Contains("serves"), said);
+        }
+
+        [Fact]
+        public void Reading_a_polymorphic_graph_through_the_bridge_gives_what_the_reference_reads()
+        {
+            var json = Reference.Serialize(Shelter.CreateSample());
+
+            var theirs = Reference.Deserialize<Shelter>(json);
+            var ours = Reference.Deserialize<Shelter>(json, Bridge);
+
+            Assert.Equal(Reference.Serialize(theirs), Reference.Serialize(ours));
+        }
+
+        /// <summary>
+        /// Полиморфный тип <b>корнем</b> мост не берёт, и это отказ эталона, а
+        /// не наш: чужой конвертер в свою полиморфную машинерию он не пускает.
+        ///
+        /// <para>
+        /// Снято пробой, и ответ оказался жёстче ожидаемого: он не отступает к
+        /// себе, а <b>бросает</b> - <c>NotSupportedException: The converter for
+        /// derived type 'Animal' does not support metadata writes or reads</c>,
+        /// и бросает до того, как управление дойдёт до нас. Поэтому такой тип
+        /// в реестр моста не попадает вовсе: зарегистрировать его значило бы
+        /// поменять тихое отступление на исключение у потребителя.
+        /// </para>
+        ///
+        /// <para>
+        /// Утверждение здесь - что чтение <b>работает</b>, то есть отказ
+        /// действительно тихий.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void A_polymorphic_root_is_left_to_the_reference_rather_than_registered()
+        {
+            var animals = new Animal[]
+            {
+                new Dog { Id = 1, Name = "Бим", Barks = true, },
+                new Cat { Id = 2, Name = "Мурка", Lives = 9, },
+                new Animal { Id = 3, Name = "зверь", },
+            };
+
+            //вызов фасада на самом Animal - тем он и становится корнем; будь
+            //отказ не учтён, дальше полетело бы исключение
+            Assert.Equal(Reference.Serialize(animals[0]), JsonSerializer.Serialize(animals[0]));
+
+            var json = Reference.Serialize(animals);
+
+            Assert.Equal(
+                Reference.Serialize(Reference.Deserialize<Animal[]>(json)),
+                Reference.Serialize(Reference.Deserialize<Animal[]>(json, Bridge))
+                );
+
+            Assert.Equal(Reference.Serialize(animals, Bridge), json);
+
+            Assert.DoesNotContain(
+                "serves",
+                JsonGoddess.Compat.Interop.JsonGoddess.Explain(typeof(Animal), Bridge),
+                StringComparison.Ordinal
+                );
+        }
+
+        /// <summary>
+        /// Два отказа, которых нет больше нигде. Утверждение не «мы
+        /// отказываем», а <b>«мы отказываем там же, где эталон»</b>: принять
+        /// документ, который он отвергает, значило бы прочесть то, чего он не
+        /// читает.
+        ///
+        /// <para>
+        /// Спрашивается через <b>держателя</b>, а не через сам полиморфный
+        /// тип: корнем его читает эталон, и тогда проверялся бы он, а не мы.
+        /// </para>
+        /// </summary>
+        [Theory]
+        [InlineData("{\"Id\":3,\"Star\":{\"Id\":1,\"$type\":\"dog\",\"Barks\":true}}")]
+        [InlineData("{\"Id\":3,\"Star\":{\"$type\":\"unicorn\",\"Id\":1}}")]
+        public void The_bridge_refuses_a_bad_discriminator_exactly_where_the_reference_does(string json)
+        {
+            Assert.Throws<JsonException>(() => Reference.Deserialize<Shelter>(json));
+            Assert.Throws<JsonException>(() => Reference.Deserialize<Shelter>(json, Bridge));
+        }
+
         [Fact]
         public void Reading_through_the_bridge_gives_what_the_reference_reads()
         {

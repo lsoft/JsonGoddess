@@ -176,6 +176,86 @@ namespace JsonGoddess.CompatTests
     }
 
     /// <summary>
+    /// Полиморфный граф: база, два производных и держатель - одиночным членом
+    /// и списком (PLAN.md §15, O11 а).
+    ///
+    /// <para>
+    /// Дискриминаторы нарочно разного рода - строка и число: связыватель
+    /// принимает оба, и сравниваются они у моста по-разному
+    /// (<c>ValueTextEquals</c> против <c>TryGetInt32</c>).
+    /// </para>
+    /// </summary>
+    [JsonDerivedType(typeof(Dog), "dog")]
+    [JsonDerivedType(typeof(Cat), 7)]
+    public class Animal
+    {
+        public int Id
+        {
+            get;
+            set;
+        }
+
+        public string? Name
+        {
+            get;
+            set;
+        }
+    }
+
+    public class Dog : Animal
+    {
+        public bool Barks
+        {
+            get;
+            set;
+        }
+    }
+
+    public class Cat : Animal
+    {
+        public int Lives
+        {
+            get;
+            set;
+        }
+    }
+
+    public class Shelter
+    {
+        public int Id
+        {
+            get;
+            set;
+        }
+
+        public Animal? Star
+        {
+            get;
+            set;
+        }
+
+        public List<Animal>? Residents
+        {
+            get;
+            set;
+        }
+
+        public static Shelter CreateSample()
+        {
+            return new Shelter
+            {
+                Id = 3,
+                Star = new Dog { Id = 1, Name = "Бим", Barks = true, },
+                Residents = new List<Animal>
+                {
+                    new Cat { Id = 2, Name = "Мурка", Lives = 9, },
+                    new Animal { Id = 3, Name = "просто зверь", },
+                },
+            };
+        }
+    }
+
+    /// <summary>
     /// Тип, который обслужить нельзя: член несёт чужой конвертер, и
     /// воспроизвести его мы не можем. Обход графа обязан отступить именно
     /// здесь и именно с <c>JGD001</c>, а не уронить сборку.
