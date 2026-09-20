@@ -258,7 +258,7 @@ namespace JsonGoddess.WebPerformanceTests
             //не осмотром опций, а настоящим POST'ом через весь конвейер:
             //разбор идёт другой раковиной, и «обслуживается» тут значит
             //«ответ контроллера совпал», а не «резолвер сказал да»
-            foreach (var route in new[] { "/mvc/order", "/mvc/orders", })
+            foreach (var route in new[] { "/mvc/order", "/mvc/orders", "/minimal/order", "/minimal/orders", })
             {
                 SameBytes(
                     "post " + route,
@@ -689,6 +689,41 @@ namespace JsonGoddess.WebPerformanceTests
         [BenchmarkCategory("many: minimal api")]
         [Benchmark(Description = "+ JsonGoddess")]
         public Task<long> MinimalManyGoddess() => Request(_goddess, "/minimal/orders");
+
+        /// <summary>
+        /// <b>Чтение</b> тела в minimal API (PLAN.md §15, O12) - то, чего
+        /// стенд не мерил никогда.
+        ///
+        /// <para>
+        /// Переносить сюда число с MVC нельзя, и это не осторожность. Пути
+        /// разные: у MVC тело читает входной форматтер, у minimal API -
+        /// <c>RequestDelegateFactory</c> через
+        /// <c>Request.ReadFromJsonAsync</c>, и с .NET 10 он зовёт
+        /// <c>PipeReader</c>-перегрузку эталона. Сколько стои́т на этой дороге
+        /// налог на чужой конвертер - вопрос к числу, а не к рассуждению.
+        /// </para>
+        ///
+        /// <para>
+        /// Пара строк, а не одна: на тысяче объектов видно разбор, на одном -
+        /// постоянная цена обвязки. Разойдутся они или совпадут, и решит, за
+        /// что браться.
+        /// </para>
+        /// </summary>
+        [BenchmarkCategory("many: minimal post")]
+        [Benchmark(Baseline = true, Description = "System.Text.Json")]
+        public Task<byte[]> MinimalPostManyReference() => Post(_reference, "/minimal/orders");
+
+        [BenchmarkCategory("many: minimal post")]
+        [Benchmark(Description = "+ JsonGoddess")]
+        public Task<byte[]> MinimalPostManyGoddess() => Post(_goddess, "/minimal/orders");
+
+        [BenchmarkCategory("one: minimal post")]
+        [Benchmark(Baseline = true, Description = "System.Text.Json")]
+        public Task<byte[]> MinimalPostOneReference() => Post(_reference, "/minimal/order");
+
+        [BenchmarkCategory("one: minimal post")]
+        [Benchmark(Description = "+ JsonGoddess")]
+        public Task<byte[]> MinimalPostOneGoddess() => Post(_goddess, "/minimal/order");
 
 
         /// <summary>

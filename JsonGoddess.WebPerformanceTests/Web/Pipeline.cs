@@ -6,6 +6,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Threading.Tasks;
 using JsonGoddess.Compat.Interop;
+using JsonGoddess.PerformanceTests.Model;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Formatters;
@@ -205,6 +206,19 @@ namespace JsonGoddess.WebPerformanceTests.Web
                             //ответа
                             endpoints.MapGet("/minimal/order", () => Payload.One);
                             endpoints.MapGet("/minimal/orders", () => Payload.Many);
+
+                            //Чтение тела в minimal API - вопрос O12, и до сих
+                            //пор стенд его не мерил вовсе: здесь стоя́ли одни
+                            //MapGet. Числа 0.99 сняты на MVC, а minimal API с
+                            //.NET 10 идёт своей дорогой - через
+                            //DeserializeAsync(PipeReader), - и переносить одно
+                            //на другое нельзя.
+                            //
+                            //Ответ короткий нарочно, как и у контроллера:
+                            //замер обязан мерить разбор тела, а не
+                            //сериализацию ответа
+                            endpoints.MapPost("/minimal/orders", (Order[] orders) => orders.Length);
+                            endpoints.MapPost("/minimal/order", (Order order) => order.Id);
                         });
                     });
                 })
