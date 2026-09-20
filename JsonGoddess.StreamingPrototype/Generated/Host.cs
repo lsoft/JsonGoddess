@@ -35,4 +35,30 @@ namespace JsonGoddess.StreamingPrototype.Generated
     internal partial class OrderHost
     {
     }
+
+    /// <summary>
+    /// Тот же тип и те же имена, но <b>без единого стража</b>.
+    ///
+    /// <para>
+    /// Заведён ради одного числа и только его: <b>сколько стои́т согласие с
+    /// эталоном</b>. Строгая лексика чисел, проверка управляющих байтов,
+    /// проверка UTF-8 и счётчик глубины - это не украшение, а то, чем мы
+    /// отвергаем ровно те документы, которые отвергает
+    /// <c>System.Text.Json</c>. Цена у этого есть, и называть её надо числом,
+    /// а не словами.
+    /// </para>
+    ///
+    /// <para>
+    /// Меряется в <b>одном</b> прогоне с остальными строками таблицы: сравнение
+    /// чисел между прогонами - ровно то, ради чего заведён
+    /// <c>run-benchmarks.bat</c>, и делать его руками нельзя.
+    /// </para>
+    /// </summary>
+    [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    [JsonFeature(JsonFeature.CaseInsensitiveNames)]
+    [JsonSubject(typeof(Order), true)]
+    [JsonSubject(typeof(OrderLine), false)]
+    internal partial class OrderHostWithoutGuards
+    {
+    }
 }

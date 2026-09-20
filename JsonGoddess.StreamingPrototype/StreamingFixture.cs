@@ -82,7 +82,7 @@ namespace JsonGoddess.StreamingPrototype
         }
 
         [BenchmarkCategory("one object")]
-        [Benchmark(Description = "read: JsonGoddess, generated")]
+        [Benchmark(Description = "read: JsonGoddess, generated buffered reader")]
         public int GeneratedOne()
         {
             OrderHost.Deserialize(DefaultInjector.Instance, _one, out Order? result);
@@ -90,7 +90,7 @@ namespace JsonGoddess.StreamingPrototype
         }
 
         [BenchmarkCategory("one object")]
-        [Benchmark(Description = "read: JsonGoddess, Try form")]
+        [Benchmark(Description = "read: JsonGoddess, generated Try reader")]
         public int TryOne()
         {
             var span = _one.AsSpan();
@@ -99,7 +99,45 @@ namespace JsonGoddess.StreamingPrototype
             try
             {
                 var position = 0;
-                OrderReader.Order(span, ref position, ref context, true, out var order);
+
+                Generated.OrderHost.TryRead_JsonGoddess_PerformanceTests_Model_Order(
+                    DefaultInjector.Instance, span, ref position, ref context, true, out var order
+                    );
+
+                return order!.Id;
+            }
+            finally
+            {
+                context.Release();
+            }
+        }
+
+        /// <summary>
+        /// Тот же порождённый <c>Try</c>-читатель, но от хоста <b>без стражей</b>.
+        ///
+        /// <para>
+        /// Строка отвечает на один вопрос: сколько стои́т согласие с эталоном.
+        /// Строгая лексика чисел, проверка управляющих байтов, проверка UTF-8 и
+        /// счётчик глубины - это то, чем мы отвергаем ровно те документы,
+        /// которые отвергает <c>System.Text.Json</c>; без них читатель быстрее,
+        /// но читает <b>не то же самое</b>.
+        /// </para>
+        /// </summary>
+        [BenchmarkCategory("one object")]
+        [Benchmark(Description = "read: JsonGoddess, generated Try reader, no guards")]
+        public int TryOneWithoutGuards()
+        {
+            var span = _one.AsSpan();
+            var context = new JsonParseContext(span);
+
+            try
+            {
+                var position = 0;
+
+                Generated.OrderHostWithoutGuards.TryRead_JsonGoddess_PerformanceTests_Model_Order(
+                    DefaultInjector.Instance, span, ref position, ref context, true, out var order
+                    );
+
                 return order!.Id;
             }
             finally

@@ -38,7 +38,11 @@ namespace JsonGoddess.StreamingPrototype
 
                 while (true)
                 {
-                    OrderReader.Order(span, ref position, ref context, true, out var order);
+                    //порождённый читатель: с пунктом 6б рукописного больше нет
+                    Generated.OrderHost.TryRead_JsonGoddess_PerformanceTests_Model_Order(
+                        DefaultInjector.Instance, span, ref position, ref context, true, out var order
+                        );
+
                     items.Add(order!);
 
                     JsonTryScan.TryConsume(span, ref position, JsonTryScan.Comma, true, out var more);
